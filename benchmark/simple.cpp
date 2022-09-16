@@ -1,6 +1,6 @@
 #include "fma-common/configuration.h"
 
-#include "lgraph.h"
+#include "lgraph/lgraph.h"
 
 #include <omp.h>
 
@@ -45,7 +45,7 @@ int answer_path(Transaction& txn, int hops, std::unordered_map<VertexId, VertexI
         auto vit = txn.GetVertexIterator(vid);
         assert(vit.IsValid());
         if (i != path_vids.size() - 1) {
-            auto eit = vit.GetOutEdgeIterator(path_vids[i + 1]);
+            auto eit = vit.GetOutEdgeIterator(EdgeUid(vid, path_vids[i + 1], 0, 0, 0), true);
             assert(eit.IsValid());
             EdgeId eid = eit.GetEdgeId();
             path_triplets[i] = std::make_tuple(path_vids[i], path_vids[i + 1], eid);

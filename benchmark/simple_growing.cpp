@@ -1,6 +1,6 @@
 #include "fma-common/configuration.h"
 
-#include "lgraph.h"
+#include "lgraph/lgraph.h"
 
 #include <omp.h>
 
@@ -45,7 +45,7 @@ int answer_path(Transaction& txn, int hops, std::unordered_map<VertexId, VertexI
         auto vit = txn.GetVertexIterator(vid);
         assert(vit.IsValid());
         if (i != path_vids.size() - 1) {
-            auto eit = vit.GetOutEdgeIterator(path_vids[i + 1]);
+            auto eit = vit.GetOutEdgeIterator(EdgeUid(vid, path_vids[i + 1], 0, 0, 0), true);
             assert(eit.IsValid());
             EdgeId eid = eit.GetEdgeId();
             path_triplets[i] = std::make_tuple(path_vids[i], path_vids[i + 1], eid);
@@ -77,7 +77,7 @@ size_t compute_shortest_path(Transaction& txn, VertexId vid_from, VertexId vid_t
             for (VertexId vid : forward_q) {
                 auto vit = txn.GetVertexIterator(vid);
                 assert(vit.IsValid());
-                std::vector<VertexId> dstIds = std::get<0>(vit.ListDstVids());
+                std::vector<VertexId> dstIds = vit.ListDstVids();
                 for (VertexId dst : dstIds) {
                     if (child.find(dst) != child.end()) {
                         // found the path
@@ -96,7 +96,7 @@ size_t compute_shortest_path(Transaction& txn, VertexId vid_from, VertexId vid_t
             for (VertexId vid : backward_q) {
                 auto vit = txn.GetVertexIterator(vid);
                 assert(vit.IsValid());
-                std::vector<VertexId> srcIds = std::get<0>(vit.ListSrcVids());
+                std::vector<VertexId> srcIds = vit.ListSrcVids();
                 for (VertexId src : srcIds) {
                     if (parent.find(src) != parent.end()) {
                         // found the path
@@ -190,8 +190,9 @@ class BenchmarkLightningGraph {
             }
         } while (0);
         if (ok) {
-            EdgeId eid = txn.AddEdge(vid_from, vid_to, std::string("knows"),
-                                     std::vector<std::string>({}), std::vector<std::string>({}));
+            txn.AddEdge(vid_from, vid_to, std::string("knows"),
+                                     std::vector<std::string>(),
+                                         std::vector<std::string>());
         } else {
             std::cerr << "insertion of edge(" + no_from + ", " + no_to + ") failed." << std::endl;
         }
@@ -405,7 +406,6 @@ class BenchmarkLightningGraph {
                     }
                 } while (0);
                 if (ok) {
-                    EdgeId eid =
                         txn.AddEdge(vid_from, vid_to, std::string("knows"),
                                     std::vector<std::string>({}), std::vector<std::string>({}));
                 } else {
@@ -444,21 +444,19 @@ int main(int argc, char** argv) {
     size_t insertion_count = std::atol(argv[6]);
 
     // create GraphDB, cleaning (TODO)
-    auto db = GraphDB::Open(db_path, lic_path, false);
+    Galaxy galaxy(db_path, false, true);
+    galaxy.SetCurrentUser("admin", "73@TuGraph");
+    auto db = galaxy.OpenGraph("default");
 
     // add schemas
     assert(db.AddVertexLabel(
-        "person", std::vector<FieldSpec>({{"no", STRING, false}, {"name", STRING, false}})));
+        "person", std::vector<FieldSpec>({{"no", STRING, false}, {"name", STRING, false}}), "no"));
     assert(db.AddEdgeLabel("knows", std::vector<FieldSpec>({
 
                                     })));
 
     // add indices
     assert(db.AddVertexIndex("person", "no", true));
-
-    while (!db.IndexIsReady("person", "no")) {
-        std::this_thread::yield();
-    }
 
     BenchmarkLightningGraph bm(db, 0);
     for (int i = 0; i < num_threads; i++) {
