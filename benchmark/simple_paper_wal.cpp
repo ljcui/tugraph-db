@@ -8,6 +8,7 @@
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
+#include <gflags/gflags.h>
 
 using namespace fma_common;
 using namespace lgraph_api;
@@ -15,6 +16,12 @@ using namespace lgraph_api;
 typedef int64_t VertexId;
 
 typedef int64_t EdgeId;
+
+DEFINE_string(mode, "", "test mode");
+DEFINE_bool(durable, false, "durable");
+DEFINE_int64(vertex_num, 0, "vertex num");
+DEFINE_int64(batch_num, 1, "batch num");
+DEFINE_int64(thread_num, 0, "thread num");
 
 int answer_path(Transaction& txn, int hops, std::unordered_map<VertexId, VertexId>& parent,
                 std::unordered_map<VertexId, VertexId>& child, VertexId vid_from, VertexId vid_a,
@@ -134,7 +141,6 @@ class RandomNumberGenerator {
     }
 };
 
-int batch;
 std::vector<RandomNumberGenerator> rngs;
 
 class BenchmarkLightningGraph {
@@ -282,6 +288,37 @@ class BenchmarkLightningGraph {
         double time_taken = GetTime() - time_start;
         return count / time_taken;
     }
+    double test_write_vertex_multi_thread(int64_t count) {
+        double time_start = GetTime();
+        std::vector<std::thread> threads;
+        int64_t cut = count/FLAGS_thread_num;
+        auto writer = [&](uint64_t start, uint64_t end) {
+            for (uint64_t i = start; i <= end;) {
+                Transaction txn = db.CreateWriteTxn();
+                for (int64_t j = 0; j < FLAGS_batch_num; j++) {
+                    std::string no = encode_no(i);
+                    std::string name = random_name();
+                    txn.AddVertex(std::string("person"), std::vector<std::string>({"no", "name"}),
+                                      std::vector<std::string>({no, name}));
+                    i++;
+                    if (i > end) {
+                        break;
+                    }
+                }
+                txn.Commit();
+            }
+        };
+        for (int64_t i = 0; i < FLAGS_thread_num; i++) {
+            auto begin = i*cut;
+            auto end =  std::min((i+1)*cut - 1, count);
+            threads.emplace_back(std::thread(writer, begin, end));
+        }
+        for (auto &t : threads) {
+            t.join();
+        }
+        double time_taken = GetTime() - time_start;
+        return count / time_taken;
+    }
     double test_write_edge(size_t count) {
         double time_start = GetTime();
         for (int i = 0; i < count; i++) {
@@ -362,9 +399,9 @@ class BenchmarkLightningGraph {
     }
     double test_write_vertex_batch(size_t count) {
         double time_start = GetTime();
-        for (size_t i = 0; i < count; i += batch) {
+        for (size_t i = 0; i < count; i += FLAGS_batch_num) {
             Transaction txn = db.CreateWriteTxn();
-            for (int j = 0; j < batch; j++) {
+            for (int j = 0; j < FLAGS_batch_num; j++) {
                 std::string no = encode_no(vertices++);
                 std::string name = random_name();
                 VertexId vid =
@@ -378,9 +415,9 @@ class BenchmarkLightningGraph {
     }
     double test_write_edge_batch(size_t count) {
         double time_start = GetTime();
-        for (size_t i = 0; i < count; i += batch) {
+        for (size_t i = 0; i < count; i += FLAGS_batch_num) {
             Transaction txn = db.CreateWriteTxn();
-            for (int j = 0; j < batch; j++) {
+            for (int j = 0; j < FLAGS_batch_num; j++) {
                 std::string no_from = random_no();
                 std::string no_to = random_no();
                 VertexId vid_from;
@@ -436,11 +473,10 @@ class BenchmarkLightningGraph {
 
 int main(int argc, char** argv) {
     // Simple Benchmark Server
-    bool durable = std::atoi(argv[1]);
-    size_t vertex_num = std::atol(argv[2]);
+    gflags::ParseCommandLineFlags(&argc, &argv, true);
 
     // create GraphDB, cleaning (TODO)
-    Galaxy galaxy("lgraph_data", durable, true);
+    Galaxy galaxy("lgraph_data", FLAGS_durable, true);
     galaxy.SetCurrentUser("admin", "73@TuGraph");
     auto db = galaxy.OpenGraph("default");
 
@@ -454,6 +490,14 @@ int main(int argc, char** argv) {
 
     std::cout << "Start..." << std::endl;
 
-    std::cout << "test_write_vertex: " << bm.test_write_vertex(vertex_num) << std::endl;
+    if (FLAGS_mode == "") {
+        std::cout << "test_write_vertex: " << bm.test_write_vertex(FLAGS_vertex_num) << std::endl;
+    } else if (FLAGS_mode == "batch") {
+        std::cout << "test_write_vertex_batch: " << bm.test_write_vertex_batch(FLAGS_vertex_num)
+                  << std::endl;
+    } else if (FLAGS_mode == "multi_thread") {
+        std::cout << "test_write_vertex_multi_thread: " << bm.test_write_vertex_multi_thread(FLAGS_vertex_num)
+                  << std::endl;
+    }
     return 0;
 }
