@@ -436,15 +436,11 @@ class BenchmarkLightningGraph {
 
 int main(int argc, char** argv) {
     // Simple Benchmark Server
-    std::string db_path(argv[1]);
-    std::string lic_path(argv[2]);
-    size_t n = std::atol(argv[3]);
-    size_t num_threads = std::atol(argv[4]);
-    batch = std::atoi(argv[5]);
-    size_t insertion_count = std::atol(argv[6]);
+    bool durable = std::atoi(argv[1]);
+    size_t vertex_num = std::atol(argv[2]);
 
     // create GraphDB, cleaning (TODO)
-    Galaxy galaxy(db_path, false, true);
+    Galaxy galaxy("lgraph_data", durable, true);
     galaxy.SetCurrentUser("admin", "73@TuGraph");
     auto db = galaxy.OpenGraph("default");
 
@@ -452,17 +448,12 @@ int main(int argc, char** argv) {
     assert(db.AddVertexLabel(
         "person", std::vector<FieldSpec>({{"no", STRING, false}, {"name", STRING, false}}), "no"));
     assert(db.AddEdgeLabel("knows", std::vector<FieldSpec>({
-
                                     })));
 
     BenchmarkLightningGraph bm(db, 0);
-    for (int i = 0; i < num_threads; i++) {
-        rngs.emplace_back(i);
-    }
 
     std::cout << "Start..." << std::endl;
 
-    std::cout << bm.test_write_vertex(insertion_count) << " ";
-    std::cout.flush();
+    std::cout << "test_write_vertex: " << bm.test_write_vertex(vertex_num) << std::endl;
     return 0;
 }

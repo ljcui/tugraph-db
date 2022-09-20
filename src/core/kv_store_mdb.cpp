@@ -31,7 +31,10 @@ void KvStore::Open(const std::string& path, size_t db_size, bool durable,
 #if LGRAPH_SHARE_DIR
     unsigned int flags = MDB_NOMEMINIT | MDB_NORDAHEAD | MDB_NOTLS | MDB_NOSYNC;
 #else
-    unsigned int flags = MDB_NOMEMINIT | MDB_NORDAHEAD | MDB_NOSYNC;
+    unsigned int flags = MDB_NOMEMINIT | MDB_NORDAHEAD;
+    if (durable) {
+        flags |= MDB_NOSYNC;
+    }
 #endif
     THROW_ON_ERR(mdb_env_open(env_, path.c_str(), flags, 0664));
     path_ = path;

@@ -1,1 +1,1 @@
-sh compile.sh simple_growing
+sh compile.sh simple_paper_wal
