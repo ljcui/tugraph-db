@@ -455,7 +455,7 @@ bool lgraph::HaStateMachine::ApplyHaRequest(const LGraphRequest* req, LGraphResp
             LOG_WARN() << "Unhandled ha request type: " << req->Req_case();
             return RespondException(resp, "Unhandled ha request type.");
         }
-    } catch (TimeoutException& e) {
+    } catch (lgraph_api::PythonPluginTimeout& e) {
         return RespondTimeout(resp, e.what());
     } catch (InputError& e) {
         return RespondBadInput(resp, e.what());

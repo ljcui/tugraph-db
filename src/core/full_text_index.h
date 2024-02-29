@@ -22,9 +22,10 @@
 
 namespace lgraph {
 
-class FTIndexException : public InternalError {
+class FTIndexException : public lgraph_api::LgraphException {
  public:
-    explicit FTIndexException(const std::string& str) : InternalError("FTIndexException: " + str) {}
+    explicit FTIndexException(const std::string& str)
+        : lgraph_api::LgraphException(lgraph_api::ErrorCode::FullTextIndexException, "FTIndexException: " + str) {}
 };
 
 enum class FTIndexEntryType { ADD_VERTEX = 0, ADD_EDGE, DELETE_VERTEX, DELETE_EDGE };

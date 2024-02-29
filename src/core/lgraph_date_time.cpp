@@ -57,7 +57,7 @@ TimeZone& TimeZone::LocalTZ() {
 
 TimeZone::TimeZone(int time_diff_hours) {
     if (time_diff_hours < -10 || time_diff_hours > 14)
-        throw InvalidParameterError("time_diff_hours must be within [-10, 14]");
+        throw InvalidArguments("time_diff_hours must be within [-10, 14]");
     time_diff_microseconds_ = time_diff_hours * 3600 * 1000000LL;
 }
 

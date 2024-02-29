@@ -164,7 +164,7 @@ void lgraph::StateMachine::HandleRequest(::google::protobuf::RpcController* cont
     }
     // typically only TaskKilledException can occur here
     // other types of exceptions are already handled in ApplyRequestDirectly
-    catch (TimeoutException& e) {
+    catch (lgraph_api::PythonPluginTimeout& e) {
         RespondTimeout(resp, e.what());
     } catch (InputError& e) {
         RespondBadInput(resp, e.what());
@@ -300,7 +300,7 @@ bool lgraph::StateMachine::ApplyRequestDirectly(const lgraph::LGraphRequest* req
                     break;
                 }
             }
-        } catch (TimeoutException& e) {
+        } catch (lgraph_api::PythonPluginTimeout& e) {
             RespondTimeout(resp, e.what());
         } catch (InputError& e) {
             RespondBadInput(resp, e.what());

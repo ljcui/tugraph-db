@@ -342,12 +342,12 @@ class AuditLogger {
         now = lgraph_api::DateTime::LocalNow().MicroSecondsSinceEpoch();
         lgraph_api::DateTime bt;
         if (!lgraph_api::DateTime::Parse(begin, bt))
-            throw InputError(FMA_FMT("Failed to parse begin time [{}].", begin));
+            throw lgraph_api::InputError(FMA_FMT("Failed to parse begin time [{}].", begin));
         begin_time = bt.MicroSecondsSinceEpoch();
         if (!end.empty()) {
             lgraph_api::DateTime et;
             if (!lgraph_api::DateTime::Parse(end, et))
-                throw InputError(FMA_FMT("Failed to parse begin time [{}].", end));
+                throw lgraph_api::InputError(FMA_FMT("Failed to parse begin time [{}].", end));
             end_time = et.MicroSecondsSinceEpoch();
             if (end_time > now) end_time = now;
         } else {

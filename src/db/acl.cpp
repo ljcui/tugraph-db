@@ -18,6 +18,8 @@
 
 #include "db/acl.h"
 
+using lgraph_api::InputError;
+
 static inline std::string PasswordMd5(const std::string& password) {
     return fma_common::encrypt::MD5::Encrypt(password, lgraph::_detail::PASSWORD_MD5_SALT);
 }
@@ -180,7 +182,7 @@ bool lgraph::AclManager::ValidateUser(const std::string& user, const std::string
     if (it->second.builtin_auth)
         return it->second.password_md5 == PasswordMd5(password);
     else
-        throw InternalError("External authentication not supported yet.");
+        throw lgraph_api::InternalError("External authentication not supported yet.");
 }
 
 lgraph::AccessLevel lgraph::AclManager::GetAccessRight(const std::string& curr_user,
@@ -297,7 +299,7 @@ bool lgraph::AclManager::ModUser(KvTransaction& txn, const std::string& curr_use
             break;
         }
     default:
-        throw InternalError(FMA_FMT("Unhandled ModUserRequest type: {}", request.action_case()));
+        throw lgraph_api::InternalError(FMA_FMT("Unhandled ModUserRequest type: {}", request.action_case()));
     }
     ait->second.UpdateAuthInfo(uinfo);
     if (need_refresh_acl_table) {
@@ -449,7 +451,7 @@ bool lgraph::AclManager::ModRole(KvTransaction& txn, const std::string& curr_use
             break;
         }
     default:
-        throw InternalError(FMA_FMT("Unhandled ModRoleRequest type: {}", request.action_case()));
+        throw lgraph_api::InternalError(FMA_FMT("Unhandled ModRoleRequest type: {}", request.action_case()));
     }
     StoreRoleInfoToKv(txn, role, rinfo);
     if (need_refresh_acl_table) {
@@ -926,7 +928,7 @@ bool lgraph::AclManager::DecipherToken(const std::string& token,
         if (v->second.builtin_auth) {
             pwd = v->second.password_md5;
         } else {
-            throw InternalError("External authentication not supported yet.");
+            throw lgraph_api::InternalError("External authentication not supported yet.");
         }
         return true;
     } else {

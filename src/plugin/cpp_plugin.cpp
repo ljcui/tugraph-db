@@ -65,7 +65,7 @@ void CppPluginManagerImpl::OpenDynamicLib(const PluginInfoBase* pinfo, DynamicLi
 void CppPluginManagerImpl::CloseDynamicLib(DynamicLibinfo &dinfo) {
     using namespace lgraph::dll;
     if (!UnloadDynamicLibrary(dinfo.lib_handle))
-        throw InternalError("Failed to unload library.");
+        throw lgraph_api::InternalError("Failed to unload library.");
 }
 
 void CppPluginManagerImpl::DoCall(lgraph_api::Transaction* txn,

@@ -27,7 +27,7 @@
 
 namespace lgraph {
 namespace import_v2 {
-
+using lgraph_api::InputError;
 static constexpr const size_t ONLINE_IMPORT_LIMIT_SOFT = 16ll << 20;
 static constexpr const size_t ONLINE_IMPORT_LIMIT_HARD = 17ll << 20;
 

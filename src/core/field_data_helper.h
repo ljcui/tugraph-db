@@ -665,7 +665,7 @@ inline size_t ParseStringIntoFieldData<FieldType::BLOB>(const char* beg, const c
     if (s == 0) return 0;
     std::string decoded;
     if (!::lgraph_api::base64::TryDecode(cd, decoded)) {
-        throw InputError("Value is not a valid BASE64 string: " + cd.substr(0, 64) +
+        throw lgraph_api::InputError("Value is not a valid BASE64 string: " + cd.substr(0, 64) +
                          (cd.size() > 64 ? "..." : ""));
     }
     fd = FieldData::Blob(std::move(decoded));
@@ -804,12 +804,12 @@ struct FieldDataTypeConvert {
 };  // namespace field_data_helper
 
 inline void ThrowParseError(const FieldData& fd, FieldType ft) {
-    throw ::lgraph::InputError(fma_common::StringFormatter::Format(
+    throw lgraph_api::InputError(fma_common::StringFormatter::Format(
         "Failed to convert field data [{}] into type {}", fd.ToString(), FieldTypeName(ft)));
 }
 
 inline void ThrowParseError(const std::string& str, FieldType ft) {
-    throw ::lgraph::InputError(fma_common::StringFormatter::Format(
+    throw lgraph_api::InputError(fma_common::StringFormatter::Format(
         "Failed to convert string [{}] into type {}", str, FieldTypeName(ft)));
 }
 

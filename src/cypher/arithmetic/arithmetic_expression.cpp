@@ -742,7 +742,7 @@ cypher::FieldData BuiltinFunction::DateComponent(RTContext *ctx, const Record &r
     case 2:
         return cypher::FieldData(::lgraph::FieldData(static_cast<int64_t>(YMD.day)));
     default:
-        throw ::lgraph::InternalError("");
+        throw lgraph_api::InternalError("");
     }
 }
 
@@ -805,7 +805,7 @@ cypher::FieldData BuiltinFunction::DateTimeComponent(RTContext *ctx, const Recor
     case 6:
         return cypher::FieldData(::lgraph::FieldData(static_cast<int64_t>(ymdhmsf.fraction)));
     default:
-        throw ::lgraph::InternalError("");
+        throw lgraph_api::InternalError("");
     }
 }
 

@@ -24,7 +24,7 @@ lgraph::SingleLanguagePluginManager::SingleLanguagePluginManager(
     plugin_dir_ = plugin_dir;
     auto& fs = fma_common::FileSystem::GetFileSystem(plugin_dir);
     if (!fs.IsDir(plugin_dir) && !fs.Mkdir(plugin_dir)) {
-        throw InternalError("Failed to create plugin dir [{}].", plugin_dir);
+        throw lgraph_api::InternalError(FMA_FMT("Failed to create plugin dir [{}].", plugin_dir));
     }
     table_ = store.OpenTable(txn, table_name, true, ComparatorDesc::DefaultComparator());
     LoadAllPlugins(txn);
@@ -40,7 +40,7 @@ lgraph::SingleLanguagePluginManager::SingleLanguagePluginManager(
     plugin_dir_ = plugin_dir;
     auto& fs = fma_common::FileSystem::GetFileSystem(plugin_dir);
     if (!fs.IsDir(plugin_dir) && !fs.Mkdir(plugin_dir)) {
-        throw InternalError("Failed to create plugin dir [{}].", plugin_dir);
+        throw lgraph_api::InternalError(FMA_FMT("Failed to create plugin dir [{}].", plugin_dir));
     }
     auto txn = db_->CreateWriteTxn();
     table_ = db_->GetStore().OpenTable(txn.GetTxn(), table_name, true,
@@ -224,18 +224,18 @@ static inline std::string GenUniqueTempDir(const std::string& base, const std::s
 static inline void WriteWholeFile(const std::string& path, const std::string& code,
                                   const std::string& file_desc) {
     fma_common::OutputFmaStream ofs(path);
-    if (!ofs.Good()) throw lgraph::InternalError("Failed to write {} [{}].", file_desc, path);
+    if (!ofs.Good()) throw lgraph_api::InternalError(FMA_FMT("Failed to write {} [{}].", file_desc, path));
     ofs.Write(code.data(), code.size());
 }
 
 static inline std::string ReadWholeFile(const std::string& path, const std::string& file_desc) {
     fma_common::InputFmaStream ifs(path, 0);
-    if (!ifs.Good()) throw lgraph::InternalError("Failed to open {} [{}].", file_desc, path);
+    if (!ifs.Good()) throw lgraph_api::InternalError(FMA_FMT("Failed to open {} [{}].", file_desc, path));
     size_t sz = ifs.Size();
     std::string code;
     code.resize(sz);
     size_t ssz = ifs.Read(&code[0], sz);
-    if (ssz != sz) throw lgraph::InternalError("Failed to read {} [{}].", file_desc, path);
+    if (ssz != sz) throw lgraph_api::InternalError(FMA_FMT("Failed to read {} [{}].", file_desc, path));
     return code;
 }
 
@@ -463,7 +463,7 @@ bool lgraph::SingleLanguagePluginManager::LoadPluginFromCode(
         exe = CompilePluginFromZip(name, code);
         break;
     default:
-        throw InternalError("Unhandled code_type [{}].", code_type);
+        throw lgraph_api::InternalError(FMA_FMT("Unhandled code_type [{}].", code_type));
         return false;
     }
 
@@ -487,7 +487,7 @@ bool lgraph::SingleLanguagePluginManager::LoadPluginFromCode(
         UpdateZipToKvStore(txn.GetTxn(), name, code);
         break;
     default:
-        throw InternalError("Unhandled code_type [{}].", code_type);
+        throw lgraph_api::InternalError(FMA_FMT("Unhandled code_type [{}].", code_type));
         return false;
     }
     // commit
@@ -639,7 +639,7 @@ void lgraph::SingleLanguagePluginManager::LoadAllPlugins(KvTransaction& txn) {
             LOG_DEBUG() << "Loaded plugin " << name;
         } catch (const std::exception& e) {
             std::throw_with_nested(
-                InternalError("Failed to load plugin [{}], err: {}", name, e.what()));
+                lgraph_api::InternalError(FMA_FMT("Failed to load plugin [{}], err: {}", name, e.what())));
         }
     }
 }

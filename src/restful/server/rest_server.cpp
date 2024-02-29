@@ -432,13 +432,13 @@ void RestServer::Start() {
 #ifndef _WIN32
         // for http over ssl, https
         fma_common::InputFmaStream is(config_.server_key);
-        if (!is.Good()) throw InternalError("Failed to open server key file " + config_.server_key);
+        if (!is.Good()) throw lgraph_api::InternalError("Failed to open server key file " + config_.server_key);
         std::string key_buf(is.Size(), 0);
         is.Read(&key_buf[0], key_buf.size());
         is.Close();
         is.Open(config_.server_cert);
         if (!is.Good())
-            throw InternalError("Failed to open server cert file " + config_.server_cert);
+            throw lgraph_api::InternalError("Failed to open server cert file " + config_.server_cert);
         std::string cert_buf(is.Size(), 0);
         is.Read(&cert_buf[0], cert_buf.size());
         is.Close();
@@ -588,7 +588,7 @@ static bool GetReaderVersion(const http_request& message, int64_t& ver) {
     const std::string& vstr = _TS(it->second);
     size_t r = fma_common::TextParserUtils::ParseInt64(vstr.data(), vstr.data() + vstr.size(), ver);
     if (r == 0)
-        throw InternalError("Failed to parse " + _TS(RestStrings::SVR_VER) + " from header.");
+        throw lgraph_api::InternalError("Failed to parse " + _TS(RestStrings::SVR_VER) + " from header.");
     return true;
 }
 
@@ -1526,7 +1526,7 @@ void RestServer::HandlePostLogin(const web::http::http_request& request,
     _HoldReadLock(galaxy_->GetReloadLock());
     std::string token = galaxy_->GetUserToken(username, password);
     if (!galaxy_->JudgeUserTokenNum(username)) {
-        throw lgraph_api::BadRequestException("The number of tokens has reached the upper limit");
+        throw lgraph_api::BadRequest("The number of tokens has reached the upper limit");
     }
     web::json::value response;
     response[RestStrings::TOKEN] = web::json::value::string(_TU(token));

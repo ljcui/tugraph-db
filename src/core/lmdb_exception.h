@@ -24,23 +24,24 @@
 #include "core/data_type.h"
 
 namespace lgraph {
-class KvException : public InternalError {
+using lgraph_api::ErrorCode;
+class KvException : public lgraph_api::LgraphException {
     int ec_ = 0;
 
  public:
-    explicit KvException(const std::string& str) : InternalError("KvException: " + str) {}
+    explicit KvException(const std::string& str) : LgraphException(ErrorCode::LmdbException, "KvException: " + str) {}
 
     explicit KvException(int mdb_error_code)
-        : InternalError(std::string("KvException: ") + mdb_strerror(mdb_error_code)),
+        : LgraphException(ErrorCode::LmdbException, std::string("KvException: ") + mdb_strerror(mdb_error_code)),
           ec_(mdb_error_code) {
-        if (ec_ != MDB_CONFLICTS) LOG_WARN() << InternalError::what();
+        if (ec_ != MDB_CONFLICTS) LOG_WARN() << LgraphException::what();
     }
 
     KvException(int mdb_error_code, const MDB_val& k, const MDB_val& v)
-        : InternalError(std::string("KvException: ") + mdb_strerror(mdb_error_code) +
+        : LgraphException(ErrorCode::LmdbException, std::string("KvException: ") + mdb_strerror(mdb_error_code) +
                         "\n\tKey: " + DumpMdbVal(k) + "\n\tValue: " + DumpMdbVal(v)),
           ec_(mdb_error_code) {
-        if (ec_ != MDB_CONFLICTS) LOG_WARN() << InternalError::what();
+        if (ec_ != MDB_CONFLICTS) LOG_WARN() << LgraphException::what();
     }
 
     int code() const { return ec_; }

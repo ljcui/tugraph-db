@@ -13,27 +13,59 @@
 #include <stdexcept>
 #include <string>
 #include <sstream>
-#if LGRAPH_ENABLE_BOOST_STACKTRACE
-#include <boost/stacktrace.hpp>
-#endif
+
+#include "fma-common/string_formatter.h"
 
 namespace lgraph_api {
-/** @brief   User input error. Base class for a variety of input errors. */
-class InputError : public std::exception {
- protected:
-    std::string err_;
 
+enum class ErrorCode {
+    OK = 0,
+    InvalidArguments,
+    InvalidGalaxy,
+    InvalidGraphDB,
+    InvalidTransaction,
+    InvalidIterator,
+    InvalidTransactionFork,
+    TaskKilled,
+    TransactionConflict,
+    WriteNotAllowed,
+    DBNotExist,
+    IOError,
+    Unauthorized,
+    InternalError,
+    BadRequest,
+    LmdbException,
+    FullTextIndexException,
+    PythonPluginTimeout,
+    InputError,
+};
+
+class LgraphException : public std::exception {
  public:
-    explicit InputError(const std::string& err) : err_(err) {
-#if LGRAPH_ENABLE_BOOST_STACKTRACE
-        std::ostringstream oss;
-        oss << boost::stacktrace::stacktrace();
-        err_.append("\nBEGIN_STACK =============\n" + oss.str() +
-                    "\nEND_STACK =============\n");
-#endif
-    }
+    explicit LgraphException(ErrorCode code, const std::string& msg)
+        : code_(code), msg_(msg) {}
+    explicit LgraphException(ErrorCode code, const char* msg)
+        : code_(code), msg_(msg) {}
+    ErrorCode code() {return code_;};
+    const std::string& msg() {return msg_;};
+    const char* what() const noexcept override {
+        return msg_.c_str();
+    };
+ private:
+    ErrorCode code_;
+    std::string msg_;
+};
 
-    const char* what() const noexcept override { return err_.c_str(); }
+/** @brief   User input error. Base class for a variety of input errors. */
+class InputError : public LgraphException {
+ public:
+    explicit InputError(const std::string& err)
+        : LgraphException(ErrorCode::InputError, err) {}
+    explicit InputError(const char* err)
+        : LgraphException(ErrorCode::InputError, err) {}
+    template <typename... Ts>
+    InputError(const char* format, const Ts&... ds)
+        : LgraphException(ErrorCode::InputError, FMA_FMT(format, ds...)) {}
 };
 
 /** @brief   Data out of range. */
@@ -43,98 +75,97 @@ class OutOfRangeError : public std::range_error {
 };
 
 /** @brief   An invalid parameter is passed. */
-class InvalidParameterError : public InputError {
+class InvalidArguments : public LgraphException {
  public:
-    explicit InvalidParameterError(const std::string& msg = "Invalid parameter.")
-        : InputError(msg) {}
+    explicit InvalidArguments(const std::string& msg = "Invalid Arguments.")
+        : LgraphException(ErrorCode::InvalidArguments, msg) {}
 };
 
 /** @brief   Function called on an invalid Galaxy. */
-class InvalidGalaxyError : public InvalidParameterError {
+class InvalidGalaxy : public LgraphException {
  public:
-    InvalidGalaxyError() : InvalidParameterError("Invalid Galaxy.") {}
+    InvalidGalaxy() : LgraphException(ErrorCode::InvalidGalaxy, "Invalid Galaxy.") {}
 };
 
 /** @brief   Function called on an invalid GraphDB. */
-class InvalidGraphDBError : public InvalidParameterError {
+class InvalidGraphDB : public LgraphException {
  public:
-    InvalidGraphDBError() : InvalidParameterError("Invalid GraphDB.") {}
+    InvalidGraphDB() : LgraphException(ErrorCode::InvalidGraphDB, "Invalid GraphDB.") {}
 };
 
 /** @brief   Function called on an invalid transaction. */
-class InvalidTxnError : public InvalidParameterError {
+class InvalidTransaction : public LgraphException {
  public:
-    InvalidTxnError() : InvalidParameterError("Invalid transaction.") {}
+    InvalidTransaction() : LgraphException(ErrorCode::InvalidTransaction, "Invalid transaction.") {}
 };
 
 /** @brief   Function called on an invalid iterator. */
-class InvalidIteratorError : public InvalidParameterError {
+class InvalidIterator : public LgraphException {
  public:
-    InvalidIteratorError() : InvalidParameterError("Invalid iterator.") {}
+    InvalidIterator() : LgraphException(ErrorCode::InvalidIterator, "Invalid iterator.") {}
 };
 
 /** @brief   ForkTxn called on a write transaction. */
-class InvalidForkError : public InvalidParameterError {
+class InvalidTransactionFork : public LgraphException {
  public:
-    InvalidForkError() : InvalidParameterError("Write transactions cannot be forked.") {}
+    InvalidTransactionFork() : LgraphException(ErrorCode::InvalidTransactionFork, "Write transactions cannot be forked.") {}
 };
 
 /** @brief   Task is being killed per user request or timeout. */
-class TaskKilledException : public std::runtime_error {
+class TaskKilled : public LgraphException {
  public:
-    TaskKilledException() : std::runtime_error("Task killed.") {}
+    TaskKilled() : LgraphException(ErrorCode::TaskKilled, "Task is killed.") {}
 };
 
 /** @brief   A conflict is detected when committing this transaction. */
-class TxnConflictError : public std::runtime_error {
+class TransactionConflict : public LgraphException {
  public:
-    TxnConflictError()
-        : std::runtime_error("Transaction conflicts with an earlier one.") {}
+    TransactionConflict() : LgraphException(ErrorCode::TransactionConflict,
+                                            "Transaction conflicts with an earlier one.") {}
 };
 
 /** @brief   Write operation is tried on a read-only GraphDB or read-only transaction. */
-class WriteNotAllowedError : public std::runtime_error {
+class WriteNotAllowed : public LgraphException {
  public:
-    explicit WriteNotAllowedError(const std::string& msg = "Access denied.")
-        : std::runtime_error(msg) {}
+    explicit WriteNotAllowed(const std::string& msg = "Write operation is not allowed.")
+        : LgraphException(ErrorCode::WriteNotAllowed, msg) {}
 };
 
 /** @brief   Specified database does not exist, wrong directory? */
-class DBNotExistError : public InputError {
+class DBNotExist : public LgraphException {
  public:
-    explicit DBNotExistError(const std::string& msg = "The specified TuGraph DB does not exist.")
-        : InputError(msg) {}
+    explicit DBNotExist(const std::string& msg = "The specified TuGraph DB does not exist.")
+        : LgraphException(ErrorCode::DBNotExist, msg) {}
 };
 
 /** @brief   An i/o error. */
-class IOError : public std::runtime_error {
+class IOError : public LgraphException {
  public:
-    explicit IOError(const std::string& msg = "IO Error.") : std::runtime_error(msg) {}
+    explicit IOError(const std::string& msg = "IO Error.") : LgraphException(ErrorCode::IOError, msg) {}
 };
 
 /** @brief   User not authorized to perform this action. */
-class UnauthorizedError : public InputError {
+class Unauthorized : public LgraphException {
  public:
-    explicit UnauthorizedError(const std::string& msg = "Authentication failed.")
-        : InputError(msg) {}
+    explicit Unauthorized(const std::string& msg = "Unauthorized.")
+        : LgraphException(ErrorCode::Unauthorized, msg) {}
 };
 
-class InternalErrorException : public std::exception {
-    std::string err_;
-
+class InternalError : public LgraphException {
  public:
-    explicit InternalErrorException(const std::string& err) : err_("InternalError " + err) {}
-
-    const char* what() const noexcept override { return err_.c_str(); }
+    explicit InternalError(const std::string& err)
+        : LgraphException(ErrorCode::InternalError, err) {}
 };
 
-class BadRequestException : public std::exception {
-    std::string err_;
-
+class BadRequest : public LgraphException {
  public:
-    explicit BadRequestException(const std::string& err) : err_("BadRequest " + err) {}
+    explicit BadRequest(const std::string& err) : LgraphException(ErrorCode::BadRequest, err) {}
+};
 
-    const char* what() const noexcept override { return err_.c_str(); }
+class PythonPluginTimeout : public LgraphException {
+ public:
+    explicit PythonPluginTimeout(const std::string& err)
+        : LgraphException(ErrorCode::PythonPluginTimeout, err) {}
 };
 
 }  // namespace lgraph_api

@@ -54,7 +54,7 @@ lgraph::Galaxy::Galaxy(const lgraph::Galaxy::Config& config, bool create_if_not_
     auto& fs = fma_common::FileSystem::GetFileSystem(config.dir);
     if (!fs.IsDir(config.dir)) {
         if (!create_if_not_exist) {
-            throw lgraph_api::DBNotExistError("Database directory " + config.dir +
+            throw lgraph_api::DBNotExist("Database directory " + config.dir +
                                               " does not exist!");
         } else if (!fs.Mkdir(config.dir)) {
             throw lgraph_api::IOError("Failed to create data directory " + config.dir);
@@ -94,9 +94,9 @@ std::string lgraph::Galaxy::GetUserToken(const std::string& user, const std::str
             if (++failed_times >= MAX_LOGIN_FAILED_TIMES) {
                 retry_login_time = fma_common::GetTime();
             }
-            throw lgraph_api::BadRequestException("Bad user/password.");
+            throw lgraph_api::BadRequest("Bad user/password.");
         } else {
-            throw lgraph_api::BadRequestException(
+            throw lgraph_api::BadRequest(
                 "Too many login failures, please try again in a minute");
         }
         return "";

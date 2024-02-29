@@ -679,6 +679,6 @@ void Schema::LoadSchema(const Value& data) {
     using namespace fma_common;
     BinaryBuffer buf((char*)data.Data(), data.Size());
     size_t r = BinaryRead(buf, *this);
-    if (r != data.Size()) throw ::lgraph::InternalError("Failed to load schema from DB.");
+    if (r != data.Size()) throw lgraph_api::InternalError("Failed to load schema from DB.");
 }
 }  // namespace lgraph

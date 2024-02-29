@@ -374,7 +374,7 @@ std::any ResultElement::ToBolt() {
             } else if (l.is_string()) {
                 ret.emplace_back(l.get<std::string>());
             } else {
-                throw lgraph::InputError(FMA_FMT(
+                throw lgraph_api::InputError(FMA_FMT(
                     "ToBolt: unsupported item in list: {}", l.dump()));
             }
         }
@@ -393,7 +393,7 @@ std::any ResultElement::ToBolt() {
             } else if (pair.second.is_string()) {
                 ret.emplace(pair.first, pair.second.get<std::string>());
             } else {
-                throw lgraph::InputError(FMA_FMT(
+                throw lgraph_api::InputError(FMA_FMT(
                     "ToBolt: unsupported value in map: {}", pair.second.dump()));
             }
         }
@@ -425,7 +425,7 @@ std::any ResultElement::ToBolt() {
         }
         return path;
     } else {
-        throw lgraph::InputError(FMA_FMT(
+        throw lgraph_api::InputError(FMA_FMT(
             "ToBolt: unsupported field type: {}", to_string(type_)));
     }
 }

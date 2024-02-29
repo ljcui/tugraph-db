@@ -176,7 +176,7 @@ void LMDBKvTransaction::Commit() {
             }
             if (commit_status_ != 1) {
                 if (commit_ec_ == MDB_CONFLICTS)
-                    throw lgraph_api::TxnConflictError();
+                    throw lgraph_api::TransactionConflict();
                 else
                     THROW_ERR(commit_ec_);
             }

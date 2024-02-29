@@ -1624,7 +1624,7 @@ bool LightningGraph::BlockingAddIndex(const std::string& label, const std::strin
                 auto vid = graph::KeyPacker::GetVidFromPropertyTableKey(kv_iter->GetKey());
                 auto prop = kv_iter->GetValue();
                 if (!index->Add(txn.GetTxn(), extractor->GetConstRef(prop), vid)) {
-                    throw InternalError(FMA_FMT(
+                    throw lgraph_api::InternalError(FMA_FMT(
                         "Failed to index vertex [{}] with field value [{}:{}]",
                         vid, extractor->Name(), extractor->FieldToString(prop)));
                 }
@@ -1682,7 +1682,7 @@ bool LightningGraph::BlockingAddIndex(const std::string& label, const std::strin
                 auto prop = kv_iter->GetValue();
                 if (!index->Add(txn.GetTxn(), extractor->GetConstRef(prop),
                                 {euid.src, euid.dst, euid.lid, euid.tid, euid.eid})) {
-                    throw InternalError(FMA_FMT(
+                    throw lgraph_api::InternalError(FMA_FMT(
                         "Failed to index edge [{}] with field value [{}:{}]",
                         euid.ToString(), extractor->Name(), extractor->FieldToString(prop)));
                 }
@@ -2087,7 +2087,7 @@ void LightningGraph::OfflineCreateBatchIndex(const std::vector<IndexSpec>& index
         start_vid = vit.GetId();
         if (!is_vertex || label_id_done.find(curr_lid) != label_id_done.end()) {
             if (is_vertex && label_id_done[curr_lid]) {
-                throw InternalError(FMA_FMT("Vertex Ids are not totally ordered: "
+                throw lgraph_api::InternalError(FMA_FMT("Vertex Ids are not totally ordered: "
                     "found vertex vid={} with label {} after scanning the last range. "
                     "Please delete the indexes of this label and retry.",
                     vit.GetId(), txn.GetVertexLabel(vit)));
@@ -2332,7 +2332,7 @@ void LightningGraph::Snapshot(Transaction& txn, const std::string& path) {
     // create parent dir if not exist
     auto& fs = fma_common::FileSystem::GetFileSystem(path);
     if (!fs.IsDir(path)) {
-        if (!fs.Mkdir(path)) throw InternalError("Failed to create dir " + path + " for snapshot.");
+        if (!fs.Mkdir(path)) throw lgraph_api::InternalError("Failed to create dir " + path + " for snapshot.");
     } else {
         fs.Remove(path + fma_common::LocalFileSystem::PATH_SEPERATOR() + "data.mdb");
         fs.Remove(path + fma_common::LocalFileSystem::PATH_SEPERATOR() + "lock.mdb");
@@ -2459,7 +2459,7 @@ Transaction LightningGraph::CreateReadTxn() {
 }
 
 Transaction LightningGraph::ForkTxn(Transaction& txn) {
-    if (!txn.read_only_) throw lgraph_api::InvalidForkError();
+    if (!txn.read_only_) throw lgraph_api::InvalidTransactionFork();
     return Transaction(this, txn.GetTxn());
 }
 

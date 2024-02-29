@@ -57,6 +57,7 @@ namespace lgraph {
                                                 __func__));                                       \
     } while (0)
 
+using lgraph_api::InputError;
 class CypherException : public InputError {
  public:
     CypherException() = delete;

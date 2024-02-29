@@ -45,6 +45,8 @@ inline std::string LimitLengthString(const std::string& str) {
 }
 }  // namespace _detail
 
+using lgraph_api::InputError;
+
 class FieldNotFoundException : public InputError {
  public:
     explicit FieldNotFoundException(const std::string& fname)

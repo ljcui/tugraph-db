@@ -96,7 +96,7 @@ bool Transaction::IsIndexed(const std::string& label, const std::string& field) 
 
 void Transaction::EnterTxn() {
     if (LightningGraph::InTransaction()) {
-        throw InternalError(
+        throw lgraph_api::InternalError(
             "Nested transaction is forbidden. "
             "Note that db.AddLabel/AddVertexIndex should NOT be used inside a "
             "transaction.");

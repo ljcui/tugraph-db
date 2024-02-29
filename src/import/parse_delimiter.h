@@ -20,6 +20,7 @@
 #include "fma-common/text_parser.h"
 
 namespace lgraph {
+using lgraph_api::InputError;
 // parse delimiter and process strings like \r \n \002 \0xA
 inline std::string ParseDelimiter(const std::string& delimiter) {
     std::string ret;

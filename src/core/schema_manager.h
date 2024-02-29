@@ -74,7 +74,7 @@ class SchemaManager {
             BinaryBuffer buf(v.Data(), v.Size());
             schemas_[id].SetStoreLabelInRecord(label_in_record_);
             if (!BinaryRead(buf, schemas_[id])) {
-                throw ::lgraph::InternalError("Invalid schema read from DB.");
+                throw lgraph_api::InternalError("Invalid schema read from DB.");
             }
             it->Next();
         }
@@ -200,7 +200,7 @@ class SchemaManager {
             schemas_.emplace_back(label_in_record_);
             ls = &schemas_.back();
             if (schemas_.size() > std::numeric_limits<LabelId>::max()) {
-                throw ::lgraph::InternalError(fma_common::StringFormatter::Format(
+                throw lgraph_api::InternalError(fma_common::StringFormatter::Format(
                     "Number of labels exceeds limit: {}.\n", std::numeric_limits<LabelId>::max()));
             }
             ls->SetLabelId((LabelId)(schemas_.size() - 1));

@@ -86,7 +86,7 @@ static json FieldDataToJson(const lgraph_api::FieldData& data) {
                 case ::lgraph_api::SRID::CARTESIAN:
                     return json(data.AsCartesianPoint().ToString());
                 default:
-                    throw lgraph::InputError("unsupported spatial srid");
+                    throw lgraph_api::InputError("unsupported spatial srid");
             }
         }
     case lgraph_api::FieldType::LINESTRING:
@@ -98,7 +98,7 @@ static json FieldDataToJson(const lgraph_api::FieldData& data) {
                 case ::lgraph_api::SRID::CARTESIAN:
                     return json(data.AsCartesianLineString().ToString());
                 default:
-                    throw lgraph::InputError("unsupported spatial srid");
+                    throw lgraph_api::InputError("unsupported spatial srid");
             }
         }
     case lgraph_api::FieldType::POLYGON:
@@ -110,7 +110,7 @@ static json FieldDataToJson(const lgraph_api::FieldData& data) {
                 case ::lgraph_api::SRID::CARTESIAN:
                     return json(data.AsCartesianPolygon().ToString());
                 default:
-                    throw lgraph::InputError("unsupported spatial srid");
+                    throw lgraph_api::InputError("unsupported spatial srid");
             }
         }
     case lgraph_api::FieldType::SPATIAL:
@@ -122,11 +122,11 @@ static json FieldDataToJson(const lgraph_api::FieldData& data) {
                 case ::lgraph_api::SRID::CARTESIAN:
                     return json(data.AsCartesianSpatial().ToString());
                 default:
-                    throw lgraph::InputError("unsupported spatial srid");
+                    throw lgraph_api::InputError("unsupported spatial srid");
             }
         }
     default:
-        throw lgraph::InputError(fma_common::StringFormatter::Format(
+        throw lgraph_api::InputError(fma_common::StringFormatter::Format(
             "FieldDataToJson: unsupported field type: {}", data.type));
     }
 }
@@ -146,7 +146,7 @@ static lgraph_api::FieldData JsonToFieldData(const json& j_object) {
     } else if (!j_object.is_discarded()) {
         return lgraph_api::FieldData(j_object.dump());
     } else {
-        throw lgraph::InputError("JsonToFieldData: unsupported json");
+        throw lgraph_api::InputError("JsonToFieldData: unsupported json");
     }
 }
 }  // namespace lgraph_rfc

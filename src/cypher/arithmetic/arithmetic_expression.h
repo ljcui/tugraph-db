@@ -404,7 +404,7 @@ struct ArithOperandNode {
             }
             return record.values[variadic.alias_idx];
         } else {
-            throw ::lgraph::InternalError("Invalid type.");
+            throw lgraph_api::InternalError("Invalid type.");
         }
         CYPHER_THROW_ASSERT(false);
         return Entry();
