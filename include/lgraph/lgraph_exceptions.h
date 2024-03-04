@@ -36,29 +36,60 @@ enum class ErrorCode {
     PythonPluginTimeout,
     InputError,
     OutOfRange,
+    LgraphPeekError,
 };
+
+inline const char* ToString(ErrorCode code) {
+    switch (code) {
+        case ErrorCode::OK: return "Ok";
+        case ErrorCode::InvalidArguments: return "InvalidArguments";
+        case ErrorCode::InvalidGalaxy: return "InvalidGalaxy";
+        case ErrorCode::InvalidGraphDB: return "InvalidGraphDB";
+        case ErrorCode::InvalidTransaction: return "InvalidTransaction";
+        case ErrorCode::InvalidIterator: return "InvalidIterator";
+        case ErrorCode::InvalidTransactionFork: return "InvalidTransactionFork";
+        case ErrorCode::TaskKilled: return "TaskKilled";
+        case ErrorCode::TransactionConflict: return "TransactionConflict";
+        case ErrorCode::WriteNotAllowed: return "WriteNotAllowed";
+        case ErrorCode::DBNotExist: return "DBNotExist";
+        case ErrorCode::IOError: return "IOError";
+        case ErrorCode::Unauthorized: return "Unauthorized";
+        case ErrorCode::InternalError: return "InternalError";
+        case ErrorCode::BadRequest: return "BadRequest";
+        case ErrorCode::LmdbException: return "LmdbException";
+        case ErrorCode::FullTextIndexException: return "FullTextIndexException";
+        case ErrorCode::PythonPluginTimeout: return "PythonPluginTimeout";
+        case ErrorCode::InputError: return "InputError";
+        case ErrorCode::OutOfRange: return "OutOfRange";
+        case ErrorCode::LgraphPeekError: return "LgraphPeekError";
+        default: return "UnknownErrorCode";
+    }
+}
 
 class LgraphException : public std::exception {
  public:
     explicit LgraphException(ErrorCode code, const std::string& msg)
-        : code_(code), msg_(msg) {}
+        : code_(code), msg_(msg) {
+        what_ = FMA_FMT("[{}] {}", ToString(code_), msg_);
+    }
     explicit LgraphException(ErrorCode code, const char* msg)
         : code_(code), msg_(msg) {}
     ErrorCode code() {return code_;};
     const std::string& msg() {return msg_;};
     const char* what() const noexcept override {
-        return msg_.c_str();
+        return what_.c_str();
     };
  private:
     ErrorCode code_;
     std::string msg_;
+    std::string what_;
 };
 
-#define DEFINE_EXCEPTION(name, msg)                                   \
+#define DEFINE_EXCEPTION(name, default_msg)                           \
 class name : public LgraphException {                                 \
  public:                                                              \
     name()                                                            \
-        : LgraphException(ErrorCode::name, msg) {}                    \
+        : LgraphException(ErrorCode::name, default_msg) {}            \
     explicit name(const std::string& err)                             \
         : LgraphException(ErrorCode::name, err) {}                    \
     explicit name(const char* err)                                    \
@@ -99,5 +130,6 @@ DEFINE_EXCEPTION(Unauthorized, "Unauthorized.");
 DEFINE_EXCEPTION(InternalError, "Internal error.");
 DEFINE_EXCEPTION(BadRequest, "Bad request.");
 DEFINE_EXCEPTION(PythonPluginTimeout, "Python plugin timeout.");
+DEFINE_EXCEPTION(LgraphPeekError, "LgraphPeekError.");
 
 }  // namespace lgraph_api

@@ -95,9 +95,6 @@ struct EdgeSid {
     }
 };
 
-typedef lgraph_api::Unauthorized AuthError;
-typedef lgraph_api::TaskKilled TaskKilledException;
-
 //===============================
 // Id types and DBConfig
 //===============================

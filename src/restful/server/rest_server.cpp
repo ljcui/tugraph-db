@@ -562,11 +562,11 @@ std::string RestServer::GetUser(const web::http::http_request& request,
     auto& headers = request.headers();
     auto it = headers.find(_TU("Authorization"));
     if (it == headers.end()) {
-        throw AuthError("No token given in the request.");
+        throw lgraph_api::Unauthorized("No token given in the request.");
     }
     const std::string& auth_str = _TS(it->second);
     if (!fma_common::StartsWith(auth_str, "Bearer ")) {
-        throw AuthError("Malformed token: " + auth_str);
+        throw lgraph_api::Unauthorized("Malformed token: " + auth_str);
     }
     std::string token = auth_str.substr(7);
     if (token_ret) *token_ret = token;
@@ -2937,7 +2937,7 @@ void RestServer::handle_delete(http_request request) {
         }
     } catch (InputError& e) {
         return RespondBadRequest(request, e.what());
-    } catch (AuthError& e) {
+    } catch (lgraph_api::Unauthorized& e) {
         return RespondUnauthorized(request, e.what());
     } catch (std::exception& e) {
         return RespondInternalException(request, e);
@@ -3016,7 +3016,7 @@ void RestServer::handle_get(http_request request) {
         FMA_ASSERT(false);  // we should have treated every case in switch()
     } catch (InputError& e) {
         return RespondBadRequest(request, e.what());
-    } catch (AuthError& e) {
+    } catch (lgraph_api::Unauthorized& e) {
         return RespondUnauthorized(request, e.what());
     } catch (std::exception& e) {
         return RespondInternalException(request, e);
@@ -3053,7 +3053,7 @@ void RestServer::do_handle_post(http_request request, const web::json::value& bo
             && fpc != RestPathCases::UpdateTokenTime && fpc != RestPathCases::GetTokenTime) {
             if (!galaxy_->JudgeRefreshTime(token)) {
                 LOG_WARN() << "token has already expire";
-                throw AuthError("token has already expire");
+                throw lgraph_api::Unauthorized("token has already expire");
             }
         }
         LOG_DEBUG() << "\n----------------"
@@ -3131,7 +3131,7 @@ void RestServer::do_handle_post(http_request request, const web::json::value& bo
         FMA_ASSERT(false);
     } catch (InputError& e) {
         return RespondBadRequest(request, e.what());
-    } catch (AuthError& e) {
+    } catch (lgraph_api::Unauthorized& e) {
         return RespondUnauthorized(request, e.what());
     } catch (std::exception& e) {
         return RespondInternalException(request, e);
@@ -3198,7 +3198,7 @@ void RestServer::do_handle_put(http_request request, const web::json::value& bod
         }
     } catch (InputError& e) {
         return RespondBadRequest(request, e.what());
-    } catch (AuthError& e) {
+    } catch (lgraph_api::Unauthorized& e) {
         return RespondUnauthorized(request, e.what());
     } catch (std::exception& e) {
         return RespondInternalException(request, e);

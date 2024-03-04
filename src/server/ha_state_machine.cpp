@@ -459,9 +459,9 @@ bool lgraph::HaStateMachine::ApplyHaRequest(const LGraphRequest* req, LGraphResp
         return RespondTimeout(resp, e.what());
     } catch (InputError& e) {
         return RespondBadInput(resp, e.what());
-    } catch (AuthError& e) {
+    } catch (lgraph_api::Unauthorized& e) {
         return RespondDenied(resp, e.what());
-    } catch (TaskKilledException& e) {
+    } catch (lgraph_api::TaskKilled& e) {
         return RespondException(resp, e.what());
     } catch (std::exception& e) {
         return RespondException(resp, e.what());

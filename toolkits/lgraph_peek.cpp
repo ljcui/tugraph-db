@@ -36,7 +36,7 @@ static void PeekGraph(lgraph::AccessControlledDB& db, int64_t begin, int64_t end
             begin++;
         }
     } else {
-        throw std::runtime_error("END should not be less than BEGIN");
+        throw lgraph_api::LgraphPeekError("END should not be less than BEGIN");
     }
     txn.Abort();
 }
@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
     try {
         lgraph::Galaxy galaxy(db_dir);
         if (galaxy.GetUserToken(user, password).empty())
-            throw lgraph::AuthError("Bad user/password.");
+            throw lgraph_api::Unauthorized("Bad user/password.");
         lgraph::AccessControlledDB db = galaxy.OpenGraph(user, graph);
         PeekGraph(db, begin, end);
     } catch (std::exception& e) {

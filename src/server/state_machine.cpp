@@ -65,7 +65,7 @@ bool lgraph::StateMachine::ResetAdminPassword(const std::string& user,
     if (galaxy_->IsAdmin(user)) {
         return galaxy_->ChangeCurrentPassword(user, "", new_password, set_password);
     } else {
-        throw AuthError("Only admin can reset password.");
+        throw lgraph_api::Unauthorized("Only admin can reset password.");
     }
 }
 
@@ -168,9 +168,9 @@ void lgraph::StateMachine::HandleRequest(::google::protobuf::RpcController* cont
         RespondTimeout(resp, e.what());
     } catch (InputError& e) {
         RespondBadInput(resp, e.what());
-    } catch (AuthError& e) {
+    } catch (lgraph_api::Unauthorized& e) {
         RespondDenied(resp, e.what());
-    } catch (TaskKilledException& e) {
+    } catch (lgraph_api::TaskKilled& e) {
         RespondException(resp, e.what());
     } catch (std::exception& e) {
         RespondException(resp, std::string("Unhandled exception: ") + e.what());
@@ -304,9 +304,9 @@ bool lgraph::StateMachine::ApplyRequestDirectly(const lgraph::LGraphRequest* req
             RespondTimeout(resp, e.what());
         } catch (InputError& e) {
             RespondBadInput(resp, e.what());
-        } catch (AuthError& e) {
+        } catch (lgraph_api::Unauthorized& e) {
             RespondDenied(resp, e.what());
-        } catch (TaskKilledException& e) {
+        } catch (lgraph_api::TaskKilled& e) {
             RespondException(resp, e.what());
         } catch (LockUpgradeFailedException& e) {
             if (retry_time < max_retries) {
