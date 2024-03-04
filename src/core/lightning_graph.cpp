@@ -12,7 +12,6 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 #include <boost/algorithm/string.hpp>
-#include "db/galaxy.h"
 #include "core/index_manager.h"
 #include "core/lightning_graph.h"
 #include "import/import_config_parser.h"

@@ -18,7 +18,6 @@
 
 #include <boost/format.hpp>
 #include <boost/algorithm/string/join.hpp>
-#include <boost/algorithm/hex.hpp>
 #include <boost/asio.hpp>
 #include "fma-common/configuration.h"
 #include "tools/lgraph_log.h"

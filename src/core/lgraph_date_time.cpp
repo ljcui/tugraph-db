@@ -103,7 +103,7 @@ static char* PrintNDigits(char* buf, unsigned d) {
 
 void CheckDaysOverflow(int32_t days) {
     if (days < MinDaysSinceEpochForDate() || days > MaxDaysSinceEpochForDate()) {
-        throw OutOfRangeError(std::string("Failed to represent value with Date: out-of-bound.") +
+        throw OutOfRange(std::string("Failed to represent value with Date: out-of-bound.") +
                          "Value=" + std::to_string(days));
     }
 }
@@ -111,7 +111,7 @@ void CheckDaysOverflow(int32_t days) {
 void CheckDateTimeOverflow(int64_t microseconds_since_epoch) {
     if (microseconds_since_epoch < MinMicroSecondsSinceEpochForDateTime() ||
         microseconds_since_epoch > MaxMicroSecondsSinceEpochForDateTime()) {
-        throw OutOfRangeError(
+        throw OutOfRange(
             std::string("Failed to represent value with DateTime: out-of-bound.") +
                          "Value=" + std::to_string(microseconds_since_epoch));
     }

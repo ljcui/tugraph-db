@@ -794,7 +794,7 @@ TEST_F(TestLGraphApi, LGraphApi) {
         }
         {
             UT_LOG() << "Test Exception";
-            UT_EXPECT_THROW(throw OutOfRangeError("Out of Range"), OutOfRangeError);
+            UT_EXPECT_THROW(throw OutOfRange("Out of Range"), OutOfRange);
             UT_EXPECT_THROW_MSG(throw InvalidGalaxy(), "Invalid Galaxy");
             UT_EXPECT_THROW_MSG(throw InvalidGraphDB(), "Invalid GraphDB.");
             UT_EXPECT_THROW_MSG(throw InvalidTransaction(), "Invalid transaction.");
