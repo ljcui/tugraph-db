@@ -279,7 +279,7 @@ class AuditLogger {
         int64_t end_idx = 0;
         for (int64_t f_i = (int64_t)files.size() - 1; f_i >= 0; f_i--) {
             fma_common::InputFmaStream input(files[f_i]);
-            if (!input.Good()) throw std::runtime_error("Failed to open audit log file for index.");
+            if (!input.Good()) throw lgraph_api::AuditLogError("Failed to open audit log file for index.");
             if (input.Size() == 0) {
                 LOG_DEBUG() << "GetLogIdx. Skip " << files[f_i] << " for file_size=0";
                 continue;
@@ -408,7 +408,7 @@ class AuditLogger {
 
                 fma_common::InputFmaStream input(files[f_i]);
                 if (!input.Good())
-                    throw std::runtime_error("Failed to open audit log file for read.");
+                    throw lgraph_api::AuditLogError("Failed to open audit log file for read.");
                 if (input.Size() == 0) {
                     LOG_DEBUG()
                         << "Search audit log. Skip " << f << " for file size = 0";
@@ -502,7 +502,7 @@ class AuditLogger {
 
                 fma_common::InputFmaStream input(files[f_i]);
                 if (!input.Good())
-                    throw std::runtime_error("Failed to open audit log file for read.");
+                    throw lgraph_api::AuditLogError("Failed to open audit log file for read.");
                 if (input.Size() == 0) {
                     LOG_DEBUG()
                         << "Search audit log. Skip " << f << " for file size = 0";

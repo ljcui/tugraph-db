@@ -48,7 +48,7 @@ struct SymbolNode {
         };
         auto it = type_map.find(t);
         if (it == type_map.end()) {
-            throw std::runtime_error("Unknown SymbolNode::Type");
+            throw lgraph_api::UnknownSymbolNodeScope("Unknown SymbolNode::Type");
         }
         return it->second;
     }
@@ -61,7 +61,7 @@ struct SymbolNode {
         };
         auto it = scope_map.find(s);
         if (it == scope_map.end()) {
-            throw std::runtime_error("Unknown SymbolNode::Scope");
+            throw lgraph_api::UnknownSymbolNodeScope("Unknown SymbolNode::Scope");
         }
         return it->second;
     }

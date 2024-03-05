@@ -224,14 +224,14 @@ class ParallelVector {
      */
     explicit ParallelVector(size_t capacity)
         : destroyed_(false), capacity_(capacity), data_(nullptr), size_(0) {
-        if (capacity == 0) throw std::runtime_error("capacity cannot be 0");
+        if (capacity == 0) throw OlapError("capacity cannot be 0");
 #if USE_VALGRIND
         data_ = (T *)malloc(sizeof(T) * capacity_);
-        if (!data_) throw std::bad_alloc();
+        if (!data_) throw MallocError();
 #else
         data_ = (T *)mmap(nullptr, sizeof(T) * capacity_, PROT_READ | PROT_WRITE,
                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-        if (data_ == MAP_FAILED) throw std::runtime_error("memory allocation failed");
+        if (data_ == MAP_FAILED) throw MmapError("memory allocation failed");
 #endif
     }
 
@@ -246,14 +246,14 @@ class ParallelVector {
      */
     explicit ParallelVector(size_t capacity, size_t size)
         : destroyed_(false), capacity_(capacity), data_(nullptr), size_(size) {
-        if (capacity == 0) throw std::runtime_error("capacity cannot be 0");
+        if (capacity == 0) throw OlapError("capacity cannot be 0");
 #if USE_VALGRIND
         data_ = (T *)malloc(sizeof(T) * capacity_);
-        if (!data_) throw std::bad_alloc();
+        if (!data_) throw MallocError();
 #else
         data_ = (T *)mmap(nullptr, sizeof(T) * capacity_, PROT_READ | PROT_WRITE,
                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-        if (data_ == MAP_FAILED) throw std::runtime_error("memory allocation failed");
+        if (data_ == MAP_FAILED) throw MmapError("memory allocation failed");
 #endif
         for (size_t i = 0; i < size_; i++) {
             new (data_ + i) T();
@@ -337,10 +337,10 @@ class ParallelVector {
      */
     void Resize(size_t size) {
         if (size < size_) {
-            throw std::runtime_error("The new size is smaller than the current one.");
+            throw OlapError("The new size is smaller than the current one.");
         }
         if (size > capacity_) {
-            throw std::runtime_error("out of capacity.");
+            throw OlapError("out of capacity.");
         }
         for (size_t i = size_; i < size; i++) {
             new (data_ + i) T();
@@ -357,10 +357,10 @@ class ParallelVector {
      */
     void Resize(size_t size, const T &elem) {
         if (size < size_) {
-            throw std::runtime_error("The new size is smaller than the current one.");
+            throw OlapError("The new size is smaller than the current one.");
         }
         if (size > capacity_) {
-            throw std::runtime_error("out of capacity.");
+            throw OlapError("out of capacity.");
         }
         for (size_t i = size_; i < size; i++) {
             new (data_ + i) T(elem);
@@ -387,28 +387,28 @@ class ParallelVector {
      */
     void ReAlloc(size_t capacity) {
         if (capacity < capacity_) {
-            throw std::runtime_error("The new capacity is smaller than the current one.");
+            throw OlapError("The new capacity is smaller than the current one.");
         }
         if (capacity == 0) {
-            throw std::runtime_error("Capacity cannot be 0");
+            throw OlapError("Capacity cannot be 0");
         }
         if (capacity_ == 0) {
 #if USE_VALGRIND
             data_ = (T*)malloc(sizeof(T) * capacity);
-            if (!data_) throw std::bad_alloc();
+            if (!data_) throw MallocError();
 #else
             data_ = (T*)mmap(nullptr, sizeof(T) * capacity, PROT_READ | PROT_WRITE,
                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-            if (data_ == MAP_FAILED) throw std::runtime_error("memory alloction failed");
+            if (data_ == MAP_FAILED) throw MmapError("memory alloction failed");
 #endif
         } else {
 #if USE_VALGRIND
             data_ = (T*)realloc(data_, sizeof(T) * capacity);
-            if (!data_) throw std::bad_alloc();
+            if (!data_) throw MallocError();
 #else
             T* new_data = (T *)mmap(nullptr, sizeof(T) * capacity, PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-            if (new_data == MAP_FAILED) throw std::runtime_error("memory realloc failed");
+            if (new_data == MAP_FAILED) throw MmapError("memory realloc failed");
             if (size_ != 0) {
                 memcpy(new_data, data_, size_);
             }
@@ -452,10 +452,10 @@ class ParallelVector {
     void Append(const T &elem, bool atomic = true) {
         if (atomic) {
             size_t size = __sync_fetch_and_add(&size_, 1);
-            if (size + 1 > capacity_) throw std::runtime_error("out of capacity");
+            if (size + 1 > capacity_) throw OlapError("out of capacity");
             new (data_ + size) T(elem);
         } else {
-            if (size_ + 1 > capacity_) throw std::runtime_error("out of capacity");
+            if (size_ + 1 > capacity_) throw OlapError("out of capacity");
             new (data_ + size_) T(elem);
             size_ += 1;
         }
@@ -474,12 +474,12 @@ class ParallelVector {
     void Append(T *buf, size_t count, bool atomic = true) {
         if (atomic) {
             size_t size = __sync_fetch_and_add(&size_, count);
-            if (size + count > capacity_) throw std::runtime_error("out of capacity");
+            if (size + count > capacity_) throw OlapError("out of capacity");
             for (size_t i = 0; i < count; i++) {
                 new (data_ + size + i) T(buf[i]);
             }
         } else {
-            if (size_ + count > capacity_) throw std::runtime_error("out of capacity");
+            if (size_ + count > capacity_) throw OlapError("out of capacity");
             for (size_t i = 0; i < count; i++) {
                 new (data_ + size_ + i) T(buf[i]);
             }
@@ -499,12 +499,12 @@ class ParallelVector {
     void Append(ParallelVector<T> &other, bool atomic = true) {
         if (atomic) {
             size_t size = __sync_fetch_and_add(&size_, other.size_);
-            if (size + other.size_ > capacity_) throw std::runtime_error("out of capacity");
+            if (size + other.size_ > capacity_) throw OlapError("out of capacity");
             for (size_t i = 0; i < other.size_; i++) {
                 new (data_ + size + i) T(other.data_[i]);
             }
         } else {
-            if (size_ + other.size_ > capacity_) throw std::runtime_error("out of capacity");
+            if (size_ + other.size_ > capacity_) throw OlapError("out of capacity");
             for (size_t i = 0; i < other.size_; i++) {
                 new (data_ + size_ + i) T(other.data_[i]);
             }
@@ -680,7 +680,7 @@ class OlapBase {
 
     virtual void Construct() {
         if (this->num_vertices_ == 0 || this->num_edges_ == 0) {
-            throw std::runtime_error("Construct empty graph");
+            throw OlapError("Construct empty graph");
         }
 
         this->lock_array_.ReAlloc(this->num_vertices_);
@@ -984,7 +984,7 @@ class OlapBase {
             this->num_vertices_ = vertices;
             printf("set |V| to %lu\n", vertices);
         } else {
-            throw std::runtime_error("|V| can only be set before loading!\n");
+            throw OlapError("|V| can only be set before loading!\n");
         }
     }
 
@@ -1047,14 +1047,14 @@ class OlapBase {
 #if USE_VALGRIND
             thread_state[t_i] = (ThreadState *)malloc(sizeof(ThreadState));
             if (!thread_state[t_i]) {
-                throw std::bad_alloc();
+                throw MallocError();
             }
 #else
             thread_state[t_i] =
                 (ThreadState *)mmap(NULL, sizeof(ThreadState), PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             if ((void *)thread_state[t_i] == MAP_FAILED) {
-                throw std::runtime_error("memory allocation failed");
+                throw MmapError("memory allocation failed");
             }
 #endif
         }
@@ -1118,7 +1118,7 @@ class OlapBase {
 #endif
         }
         delete [] thread_state;
-        if (CheckKillThisTask()) throw std::runtime_error("Task killed");
+        if (CheckKillThisTask()) throw TaskKilled();
         return sum;
     }
 
@@ -1172,14 +1172,14 @@ class OlapBase {
 #if USE_VALGRIND
             thread_state[t_i] = (ThreadState *)malloc(sizeof(ThreadState));
             if (!thread_state[t_i]) {
-                throw std::bad_alloc();
+                throw MallocError();
             }
 #else
             thread_state[t_i] =
                 (ThreadState *)mmap(NULL, sizeof(ThreadState), PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             if ((void *)thread_state[t_i] == MAP_FAILED) {
-                throw std::runtime_error("memory allocation failed");
+                throw MmapError("memory allocation failed");
             }
 #endif
         }
@@ -1252,7 +1252,7 @@ class OlapBase {
 #endif
         }
         delete [] thread_state;
-        if (CheckKillThisTask()) throw std::runtime_error("Task killed");
+        if (CheckKillThisTask()) throw TaskKilled();
         return sum;
     }
 

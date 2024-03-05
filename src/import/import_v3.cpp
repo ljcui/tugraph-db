@@ -24,7 +24,8 @@
 
 namespace lgraph {
 namespace import_v3 {
-
+using lgraph_api::ImportV3Error;
+using lgraph_api::Filesystem;
 #define InvalidVid std::numeric_limits<VertexId>::max()
 
 Importer::Importer(Config config)
@@ -44,7 +45,7 @@ void Importer::OnErrorOffline(const std::string& msg) {
         if (!config_.import_online) {
             exit(-1);
         } else {
-            throw std::runtime_error(msg);
+            throw ImportV3Error(msg);
         }
     }
 }
@@ -70,7 +71,7 @@ void Importer::DoImportOffline() {
         if (!file.is_vertex_file) {
             if (!schemaDesc_.FindEdgeLabel(file.label)
                      .MeetEdgeConstraints(file.edge_src.label, file.edge_dst.label)) {
-                throw std::runtime_error(FMA_FMT("{} not meet the edge constraints", file.path));
+                throw ImportV3Error("{} not meet the edge constraints", file.path);
             }
             file.edge_src.id = schemaDesc_.FindVertexLabel(
                                               file.edge_src.label).GetPrimaryField().name;
@@ -125,7 +126,7 @@ void Importer::DoImportOffline() {
     auto& fs = fma_common::FileSystem::GetFileSystem(config_.intermediate_dir);
     fs.RemoveDir(config_.intermediate_dir);
     if (!fs.Mkdir(config_.intermediate_dir)) {
-        throw std::runtime_error(FMA_FMT("mkdir {} failed", config_.intermediate_dir));
+        throw Filesystem("mkdir {} failed", config_.intermediate_dir);
     }
 
     if (!data_files_.empty()) {
@@ -234,8 +235,7 @@ void Importer::VertexDataToSST() {
         rocksdb::DB* db;
         auto s = rocksdb::DB::Open(options, vid_path_, &db);
         if (!s.ok()) {
-            throw std::runtime_error(
-                FMA_FMT("Opening DB failed, error: {}", s.ToString().c_str()));
+            throw ImportV3Error("Opening DB failed, error: {}", s.ToString().c_str());
         }
         rocksdb_vids_.reset(db);
     }
@@ -254,7 +254,7 @@ void Importer::VertexDataToSST() {
         const std::string* file_path = nullptr;
     };
     if (!fma_common::file_system::MkDir(sst_files_path_)) {
-        throw std::runtime_error(FMA_FMT("failed to mkdir dir : {}", sst_files_path_));
+        throw Filesystem(FMA_FMT("failed to mkdir dir : {}", sst_files_path_));
     }
     BufferedBlobWriter blob_writer(db_->GetLightningGraph(), 1 << 20);
     std::atomic<uint64_t> pending_tasks(0);
@@ -306,7 +306,7 @@ void Importer::VertexDataToSST() {
                         start_vid = next_vid_;
                         next_vid_ += (VertexId)block.size();
                         if (next_vid_ >= lgraph::_detail::MAX_VID) {
-                            throw std::runtime_error(
+                            throw lgraph_api::MaxVidReached(
                                 FMA_FMT("next_vid {} reached the MAX_VID", next_vid_));
                         }
                     }
@@ -335,8 +335,7 @@ void Importer::VertexDataToSST() {
                                                         std::to_string(start_vid);
                             auto s = vertex_sst_writer->Open(sst_path);
                             if (!s.ok()) {
-                                throw std::runtime_error(
-                                    FMA_FMT("Failed to open vertex_sst_writer"));
+                                throw ImportV3Error("Failed to open vertex_sst_writer");
                             }
                             bool sst_empty = true;
                             auto hasBlob = dataBlock->schema->HasBlob();
@@ -397,8 +396,7 @@ void Importer::VertexDataToSST() {
                                 s = vertex_sst_writer->Put({(const char*)&vid, sizeof(vid)},
                                                     {value.Data(), value.Size()});
                                 if (!s.ok()) {
-                                    throw std::runtime_error(
-                                        FMA_FMT("vertex_sst_writer.Put error, {}", s.ToString()));
+                                    throw ImportV3Error("vertex_sst_writer.Put error, {}", s.ToString());
                                 }
                                 sst_empty = false;
                             }
@@ -406,8 +404,7 @@ void Importer::VertexDataToSST() {
                             if (!sst_empty) {
                                 s = vertex_sst_writer->Finish();
                                 if (!s.ok()) {
-                                    throw std::runtime_error(FMA_FMT(
-                                        "vertex_sst_writer.Finish error, {}", s.ToString()));
+                                    throw ImportV3Error("vertex_sst_writer.Finish error, {}", s.ToString());
                                 }
                             } else {
                                 vertex_sst_writer.reset();
@@ -421,22 +418,19 @@ void Importer::VertexDataToSST() {
                                     sst_files_path_ + "/vid_" +
                                     std::to_string(dataBlock->start_vid));
                                 if (!s.ok()) {
-                                    throw std::runtime_error(
-                                        FMA_FMT("Failed to open vid_sst_writer"));
+                                    throw ImportV3Error("Failed to open vid_sst_writer");
                                 }
                                 LGRAPH_PSORT(vec_kvs.begin(), vec_kvs.end());
                                 for (auto& item : vec_kvs) {
                                     s = vid_sst_writer.Put(item, "");
                                     if (!s.ok()) {
-                                        throw std::runtime_error(
-                                            FMA_FMT("vid_sst_writer.Put error, {}", s.ToString()));
+                                        throw ImportV3Error("vid_sst_writer.Put error, {}", s.ToString());
                                     }
                                 }
                                 std::vector<std::string>().swap(vec_kvs);
                                 s = vid_sst_writer.Finish();
                                 if (!s.ok()) {
-                                    throw std::runtime_error(
-                                        FMA_FMT("vid_sst_writer.Finish error, {}", s.ToString()));
+                                    throw ImportV3Error("vid_sst_writer.Finish error, {}", s.ToString());
                                 }
                             }
                         } catch (...) {
@@ -463,7 +457,7 @@ void Importer::VertexDataToSST() {
             if (!config_.import_online) {
                 exit(-1);
             } else {
-                throw std::runtime_error("vids in memory are empty, no valid vertex data");
+                throw ImportV3Error("vids in memory are empty, no valid vertex data");
             }
         }
     }
@@ -481,23 +475,21 @@ void Importer::VertexDataToSST() {
             if (!config_.import_online) {
                 exit(-1);
             } else {
-                throw std::runtime_error("vids in sst are empty, no valid vertex data");
+                throw ImportV3Error("vids in sst are empty, no valid vertex data");
             }
         }
         rocksdb::IngestExternalFileOptions op;
         op.move_files = true;
         auto s = rocksdb_vids_->IngestExternalFile(ingest_files, op);
         if (!s.ok()) {
-            throw std::runtime_error(
-                FMA_FMT("Importing vid files failed, error: {}", s.ToString().c_str()));
+            throw ImportV3Error("Importing vid files failed, error: {}", s.ToString().c_str());
         }
 
         rocksdb::CompactRangeOptions options;
         options.max_subcompactions = 8;
         s = rocksdb_vids_->CompactRange(options, nullptr, nullptr);
         if (!s.ok()) {
-            throw std::runtime_error(
-                FMA_FMT("vids CompactRange failed, error: {}", s.ToString().c_str()));
+            throw ImportV3Error("vids CompactRange failed, error: {}", s.ToString().c_str());
         }
         if (!config_.import_online) {
             LOG_INFO() << "vids CompactRange, time: " << fma_common::GetTime() - begin << "s";
@@ -656,7 +648,7 @@ void Importer::EdgeDataToSST() {
                                                    std::to_string(num);
                             auto s = sst_file_writer->Open(sst_path);
                             if (!s.ok()) {
-                                throw std::runtime_error(FMA_FMT("failed to open sst_file_writer"));
+                                throw ImportV3Error("failed to open sst_file_writer");
                             }
                             std::vector<KV> vec_kvs;
                             size_t first_id_pos =
@@ -1003,7 +995,7 @@ void Importer::VertexPrimaryIndexToLmdb() {
         std::string prev;
         std::ofstream wf(dirty_data_path_, std::ios::out | std::ios::binary);
         if (!wf) {
-            throw std::runtime_error(FMA_FMT("cannot open file: {} to write", dirty_data_path_));
+            throw Filesystem("cannot open file: {} to write", dirty_data_path_);
         }
         uint64_t dirty_vids = 0;
         for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
@@ -1055,7 +1047,7 @@ void Importer::RocksdbToLmdb() {
         rocksdb::DB* db;
         auto s = rocksdb::DB::Open(options, rocksdb_path_, &db);
         if (!s.ok()) {
-            throw std::runtime_error(FMA_FMT("Opening DB failed, error: {}", s.ToString().c_str()));
+            throw ImportV3Error("Opening DB failed, error: {}", s.ToString().c_str());
         }
         rocksdb.reset(db);
     }
@@ -1069,7 +1061,7 @@ void Importer::RocksdbToLmdb() {
         if (!config_.import_online) {
             exit(-1);
         } else {
-            throw std::runtime_error("no sst files are created, "
+            throw ImportV3Error("no sst files are created, "
                 "please check if the input vertex and edge files are valid");
         }
     }
@@ -1077,8 +1069,7 @@ void Importer::RocksdbToLmdb() {
     op.move_files = true;
     auto s = rocksdb->IngestExternalFile(ingest_files, op);
     if (!s.ok()) {
-        throw std::runtime_error(
-            FMA_FMT("Importing files failed, error: {}", s.ToString().c_str()));
+        throw ImportV3Error("Importing files failed, error: {}", s.ToString().c_str());
     }
     if (config_.compact) {
         auto begin = fma_common::GetTime();
@@ -1086,8 +1077,7 @@ void Importer::RocksdbToLmdb() {
         options.max_subcompactions = 8;
         s = rocksdb->CompactRange(options, nullptr, nullptr);
         if (!s.ok()) {
-            throw std::runtime_error(
-                FMA_FMT("CompactRange failed, error: {}", s.ToString().c_str()));
+            throw ImportV3Error("CompactRange failed, error: {}", s.ToString().c_str());
         }
         if (!config_.import_online) {
             LOG_INFO() << "CompactRange, time: " << fma_common::GetTime() - begin << "s";
@@ -1099,7 +1089,7 @@ void Importer::RocksdbToLmdb() {
     if (!config_.keep_vid_in_memory) {
         std::ifstream rf(dirty_data_path_, std::ios::in | std::ios::binary);
         if (!rf) {
-            throw std::runtime_error(FMA_FMT("cannot open file: {} to read", dirty_data_path_));
+            throw Filesystem("cannot open file: {} to read", dirty_data_path_);
         }
         rocksdb::WriteOptions wos;
         wos.disableWAL = true;
@@ -1108,8 +1098,7 @@ void Importer::RocksdbToLmdb() {
             rf.read((char*)&vid, sizeof(VertexId));
             auto status = rocksdb->Delete(wos, rocksdb::Slice((char*)&vid, sizeof(VertexId)));
             if (!status.ok()) {
-                throw std::runtime_error(
-                    FMA_FMT("rocksdb delete, error: {}", status.ToString().c_str()));
+                throw ImportV3Error("rocksdb delete, error: {}", status.ToString().c_str());
             }
         }
         rf.close();
@@ -1448,7 +1437,7 @@ AccessControlledDB Importer::OpenGraph(Galaxy& galaxy, bool empty_db) {
     if (graphs.find(config_.graph) != graphs.end()) {
         if (!empty_db) {
             if (!config_.delete_if_exists) {
-                throw std::runtime_error(
+                throw ImportV3Error(
                     "Graph already exists. If you want to overwrite the graph, use --overwrite "
                     "true.");
             } else {

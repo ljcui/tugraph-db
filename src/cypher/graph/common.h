@@ -51,7 +51,7 @@ struct Path {
     size_t Length() const { return dirs_.size(); }
 
     void SetStart(int64_t start_id) {
-        if (Length() != 0) throw std::runtime_error("Cannot set start for path.");
+        if (Length() != 0) throw lgraph_api::CypherPathError("Cannot set start for path.");
         ids_.clear();
         ids_.emplace_back(start_id);
     }
@@ -70,7 +70,7 @@ struct Path {
             ids_.push_back(edge.eid);
             ids_.push_back(edge.src);
         } else {
-            throw std::runtime_error("The edge doesn't match the path's end.");
+            throw lgraph_api::CypherPathError("The edge doesn't match the path's end.");
         }
     }
 
@@ -97,7 +97,7 @@ struct Path {
     lgraph::EdgeUid GetNthEdge(size_t n) const {
         size_t length = dirs_.size();
         if (n >= length) {
-            throw std::runtime_error("Access out of range.");
+            throw lgraph_api::CypherPathError("Access out of range.");
         }
         return dirs_[n]
                    ? lgraph::EdgeUid(ids_[0 + n * 2], ids_[2 + n * 2], lids_[n], 0, ids_[1 + n * 2])

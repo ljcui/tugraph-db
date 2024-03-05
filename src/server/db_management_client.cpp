@@ -76,6 +76,7 @@ void DBManagementClient::StopHeartbeat() {
     heartbeat_cond_.notify_all();
 }
 
+using lgraph_api::DBManagementClientError;
 void DBManagementClient::CreateJob(const std::string task_id, const std::string task_name,
                                    const int64_t create_time, const std::string period,
                                    const std::string name, const std::string type,
@@ -99,11 +100,11 @@ void DBManagementClient::CreateJob(const std::string task_id, const std::string 
     stub.handleRequest(&cntl, &request, &response, nullptr);
     if (cntl.Failed()) {
         LOG_ERROR() << "[CreateJob REQUEST]: " << cntl.ErrorText();
-        throw std::runtime_error("Request failed. Reason: " + cntl.ErrorText());
+        throw DBManagementClientError("Request failed. Reason: " + cntl.ErrorText());
     }
     if (response.response_code() != DbMgr::ResponseCode::SUCCESS) {
         LOG_ERROR() << "[CreateJob REQUEST]: response code is not success.";
-        throw std::runtime_error("failed to create job. Reason: " + response.message());
+        throw DBManagementClientError("failed to create job. Reason: " + response.message());
     }
     LOG_INFO() << "[CreateJob REQUEST]: success, TaskId is " << task_id;
 }
@@ -125,11 +126,11 @@ void DBManagementClient::UpdateJobStatus(const std::string task_id, const std::s
     stub.handleRequest(&cntl, &request, &response, nullptr);
     if (cntl.Failed()) {
         LOG_ERROR() << "[UpdateJobStatus REQUEST]: " << cntl.ErrorText();
-        throw std::runtime_error("Request failed. Reason: " + cntl.ErrorText());
+        throw DBManagementClientError("Request failed. Reason: " + cntl.ErrorText());
     }
     if (response.response_code() != DbMgr::ResponseCode::SUCCESS) {
         LOG_ERROR() << "[UpdateJobStatus REQUEST]: response code is not success.";
-        throw std::runtime_error("failed to update job status. Reason: " + response.message());
+        throw DBManagementClientError("failed to update job status. Reason: " + response.message());
     }
 
     LOG_INFO() << "[UpdateJobStatus REQUEST]: success";
@@ -147,11 +148,11 @@ std::vector<DbMgr::Job> DBManagementClient::GetJobStatus() {
     stub.handleRequest(&cntl, &request, &response, nullptr);
     if (cntl.Failed()) {
         LOG_ERROR() << "[GetJobStatus REQUEST]: " << cntl.ErrorText();
-        throw std::runtime_error("Request failed. Reason: " + cntl.ErrorText());
+        throw DBManagementClientError("Request failed. Reason: " + cntl.ErrorText());
     }
     if (response.response_code() != DbMgr::ResponseCode::SUCCESS) {
         LOG_ERROR() << "[GetJobStatus REQUEST]: response code is not success.";
-        throw std::runtime_error("failed to get job status. Reason: " + response.message());
+        throw DBManagementClientError("failed to get job status. Reason: " + response.message());
     }
 
     std::vector<DbMgr::Job> job_list;
@@ -174,11 +175,11 @@ DbMgr::Job DBManagementClient::GetJobStatusById(const std::string task_id) {
     stub.handleRequest(&cntl, &request, &response, nullptr);
     if (cntl.Failed()) {
         LOG_ERROR() << "[GetJobStatusById REQUEST]: " << cntl.ErrorText();
-        throw std::runtime_error("Request failed. Reason: " + cntl.ErrorText());
+        throw DBManagementClientError("Request failed. Reason: " + cntl.ErrorText());
     }
     if (response.response_code() != DbMgr::ResponseCode::SUCCESS) {
         LOG_ERROR() << "[GetJobStatusById REQUEST]: response code is not success.";
-        throw std::runtime_error("failed to get job status by id. Reason: " + response.message());
+        throw DBManagementClientError("failed to get job status by id. Reason: " + response.message());
     }
 
     LOG_INFO() << "[GetJobStatusById REQUEST]: success";
@@ -200,11 +201,11 @@ DbMgr::AlgoResult DBManagementClient::GetJobResult(const std::string task_id) {
     stub.handleRequest(&cntl, &request, &response, nullptr);
     if (cntl.Failed()) {
         LOG_ERROR() << "[GetJobResult REQUEST]: " << cntl.ErrorText();
-        throw std::runtime_error("Request failed. Reason: " + cntl.ErrorText());
+        throw DBManagementClientError("Request failed. Reason: " + cntl.ErrorText());
     }
     if (response.response_code() != DbMgr::ResponseCode::SUCCESS) {
         LOG_ERROR() << "[GetJobResult REQUEST]: response code is not success.";
-        throw std::runtime_error("failed to get job result. Reason: " + response.message());
+        throw DBManagementClientError("failed to get job result. Reason: " + response.message());
     }
 
     LOG_INFO() << "[GetJobResult REQUEST]: success";
@@ -223,11 +224,11 @@ void DBManagementClient::DeleteJob(const std::string task_id) {
     stub.handleRequest(&cntl, &request, &response, nullptr);
     if (cntl.Failed()) {
         LOG_ERROR() << "[DeleteJob REQUEST]: " << cntl.ErrorText();
-        throw std::runtime_error("Request failed. Reason: " + cntl.ErrorText());
+        throw DBManagementClientError("Request failed. Reason: " + cntl.ErrorText());
     }
     if (response.response_code() != DbMgr::ResponseCode::SUCCESS) {
         LOG_ERROR() << "[DeleteJob REQUEST]: response code is not success.";
-        throw std::runtime_error("failed to delete job. Reason: " + response.message());
+        throw DBManagementClientError("failed to delete job. Reason: " + response.message());
     }
 
     LOG_INFO() << "[DeleteJob REQUEST]: success";

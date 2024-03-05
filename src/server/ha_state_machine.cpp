@@ -14,13 +14,13 @@
 namespace braft {
     DECLARE_bool(raft_enable_witness_to_leader);
 }
-
+using lgraph_api::HaStateMachineError;
 void lgraph::HaStateMachine::Start() {
     // check ha node can be started
     butil::EndPoint addr;
     butil::str2endpoint(config_.host.c_str(), config_.rpc_port, &addr);
     if (butil::IP_ANY == addr.ip) {
-        throw std::runtime_error("TuGraph can't be started from IP_ANY (0.0.0.0) in HA mode.");
+        throw HaStateMachineError("TuGraph can't be started from IP_ANY (0.0.0.0) in HA mode.");
     }
     if (node_) {
         LOG_WARN() << "HaStateMachine already started.";
@@ -33,7 +33,7 @@ void lgraph::HaStateMachine::Start() {
         const int64_t BOOTSTRAP_LOG_INDEX = 1024;
         if (config_.ha_is_witness) {
             ::lgraph::StateMachine::Stop();
-            throw std::runtime_error("Can not bootstrap on witness node");
+            throw HaStateMachineError("Can not bootstrap on witness node");
         }
 #if LGRAPH_SHARE_DIR
         LOG_WARN() << "Bootstrapping is not necessary in this version, ignored";
@@ -63,8 +63,7 @@ void lgraph::HaStateMachine::Start() {
         int r = braft::bootstrap(options);
         if (r != 0) {
             ::lgraph::StateMachine::Stop();
-            throw std::runtime_error(
-                fma_common::StringFormatter::Format("Failed to bootstrap node: ec={}", r));
+            throw HaStateMachineError("Failed to bootstrap node: ec={}", r);
         }
         LOG_DEBUG() << "Bootstrap succeed. Log index set to " << galaxy_->GetRaftLogIndex();
 #endif
@@ -79,7 +78,7 @@ void lgraph::HaStateMachine::Start() {
     } else if (config_.ha_bootstrap_role == 0) {
         if (node_options.initial_conf.parse_from(config_.ha_conf) != 0) {
             ::lgraph::StateMachine::Stop();
-            throw std::runtime_error("Fail to parse configuration " + config_.ha_conf);
+            throw HaStateMachineError("Fail to parse configuration " + config_.ha_conf);
         }
     }
     braft::FLAGS_raft_enable_witness_to_leader = config_.ha_enable_witness_to_leader;
@@ -96,8 +95,7 @@ void lgraph::HaStateMachine::Start() {
     int r = node->init(node_options);
     if (r != 0) {
         ::lgraph::StateMachine::Stop();
-        throw std::runtime_error(
-            fma_common::StringFormatter::Format("Failed to init raft node: ec={}", r));
+        throw HaStateMachineError("Failed to init raft node: ec={}", r);
     }
     node_ = node;
 
@@ -117,7 +115,7 @@ void lgraph::HaStateMachine::Start() {
         braft::Configuration init_conf;
         if (init_conf.parse_from(config_.ha_conf) != 0) {
             ::lgraph::StateMachine::Stop();
-            throw std::runtime_error("Fail to parse configuration " + config_.ha_conf);
+            throw HaStateMachineError("Fail to parse configuration " + config_.ha_conf);
         }
         for (int t = 0; t < config_.ha_node_join_group_s; t++) {
             fma_common::SleepS(1);
@@ -131,7 +129,7 @@ void lgraph::HaStateMachine::Start() {
                 LOG_WARN() << "Failed to join group: " << status.error_str();
         }
     }
-    throw std::runtime_error("Failed to start node && join group!");
+    throw HaStateMachineError("Failed to start node && join group!");
 }
 
 void lgraph::HaStateMachine::Stop() {

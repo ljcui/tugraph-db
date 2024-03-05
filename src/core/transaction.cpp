@@ -732,7 +732,7 @@ std::string Transaction::_OnlineImportBatchAddVertexes(
         } catch (std::exception& e) {
             // if index fails, delete the vertex & the incomplete index
             bool success = graph_->DeleteVertex(*txn_, newvid);
-            if (!success) throw std::runtime_error("failed to undo AddVertex");
+            if (!success) throw lgraph_api::OnlineImportError("failed to undo AddVertex");
             if (schema->DetachProperty()) {
                 schema->DeleteDetachedVertexProperty(*txn_, newvid);
             }
@@ -779,7 +779,7 @@ std::string Transaction::_OnlineImportBatchAddEdges(
             schema->AddEdgeToIndex(*txn_, euid, record, created_index);
         } catch (std::exception& e) {
             bool success = graph_->DeleteEdge(*txn_, euid);
-            if (!success) throw std::runtime_error("failed to undo AddEdge");
+            if (!success) throw lgraph_api::OnlineImportError("failed to undo AddEdge");
             if (schema->DetachProperty()) {
                 schema->GetDetachedEdgeProperty(*txn_, euid);
             }

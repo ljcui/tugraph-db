@@ -67,12 +67,12 @@ void Worker::Delegate(const std::function<void()> &work) {
 ParallelBitset::ParallelBitset(size_t size) : size_(size) {
 #if USE_VALGRIND
     data_ = (uint64_t *)malloc(sizeof(uint64_t) * (WORD_OFFSET(size_) + 1));
-    if (!data_) throw std::bad_alloc();
+    if (!data_) throw lgraph_api::MallocError();
 #else
     data_ = (uint64_t *)mmap(nullptr, sizeof(uint64_t) * (WORD_OFFSET(size_) + 1),
                              PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
                              -1, 0);
-    if (data_ == MAP_FAILED) throw std::runtime_error("memory allocation failed");
+    if (data_ == MAP_FAILED) throw lgraph_api::MmapError("memory allocation failed");
 #endif
     Clear();
 }
@@ -123,7 +123,7 @@ bool ParallelBitset::Add(size_t i) {
 }
 
 void ParallelBitset::Swap(ParallelBitset &other) {
-    if (size_ != other.size_) throw std::runtime_error("size mismatch!");
+    if (size_ != other.size_) throw lgraph_api::ParallelBitsetError("size mismatch!");
     std::swap(data_, other.data_);
 }
 

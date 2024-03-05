@@ -24,7 +24,7 @@
 namespace lgraph_api {
 #define ThrowIfInvalid()                                                        \
     do {                                                                        \
-        if (!txn_->IsValid()) throw std::runtime_error("Invalid transaction."); \
+        if (!txn_->IsValid()) throw lgraph_api::InvalidTransaction("Invalid transaction."); \
     } while (0)
 
 #define RefreshAndReturn(stmt)    \
@@ -303,7 +303,7 @@ VertexIterator Transaction::GetVertexByUniqueIndex(const std::string& label_name
     ThrowIfInvalid();
     lgraph::VertexIndexIterator iit = txn_->GetVertexIndexIterator(
         label_name, field_name, field_value_string, field_value_string);
-    if (!iit.IsValid()) throw std::runtime_error("No vertex found with specified index value.");
+    if (!iit.IsValid()) throw lgraph_api::NoVertexFoundByIndex("No vertex found with specified index value.");
     return VertexIterator(txn_->GetVertexIterator(iit.GetVid()), txn_);
 }
 
@@ -313,7 +313,7 @@ OutEdgeIterator Transaction::GetEdgeByUniqueIndex(const std::string& label_name,
     ThrowIfInvalid();
     lgraph::EdgeIndexIterator eit =
         txn_->GetEdgeIndexIterator(label_name, field_name, field_value_string, field_value_string);
-    if (!eit.IsValid()) throw std::runtime_error("No Edge found with specified index value.");
+    if (!eit.IsValid()) throw lgraph_api::NoEdgeFoundByIndex("No Edge found with specified index value.");
     EdgeUid euid;
     euid = eit.GetUid();
     return GetOutEdgeIterator(euid, false);
@@ -325,7 +325,7 @@ VertexIterator Transaction::GetVertexByUniqueIndex(const std::string& label_name
     ThrowIfInvalid();
     lgraph::VertexIndexIterator iit =
         txn_->GetVertexIndexIterator(label_name, field_name, field_value, field_value);
-    if (!iit.IsValid()) throw std::runtime_error("No vertex found with specified index value.");
+    if (!iit.IsValid()) throw lgraph_api::NoVertexFoundByIndex("No vertex found with specified index value.");
     return VertexIterator(txn_->GetVertexIterator(iit.GetVid()), txn_);
 }
 
@@ -335,7 +335,7 @@ OutEdgeIterator Transaction::GetEdgeByUniqueIndex(const std::string& label_name,
     ThrowIfInvalid();
     lgraph::EdgeIndexIterator eit =
         txn_->GetEdgeIndexIterator(label_name, field_name, field_value, field_value);
-    if (!eit.IsValid()) throw std::runtime_error("No Edge found with specified index value.");
+    if (!eit.IsValid()) throw lgraph_api::NoEdgeFoundByIndex("No Edge found with specified index value.");
     EdgeUid euid;
     euid = eit.GetUid();
     return GetOutEdgeIterator(euid, false);
@@ -346,7 +346,7 @@ VertexIterator Transaction::GetVertexByUniqueIndex(size_t label_id, size_t field
     ThrowIfInvalid();
     lgraph::VertexIndexIterator iit =
         txn_->GetVertexIndexIterator(label_id, field_id, field_value, field_value);
-    if (!iit.IsValid()) throw std::runtime_error("No vertex found with specified index value.");
+    if (!iit.IsValid()) throw lgraph_api::NoVertexFoundByIndex("No vertex found with specified index value.");
 
     return VertexIterator(txn_->GetVertexIterator(iit.GetVid()), txn_);
 }
@@ -356,7 +356,7 @@ OutEdgeIterator Transaction::GetEdgeByUniqueIndex(size_t label_id, size_t field_
     ThrowIfInvalid();
     lgraph::EdgeIndexIterator eit =
         txn_->GetEdgeIndexIterator(label_id, field_id, field_value, field_value);
-    if (!eit.IsValid()) throw std::runtime_error("No Edge found with specified index value.");
+    if (!eit.IsValid()) throw lgraph_api::NoEdgeFoundByIndex("No Edge found with specified index value.");
 
     EdgeUid euid;
     euid = eit.GetUid();

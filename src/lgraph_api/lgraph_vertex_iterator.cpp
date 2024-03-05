@@ -24,8 +24,8 @@
 namespace lgraph_api {
 #define ThrowIfInvalid()                                                        \
     do {                                                                        \
-        if (!txn_->IsValid()) throw std::runtime_error("Invalid transaction."); \
-        if (!it_->IsValid()) throw std::runtime_error("Invalid iterator.");     \
+        if (!txn_->IsValid()) throw lgraph_api::InvalidTransaction("Invalid transaction."); \
+        if (!it_->IsValid()) throw lgraph_api::InvalidIterator("Invalid iterator.");     \
     } while (0)
 
 #define RefreshAndReturn(stmt)    \
@@ -58,7 +58,7 @@ bool VertexIterator::Next() {
 }
 
 bool VertexIterator::Goto(int64_t vid, bool nearest) {
-    if (!txn_->IsValid()) throw std::runtime_error("Invalid transaction.");
+    if (!txn_->IsValid()) throw lgraph_api::InvalidTransaction("Invalid transaction.");
     return it_->Goto(vid, nearest);
 }
 

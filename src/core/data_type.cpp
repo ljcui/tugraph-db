@@ -22,7 +22,7 @@ AutoCleanDir::AutoCleanDir(const std::string& dir, bool create_empty) {
     dir_ = dir;
     fma_common::file_system::RemoveDir(dir_);
     if (!fma_common::file_system::MkDir(dir_))
-        throw std::runtime_error("Failed to create dir " + dir_);
+        throw lgraph_api::Filesystem("Failed to create dir " + dir_);
 }
 
 void AutoCleanDir::Clean() { fma_common::file_system::RemoveDir(dir_); }

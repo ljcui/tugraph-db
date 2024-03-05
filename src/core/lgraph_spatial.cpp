@@ -355,7 +355,7 @@ std::string Spatial<SRID_Type>::AsEWKB() const {
         case SpatialType::POLYGON:
             return polygon_->AsEWKB();
         default:
-            throw std::runtime_error("Unknown SRID Type");
+            throw lgraph_api::UnknownSpatialType("Unknown SRID Type");
     }
 }
 
@@ -371,7 +371,7 @@ std::string Spatial<SRID_Type>::AsEWKT() const {
         case SpatialType::POLYGON:
             return polygon_->AsEWKT();
         default:
-            throw std::runtime_error("Unknown SRID Type");
+            throw lgraph_api::UnknownSpatialType("Unknown SRID Type");
     }
 }
 

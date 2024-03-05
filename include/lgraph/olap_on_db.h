@@ -280,9 +280,9 @@ class OlapOnDB : public OlapBase<EdgeData> {
         if (this->num_edges_ == 0) {
             throw InputError("The graph edge cannot be empty");
         }
-        if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+        if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
         if (this->num_vertices_ == 0) {
-            throw std::runtime_error("The olapondb graph cannot be empty");
+            throw OlapOnDBError("The olapondb graph cannot be empty");
         }
         this->lock_array_.Resize(this->num_vertices_);
         this->lock_array_.Fill(false);
@@ -470,7 +470,7 @@ class OlapOnDB : public OlapBase<EdgeData> {
                 {};
             }
         });
-        if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+        if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
     }
 
     void ConstructWithVid() {
@@ -592,9 +592,9 @@ class OlapOnDB : public OlapBase<EdgeData> {
             this->num_edges_ = this->out_edges_.Size();
         }
 
-        if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+        if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
         if (this->num_vertices_ == 0) {
-            throw std::runtime_error("The olapondb graph cannot be empty");
+            throw OlapOnDBError("The olapondb graph cannot be empty");
         }
         this->lock_array_.Resize(this->num_vertices_);
         this->lock_array_.Fill(false);
@@ -779,7 +779,7 @@ class OlapOnDB : public OlapBase<EdgeData> {
             }
         });
 
-        if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+        if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
     }
 
     void ConstructWithDegree() {
@@ -992,7 +992,7 @@ class OlapOnDB : public OlapBase<EdgeData> {
           vertex_filter_(vertex_filter),
           out_edge_filter_(out_edge_filter) {
         if (txn.GetNumVertices() == 0) {
-            throw std::runtime_error("The graph cannot be empty");
+            throw OlapOnDBError("The graph cannot be empty");
         }
         if (vertex_filter != nullptr) {
             flags_ |= SNAPSHOT_IDMAPPING;
@@ -1016,7 +1016,7 @@ class OlapOnDB : public OlapBase<EdgeData> {
                            txn_(txn),
                            flags_(flags) {
         if (txn.GetNumVertices() == 0) {
-            throw std::runtime_error("The graph cannot be empty");
+            throw OlapOnDBError("The graph cannot be empty");
         }
         flags_ |= SNAPSHOT_IDMAPPING;
         Init(txn.GetNumVertices());
@@ -1184,9 +1184,9 @@ class OlapOnDB : public OlapBase<EdgeData> {
         if (this->num_edges_ == 0) {
             throw InputError("The graph edge cannot be empty");
         }
-        if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+        if (ShouldKillThisTask(task_ctx)) throw TaskKilled("");
         if (this->num_vertices_ == 0) {
-            throw std::runtime_error("The olapondb graph cannot be empty");
+            throw OlapOnDBError("The olapondb graph cannot be empty");
         }
         this->lock_array_.Resize(this->num_vertices_);
         this->lock_array_.Fill(false);
@@ -1374,7 +1374,7 @@ class OlapOnDB : public OlapBase<EdgeData> {
                 {};
             }
         });
-        if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+        if (ShouldKillThisTask(task_ctx)) throw TaskKilled("");
     }
 
     OlapOnDB() = delete;
@@ -1444,7 +1444,7 @@ class OlapOnDB : public OlapBase<EdgeData> {
                 }
             }
         }
-        if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+        if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
         return a;
     }
 

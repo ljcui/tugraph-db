@@ -104,7 +104,7 @@ int LGraphServer::Start() {
         config_->snapshot_dir = config_->db_dir + "/snapshot";
     }
     if (config_->ha_snapshot_interval_s > 21 * 24 * 3600) {
-        throw std::runtime_error(
+        throw lgraph_api::HaConfigError(
             "The maximum value of ha_snapshot_interval_s is 1814400s (21*24*3600s)");
     }
 

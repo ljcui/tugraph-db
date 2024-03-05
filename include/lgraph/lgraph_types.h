@@ -48,7 +48,7 @@ inline static std::string to_string(const AccessLevel& v) {
         case AccessLevel::READ:    return "READ";
         case AccessLevel::WRITE:   return "WRITE";
         case AccessLevel::FULL:    return "FULL";
-        default:   throw std::runtime_error("Unknown AccessLevel");
+        default:   throw UnknownType("Unknown AccessLevel");
     }
 }
 
@@ -66,7 +66,7 @@ inline static std::string to_string(const FieldAccessLevel& v) {
         case FieldAccessLevel::NONE:    return "NONE";
         case FieldAccessLevel::READ:    return "READ";
         case FieldAccessLevel::WRITE:   return "WRITE";
-        default:   throw std::runtime_error("Unknown AccessLevel");
+        default:   throw UnknownType("Unknown AccessLevel");
     }
 }
 
@@ -80,7 +80,7 @@ inline static std::string to_string(const GraphQueryType& v) {
     switch (v) {
         case GraphQueryType::CYPHER:    return "CYPHER";
         case GraphQueryType::GQL:       return "GQL";
-        default:   throw std::runtime_error("Unknown GraphQueryType");
+        default:   throw UnknownType("Unknown GraphQueryType");
     }
 }
 
@@ -125,7 +125,7 @@ struct EdgeOptions : LabelOptions {
         case TemporalFieldOrder::DESC:
             return "DESC";
         default:
-            throw std::runtime_error("Unknown TemporalFieldOrder");
+            throw UnknownType("Unknown TemporalFieldOrder");
         }
     }
 
@@ -239,7 +239,7 @@ inline const std::string to_string(FieldType v) {
     case SPATIAL:
         return "SPATIAL";
     default:
-        throw std::runtime_error("Unknown Field Type");
+        throw UnknownType("Unknown Field Type");
     }
 }
 
@@ -317,7 +317,7 @@ inline const std::string to_string(LGraphType type) {
     case LGraphType::ANY:
         return "ANY";
     default:
-        throw std::runtime_error("Unknown LGraph Type");
+        throw UnknownType("Unknown LGraph Type");
     }
 }
 
@@ -658,7 +658,7 @@ struct FieldData {
         switch (type) {
         case FieldType::NUL:
         case FieldType::BOOL:
-            throw std::bad_cast();
+            throw BadCast();
         case FieldType::INT8:
             return static_cast<int64_t>(data.int8);
         case FieldType::INT16:
@@ -677,7 +677,7 @@ struct FieldData {
         case FieldType::LINESTRING:
         case FieldType::POLYGON:
         case FieldType::SPATIAL:
-            throw std::bad_cast();
+            throw BadCast();
         }
         return 0;
     }
@@ -697,7 +697,7 @@ struct FieldData {
         case FieldType::INT16:
         case FieldType::INT32:
         case FieldType::INT64:
-            throw std::bad_cast();
+            throw BadCast();
         case FieldType::FLOAT:
             return static_cast<double>(data.sp);
         case FieldType::DOUBLE:
@@ -710,7 +710,7 @@ struct FieldData {
         case FieldType::LINESTRING:
         case FieldType::POLYGON:
         case FieldType::SPATIAL:
-            throw std::bad_cast();
+            throw BadCast();
         }
         return 0.;
     }
@@ -734,7 +734,7 @@ struct FieldData {
             return *data.buf;
         default:
             {
-                throw std::bad_cast();
+                throw BadCast();
                 static const std::string _;
                 return _;
             }
@@ -746,122 +746,122 @@ struct FieldData {
 
     inline bool AsBool() const {
         if (type == FieldType::BOOL) return data.boolean;
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline int8_t AsInt8() const {
         if (type == FieldType::INT8) return data.int8;
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline int16_t AsInt16() const {
         if (type == FieldType::INT16) return data.int16;
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline int32_t AsInt32() const {
         if (type == FieldType::INT32) return data.int32;
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline int64_t AsInt64() const {
         if (type == FieldType::INT64) return data.int64;
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline float AsFloat() const {
         if (type == FieldType::FLOAT) return data.sp;
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline double AsDouble() const {
         if (type == FieldType::DOUBLE) return data.dp;
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline ::lgraph_api::Date AsDate() const {
         if (type == FieldType::DATE) return ::lgraph_api::Date(data.int32);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline ::lgraph_api::DateTime AsDateTime() const {
         if (type == FieldType::DATETIME) return ::lgraph_api::DateTime(data.int64);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline std::string AsString() const {
         if (type == FieldType::STRING) return *data.buf;
         if (type == FieldType::NUL) return "";
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline std::string AsBlob() const {
         if (type == FieldType::BLOB) return *data.buf;
         if (type == FieldType::NUL) return "";
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline std::string AsBase64Blob() const {
         if (type == FieldType::BLOB) return ::lgraph_api::base64::Encode(*data.buf);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline ::lgraph_api::SRID GetSRID() const {
         if (type >= FieldType::POINT && type <= FieldType::SPATIAL)
             return ::lgraph_api::ExtractSRID(*data.buf);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline ::lgraph_api::Point<::lgraph_api::Wgs84> AsWgsPoint() const {
         if (type == FieldType::POINT) return ::lgraph_api::Point
         <::lgraph_api::Wgs84>(*data.buf);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline ::lgraph_api::Point<::lgraph_api::Cartesian> AsCartesianPoint() const {
         if (type == FieldType::POINT) return ::lgraph_api::Point
         <::lgraph_api::Cartesian>(*data.buf);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline ::lgraph_api::LineString<::lgraph_api::Wgs84> AsWgsLineString()
     const {
         if (type == FieldType::LINESTRING) return ::lgraph_api::LineString
         <::lgraph_api::Wgs84>(*data.buf);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline ::lgraph_api::LineString<::lgraph_api::Cartesian> AsCartesianLineString()
     const {
         if (type == FieldType::LINESTRING) return ::lgraph_api::LineString
         <::lgraph_api::Cartesian>(*data.buf);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline ::lgraph_api::Polygon<::lgraph_api::Wgs84> AsWgsPolygon() const {
         if (type == FieldType::POLYGON) return ::lgraph_api::Polygon
         <::lgraph_api::Wgs84>(*data.buf);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline ::lgraph_api::Polygon<::lgraph_api::Cartesian> AsCartesianPolygon() const {
         if (type == FieldType::POLYGON) return ::lgraph_api::Polygon
         <::lgraph_api::Cartesian>(*data.buf);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline ::lgraph_api::Spatial<::lgraph_api::Wgs84> AsWgsSpatial()
     const {
         if (type == FieldType::SPATIAL) return ::lgraph_api::Spatial
         <::lgraph_api::Wgs84>(*data.buf);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     inline ::lgraph_api::Spatial<::lgraph_api::Cartesian> AsCartesianSpatial()
     const {
         if (type == FieldType::SPATIAL) return ::lgraph_api::Spatial
         <::lgraph_api::Cartesian>(*data.buf);
-        throw std::bad_cast();
+        throw BadCast();
     }
 
     std::any ToBolt() const;
@@ -899,7 +899,7 @@ struct FieldData {
         case FieldType::SPATIAL:
             return *data.buf;
         }
-        throw std::runtime_error("Unhandled data type, probably corrupted data.");
+        throw UnknownType("Unhandled data type, probably corrupted data.");
         return "";
     }
 
@@ -918,7 +918,7 @@ struct FieldData {
         if (type == rhs.type) {
             switch (type) {
             case FieldType::NUL:
-                throw std::runtime_error("");
+                throw Unsupported();
             case FieldType::BOOL:
                 return data.int8 == rhs.data.int8;
             case FieldType::INT8:
@@ -945,7 +945,7 @@ struct FieldData {
             case FieldType::SPATIAL:
                 return *data.buf == *rhs.data.buf;
             }
-            throw std::runtime_error("Unhandled data type, probably corrupted data.");
+            throw UnknownType("Unhandled data type, probably corrupted data.");
         } else if (IsInteger(type) && IsInteger(rhs.type)) {
             return integer() == rhs.integer();
         } else if (IsInteger(type) && IsReal(rhs.type)) {
@@ -955,7 +955,7 @@ struct FieldData {
         } else if (IsReal(type) && IsReal(rhs.type)) {
             return real() == rhs.real();
         }
-        throw std::runtime_error("Unable to compare two FieldData with different types. " +
+        throw Unsupported("Unable to compare two FieldData with different types. " +
                                  lgraph_api::to_string(type) + " vs " +
                                  lgraph_api::to_string(rhs.type));
         return false;
@@ -969,7 +969,7 @@ struct FieldData {
         if (type == rhs.type) {
             switch (type) {
             case FieldType::NUL:
-                throw std::runtime_error("");
+                throw Unexpected("FieldData operator >");
             case FieldType::BOOL:
                 return data.int8 > rhs.data.int8;
             case FieldType::INT8:
@@ -995,9 +995,9 @@ struct FieldData {
             case FieldType::LINESTRING:
             case FieldType::POLYGON:
             case FieldType::SPATIAL:
-                throw std::runtime_error("Spatial data are not comparable now.");
+                throw Unsupported("Spatial data are not comparable now.");
             }
-            throw std::runtime_error("Unhandled data type, probably corrupted data.");
+            throw CorrupttedData("Unhandled data type, probably corrupted data.");
         } else if (IsInteger(type) && IsInteger(rhs.type)) {
             return integer() > rhs.integer();
         } else if (IsInteger(type) && IsReal(rhs.type)) {
@@ -1007,7 +1007,7 @@ struct FieldData {
         } else if (IsReal(type) && IsReal(rhs.type)) {
             return real() > rhs.real();
         }
-        throw std::runtime_error("Unable to compare two FieldData with different types. " +
+        throw Unsupported("Unable to compare two FieldData with different types. " +
                                  lgraph_api::to_string(type) + " vs " +
                                  lgraph_api::to_string(rhs.type));
         return false;
@@ -1019,7 +1019,7 @@ struct FieldData {
         if (type == rhs.type) {
             switch (type) {
             case FieldType::NUL:
-                throw std::runtime_error("");
+                throw Unexpected();
             case FieldType::BOOL:
                 return data.int8 >= rhs.data.int8;
             case FieldType::INT8:
@@ -1045,9 +1045,9 @@ struct FieldData {
             case FieldType::LINESTRING:
             case FieldType::POLYGON:
             case FieldType::SPATIAL:
-                throw std::runtime_error("Spatial data are not comparable now.");
+                throw Unsupported("Spatial data are not comparable now.");
             }
-            throw std::runtime_error("Unhandled data type, probably corrupted data.");
+            throw CorrupttedData("Unhandled data type, probably corrupted data.");
         } else if (IsInteger(type) && IsInteger(rhs.type)) {
             return integer() >= rhs.integer();
         } else if (IsInteger(type) && IsReal(rhs.type)) {
@@ -1057,7 +1057,7 @@ struct FieldData {
         } else if (IsReal(type) && IsReal(rhs.type)) {
             return real() >= rhs.real();
         }
-        throw std::runtime_error("Unable to compare two FieldData with different types. " +
+        throw Unsupported("Unable to compare two FieldData with different types. " +
                                  lgraph_api::to_string(type) + " vs " +
                                  lgraph_api::to_string(rhs.type));
         return false;

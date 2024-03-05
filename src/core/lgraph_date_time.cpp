@@ -31,7 +31,7 @@ TimeZone TimeZone::GetLocalTZ() {
     TIME_ZONE_INFORMATION temp;
     auto rt = GetTimeZoneInformation(&temp);
     if (rt == TIME_ZONE_ID_INVALID) {
-        throw std::runtime_error("Failed to get local timezone.");
+        throw lgraph_api::TimeZoneError("Failed to get local timezone.");
     }
     return TimeZone(temp.Bias / 60);
 #else

@@ -21,8 +21,8 @@
 namespace lgraph_api {
 #define ThrowIfInvalid()                                                        \
     do {                                                                        \
-        if (!txn_->IsValid()) throw std::runtime_error("Invalid transaction."); \
-        if (!it_->IsValid()) throw std::runtime_error("Invalid iterator.");     \
+        if (!txn_->IsValid()) throw InvalidTransaction("Invalid transaction."); \
+        if (!it_->IsValid()) throw InvalidIterator("Invalid iterator.");     \
     } while (0)
 
 VertexIndexIterator::VertexIndexIterator(lgraph::VertexIndexIterator&& it,

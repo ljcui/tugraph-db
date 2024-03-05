@@ -21,7 +21,7 @@
 using json = nlohmann::json;
 
 namespace lgraph_api {
-
+using lgraph_api::ResultRecordError;
 Record::Record(const std::vector<std::pair<std::string, LGraphType>> &args) {
     for (auto arg : args) {
         auto key = arg.first;
@@ -67,7 +67,7 @@ Record &Record::operator=(Record &&rhs) {
 
 void Record::Insert(const std::string &key, const FieldData &value) {
     if (!HasKey(key)) {
-        throw std::runtime_error(FMA_FMT("[Result ERROR] the variable {} is not exist", key));
+        throw ResultRecordError("[Result ERROR] the variable {} is not exist", key);
     }
     if (header[key] == LGraphType::INTEGER &&
         (value.type == FieldType::INT8 || value.type == FieldType::INT16 ||
@@ -93,7 +93,7 @@ void Record::Insert(const std::string &key, const FieldData &value) {
         record[key] =
             std::shared_ptr<ResultElement>(new ResultElement(value, LGraphType::ANY));
     } else {
-        throw std::runtime_error("[Result ERROR] type is valid");
+        throw ResultRecordError("[Result ERROR] type is valid");
     }
 
     length_++;
@@ -101,7 +101,7 @@ void Record::Insert(const std::string &key, const FieldData &value) {
 
 void Record::Insert(const std::string &key, const std::map<std::string, FieldData> &value) {
     if (!HasKey(key) || header[key] != LGraphType::MAP) {
-        throw std::runtime_error(FMA_FMT("[Result ERROR] the variable {} is not exist", key));
+        throw ResultRecordError("[Result ERROR] the variable {} is not exist", key);
     }
     std::map<std::string, json> j_value;
     for (auto &v : value) {
@@ -113,7 +113,7 @@ void Record::Insert(const std::string &key, const std::map<std::string, FieldDat
 
 void Record::Insert(const std::string &key, const std::vector<FieldData> &value) {
     if (!HasKey(key) || header[key] != LGraphType::LIST) {
-        throw std::runtime_error(FMA_FMT("[Result ERROR] the variable {} is not exist", key));
+        throw ResultRecordError("[Result ERROR] the variable {} is not exist", key);
     }
     std::vector<json> j_value;
     for (auto &v : value) {
@@ -125,11 +125,10 @@ void Record::Insert(const std::string &key, const std::vector<FieldData> &value)
 
 void Record::Insert(const std::string &key, const lgraph_api::VertexIterator &vertex_it) {
     if (!HasKey(key) || header[key] != LGraphType::NODE) {
-        throw std::runtime_error(
-            FMA_FMT("[STANDARD RESULT ERROR] the variable {} is not exist", key));
+        throw ResultRecordError("[STANDARD RESULT ERROR] the variable {} is not exist", key);
     }
     if (!vertex_it.IsValid()) {
-        throw std::runtime_error("[Result ERROR] the vertex iterator is not valid");
+        throw ResultRecordError("[Result ERROR] the vertex iterator is not valid");
     }
     lgraph_result::Node node;
     node.id = vertex_it.GetId();
@@ -141,11 +140,10 @@ void Record::Insert(const std::string &key, const lgraph_api::VertexIterator &ve
 
 void Record::Insert(const std::string &key, const lgraph_api::InEdgeIterator &in_edge_it) {
     if (!HasKey(key) || header[key] != LGraphType::RELATIONSHIP) {
-        throw std::runtime_error(
-            FMA_FMT("[STANDARD RESULT ERROR] the variable {} is not exist", key));
+        throw ResultRecordError("[STANDARD RESULT ERROR] the variable {} is not exist", key);
     }
     if (!in_edge_it.IsValid()) {
-        throw std::runtime_error("[STANDARD RESULT ERROR] the in_edge iterator is not valid");
+        throw ResultRecordError("[STANDARD RESULT ERROR] the in_edge iterator is not valid");
     }
     lgraph_result::Relationship repl;
     auto uid = in_edge_it.GetUid();
@@ -163,11 +161,10 @@ void Record::Insert(const std::string &key, const lgraph_api::InEdgeIterator &in
 
 void Record::Insert(const std::string &key, const lgraph_api::OutEdgeIterator &out_edge_it) {
     if (!HasKey(key) || header[key] != LGraphType::RELATIONSHIP) {
-        throw std::runtime_error(
-            FMA_FMT("[STANDARD RESULT ERROR] the variable {} is not exist", key));
+        throw ResultRecordError("[STANDARD RESULT ERROR] the variable {} is not exist", key);
     }
     if (!out_edge_it.IsValid()) {
-        throw std::runtime_error("[STANDARD RESULT ERROR] the out_edge iterator is not valid");
+        throw ResultRecordError("[STANDARD RESULT ERROR] the out_edge iterator is not valid");
     }
     lgraph_result::Relationship repl;
     auto uid = out_edge_it.GetUid();
@@ -241,8 +238,7 @@ void Record::Insert(const std::string &key, const traversal::Path &path,
                     lgraph_api::Transaction *txn) {
     auto core_txn = txn->GetTxn().get();
     if (!HasKey(key) || header[key] != LGraphType::PATH) {
-        throw std::runtime_error(
-            FMA_FMT("[STANDARD RESULT ERROR] the variable {} is not exist", key));
+        throw ResultRecordError("[STANDARD RESULT ERROR] the variable {} is not exist", key);
     }
     lgraph_result::Path result_path;
     if (path.Length() == 0) {
@@ -325,8 +321,7 @@ int64_t Result::Size() const { return row_count_ + 1; }
 const std::unordered_map<std::string, std::shared_ptr<ResultElement>> &Result::RecordView(
     int64_t row_num) {
     if (row_num > row_count_) {
-        throw std::runtime_error(
-            FMA_FMT("[RecordView ERROR] table size is {}, but row_num is {}", row_count_, row_num));
+        throw ResultRecordError("[RecordView ERROR] table size is {}, but row_num is {}", row_count_, row_num);
     }
     return result[row_num].record;
 }
@@ -337,7 +332,7 @@ LGraphType Result::GetType(std::string title) {
             return h.second;
         }
     }
-    throw std::runtime_error(FMA_FMT("[Output Error] the {} is not exist", title));
+    throw ResultRecordError("[Output Error] the {} is not exist", title);
 }
 
 std::string Result::Dump(bool is_standard) {
@@ -352,7 +347,7 @@ std::string Result::Dump(bool is_standard) {
             j[h.first] = record.record[h.first]->ToJson();
         }
         if (j.is_null()) {
-            throw std::runtime_error(
+            throw ResultRecordError(
                 "result has a null row!. mMaybe your new record  not a reference");
         }
         arr.emplace_back(j);
@@ -397,8 +392,8 @@ std::vector<std::vector<std::any>> Result::BoltRecords() {
 void Result::Load(const std::string &output) {
     try {
         auto j = json::parse(output);
-        if (j["is_standard"].get<bool>() != true) {
-            throw std::runtime_error("result is not standard");
+        if (!j["is_standard"].get<bool>()) {
+            throw ResultRecordError("result is not standard");
         }
         // clear origin data
         result.clear();
@@ -409,7 +404,7 @@ void Result::Load(const std::string &output) {
         for (auto h : j_header) {
             std::string title_name = h[0].get<std::string>();
             LGraphType title_type = h[1].get<LGraphType>();
-            header.push_back({title_name, title_type});
+            header.emplace_back(title_name, title_type);
         }
         for (auto &row : data) {
             auto record = this->MutableRecord();
@@ -438,7 +433,7 @@ void Result::Load(const std::string &output) {
                 case LGraphType::LIST:
                     {
                         std::vector<FieldData> list;
-                        for (auto &obj : col.value()) list.push_back(FieldData(obj.dump()));
+                        for (auto &obj : col.value()) list.emplace_back(obj.dump());
                         record->Insert(title, list);
                     }
                     break;
@@ -459,8 +454,7 @@ void Result::Load(const std::string &output) {
                         for (auto &obj : col.value()["properties"].items())
                             properties[obj.key()] = lgraph_rfc::JsonToFieldData(obj.value());
                         node.properties = properties;
-                        record->record[title] =
-                            std::shared_ptr<ResultElement>(new ResultElement(node));
+                        record->record[title] = std::make_shared<ResultElement>(node);
                         record->length_++;
                     }
                     break;
@@ -476,8 +470,7 @@ void Result::Load(const std::string &output) {
                         for (auto &obj : col.value()["properties"].items())
                             properties[obj.key()] = lgraph_rfc::JsonToFieldData(obj.value());
                         repl.properties = properties;
-                        record->record[title] =
-                            std::shared_ptr<ResultElement>(new ResultElement(repl));
+                        record->record[title] = std::make_shared<ResultElement>(repl);
                         record->length_++;
                     }
                     break;
@@ -495,7 +488,7 @@ void Result::Load(const std::string &output) {
                                     properties[obj.key()] =
                                         lgraph_rfc::JsonToFieldData(obj.value());
                                 node.properties = properties;
-                                path.emplace_back(lgraph_result::PathElement(node));
+                                path.emplace_back(node);
                             } else {
                                 lgraph_result::Relationship repl;
                                 repl.src = json_path["src"].get<int64_t>();
@@ -508,12 +501,11 @@ void Result::Load(const std::string &output) {
                                     properties[obj.key()] =
                                         lgraph_rfc::JsonToFieldData(obj.value());
                                 repl.properties = properties;
-                                path.emplace_back(lgraph_result::PathElement(repl));
+                                path.emplace_back(repl);
                             }
                             is_node = !is_node;
                             record->length_++;
-                            record->record[title] =
-                                std::shared_ptr<ResultElement>(new ResultElement(path));
+                            record->record[title] = std::make_shared<ResultElement>(path);
                         }
                     }
                     break;

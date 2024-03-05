@@ -503,7 +503,7 @@ class EdgeIteratorImpl {
                 }
             }
             if (eid >= ::lgraph::_detail::MAX_EID)
-                throw std::runtime_error("Too many edges from src to dst with the same label");
+                throw lgraph_api::MaxEidReached("Too many edges from src to dst with the same label");
         }
         int64_t size_diff = ev.InsertAtPos(pos, esid.lid, esid.tid, esid.dst, eid, prop);
         if (pt == PackType::PACKED_DATA) {

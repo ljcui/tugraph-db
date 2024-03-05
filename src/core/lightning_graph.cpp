@@ -1027,12 +1027,12 @@ class ConstStringRef {
 
     ConstStringRef(const char* p, size_t s) {
         if (s > std::numeric_limits<uint16_t>::max())
-            throw std::runtime_error(FMA_FMT("String size too large: {}", s));
+            throw lgraph_api::LargeString("String size too large: {}", s);
         size_ptr_.size = s;
         uint64_t up = (uint64_t)p;
         if ((up & ((uint64_t)0xFFFF << 48)) != 0)
-            throw std::runtime_error(FMA_FMT(
-                "Pointer larger than 48 bit is not supported: {}", (void*)p));
+            throw lgraph_api::UnsupportedPointer(
+                "Pointer larger than 48 bit is not supported: {}", (void*)p);
         size_ptr_.ptr = (uint64_t)p;
     }
 
@@ -1774,8 +1774,8 @@ bool LightningGraph::BlockingAddIndex(const std::string& label, const std::strin
                          field_data_helper::FieldTypeName(extractor->Type()) +
                          " cannot be indexed.");
     default:
-        throw std::runtime_error(std::string("Unhandled field type: ") +
-                                 field_data_helper::FieldTypeName(extractor->Type()));
+        throw lgraph_api::AddIndexError("Unhandled field type: {}",
+                                        field_data_helper::FieldTypeName(extractor->Type()));
     }
     txn.Commit();
     // install the new index

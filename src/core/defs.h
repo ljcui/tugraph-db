@@ -184,16 +184,16 @@ inline void CheckValidName(const std::string& name, const size_t max_name_length
     if (name.empty() || name.size() > max_name_length) {
         err_msg += FMA_FMT("name length must be between 1 and {}, given [{}]",
                            std::to_string(max_name_length), name.size());
-        throw std::runtime_error(err_msg);
+        throw lgraph_api::Invalidname(err_msg);
     }
     if (fma_common::TextParserUtils::IsDigits(name.front())) {
         err_msg += "name cannot begin with a digit.";
-        throw std::runtime_error(err_msg);
+        throw lgraph_api::Invalidname(err_msg);
     }
     for (auto& c : name) {
         if ((uint8_t)c < 128 && !fma_common::TextParserUtils::IsValidNameCharacter(c)) {
             err_msg += "name can only contain alphabetic and numeric characters and underscore.";
-            throw std::runtime_error(err_msg);
+            throw lgraph_api::Invalidname(err_msg);
         }
     }
 }
@@ -227,7 +227,7 @@ inline void CheckValidUserNum(const size_t n) {
     if (n > _detail::MAX_NUM_USERS) {
         std::string err_msg = FMA_FMT("Invalid User: number cannot exceed {}, given [{}].",
                                       _detail::MAX_NUM_USERS, n);
-        throw std::runtime_error(err_msg);
+        throw lgraph_api::InvalidUserNum(err_msg);
     }
 }
 
@@ -235,7 +235,7 @@ inline void CheckValidRoleNum(const size_t n) {
     if (n > _detail::MAX_NUM_USERS) {
         std::string err_msg = FMA_FMT("Invalid Role: number cannot exceed {}, given [{}].",
                                       _detail::MAX_NUM_USERS, n);
-        throw std::runtime_error(err_msg);
+        throw lgraph_api::InvalidRoleNum(err_msg);
     }
 }
 
@@ -243,7 +243,7 @@ inline void CheckValidGraphNum(const size_t n) {
     if (n > _detail::MAX_NUM_GRAPHS) {
         std::string err_msg = FMA_FMT("Invalid Graph: number cannot exceed {}, given [{}].",
                                       _detail::MAX_NUM_GRAPHS, n);
-        throw std::runtime_error(err_msg);
+        throw lgraph_api::InvalidGraphNum(err_msg);
     }
 }
 
@@ -251,7 +251,7 @@ inline void CheckValidLabelNum(const size_t n) {
     if (n > _detail::MAX_NUM_LABELS) {
         std::string err_msg = FMA_FMT("Invalid Label: number cannot exceed {}, given [{}].",
                                       _detail::MAX_NUM_LABELS, n);
-        throw std::runtime_error(err_msg);
+        throw lgraph_api::InvalidLabelNum(err_msg);
     }
 }
 
@@ -259,7 +259,7 @@ inline void CheckValidFieldNum(const size_t n) {
     if (n > _detail::MAX_NUM_FIELDS) {
         std::string err_msg = FMA_FMT("Invalid Field: number cannot exceed {}, given [{}].",
                                       _detail::MAX_NUM_FIELDS, n);
-        throw std::runtime_error(err_msg);
+        throw lgraph_api::InvalidFieldNum(err_msg);
     }
 }
 
@@ -267,7 +267,7 @@ inline void CheckValidDescLength(const size_t n) {
     if (n > _detail::MAX_DESC_LEN) {
         std::string err_msg =
             FMA_FMT("Invalid Desc: length cannot exceed {}, given [{}].", _detail::MAX_DESC_LEN, n);
-        throw std::runtime_error(err_msg);
+        throw lgraph_api::InvalidDesc(err_msg);
     }
 }
 
@@ -275,7 +275,7 @@ inline void CheckValidGraphSize(const size_t n) {
     if (n > _detail::MAX_GRAPH_SIZE) {
         std::string err_msg = FMA_FMT("Invalid Graph: size cannot exceed {}, given [{}].",
                                       _detail::MAX_GRAPH_SIZE, n);
-        throw std::runtime_error(err_msg);
+        throw lgraph_api::InvalidGraphSize(err_msg);
     }
 }
 
@@ -284,7 +284,7 @@ inline void CheckValidPassword(const std::string& pass) {
         std::string err_msg =
             FMA_FMT("Invalid Password: length must between 1 and {}, given [{}]",
                     std::to_string(_detail::MAX_PASSWORD_LEN), pass.size());
-        throw std::runtime_error(err_msg);
+        throw lgraph_api::InvalidInvalidPassword(err_msg);
     }
 }
 }  // namespace lgraph

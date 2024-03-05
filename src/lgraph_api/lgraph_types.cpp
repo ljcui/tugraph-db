@@ -41,7 +41,7 @@ std::any FieldData::ToBolt() const {
     case FieldType::DATETIME:
         return bolt::LocalTime({data.int64 * 1000});
     default:
-        throw std::runtime_error("ToBolt meet unsupported data type.");
+        throw lgraph_api::BoltError("ToBolt meet unsupported data type.");
     }
 }
 }  // namespace lgraph_api

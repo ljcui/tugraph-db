@@ -17,6 +17,8 @@
 namespace lgraph_api {
 
 namespace traversal {
+using lgraph_api::TaskKilled;
+using lgraph_api::TraversalError;
 
 ParallelVector<size_t> FindVertices(GraphDB &db, Transaction &txn,
                                     std::function<bool(VertexIterator &)> filter, bool parallel) {
@@ -62,7 +64,7 @@ ParallelVector<size_t> FindVertices(GraphDB &db, Transaction &txn,
             if (filter(vit)) frontier.Append(vit.GetId());
         }
     }
-    if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+    if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
     return frontier;
 }
 
@@ -149,7 +151,7 @@ void FrontierTraversal::SetFrontier(std::function<bool(VertexIterator &)> root_v
             }
         }
     }
-    if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+    if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
 }
 
 void FrontierTraversal::ExpandOutEdges(std::function<bool(OutEdgeIterator &)> out_edge_filter,
@@ -255,7 +257,7 @@ void FrontierTraversal::ExpandOutEdges(std::function<bool(OutEdgeIterator &)> ou
         }
     }
     curr_frontier_.Swap(next_frontier_);
-    if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+    if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
 }
 
 void FrontierTraversal::ExpandInEdges(std::function<bool(InEdgeIterator &)> in_edge_filter,
@@ -361,7 +363,7 @@ void FrontierTraversal::ExpandInEdges(std::function<bool(InEdgeIterator &)> in_e
         }
     }
     curr_frontier_.Swap(next_frontier_);
-    if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+    if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
 }
 
 void FrontierTraversal::ExpandEdges(std::function<bool(OutEdgeIterator &)> out_edge_filter,
@@ -511,7 +513,7 @@ void FrontierTraversal::ExpandEdges(std::function<bool(OutEdgeIterator &)> out_e
         }
     }
     curr_frontier_.Swap(next_frontier_);
-    if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+    if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
 }
 
 Vertex::Vertex(size_t vid) : vid_(vid) {}
@@ -591,7 +593,7 @@ size_t Path::Length() const { return dirs_.size(); }
 
 void Path::Append(const Edge &edge) {
     if (ids_.back() != edge.start_) {
-        throw std::runtime_error("The edge's start doesn't match the path's end.");
+        throw TraversalError("The edge's start doesn't match the path's end.");
     }
     dirs_.push_back(edge.forward_);
     lids_.push_back(edge.lid_);
@@ -606,7 +608,7 @@ Vertex Path::GetEndVertex() const { return Vertex(ids_.back()); }
 Edge Path::GetLastEdge() const {
     size_t length = dirs_.size();
     if (length == 0) {
-        throw std::runtime_error("The path contains only a single vertex.");
+        throw TraversalError("The path contains only a single vertex.");
     }
     return Edge(ids_[0 + (length - 1) * 2], lids_.back(), 0, ids_[2 + (length - 1) * 2],
                 ids_[1 + (length - 1) * 2], dirs_.back());
@@ -615,7 +617,7 @@ Edge Path::GetLastEdge() const {
 Edge Path::GetNthEdge(size_t n) const {
     size_t length = dirs_.size();
     if (n >= length) {
-        throw std::runtime_error("Access out of range.");
+        throw TraversalError("Access out of range.");
     }
     return Edge(ids_[0 + n * 2], lids_[n], 0, ids_[2 + n * 2], ids_[1 + n * 2], dirs_[n]);
 }
@@ -623,7 +625,7 @@ Edge Path::GetNthEdge(size_t n) const {
 Vertex Path::GetNthVertex(size_t n) const {
     size_t length = dirs_.size();
     if (n > length) {
-        throw std::runtime_error("Access out of range.");
+        throw TraversalError("Access out of range.");
     }
     return Vertex(ids_[0 + n * 2]);
 }
@@ -713,7 +715,7 @@ void PathTraversal::SetFrontier(std::function<bool(VertexIterator &)> root_verte
             }
         }
     }
-    if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+    if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
 }
 
 void PathTraversal::ExpandOutEdges(
@@ -818,7 +820,7 @@ void PathTraversal::ExpandOutEdges(
         }
     }
     curr_frontier_.Swap(next_frontier_);
-    if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+    if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
 }
 
 void PathTraversal::ExpandInEdges(
@@ -923,7 +925,7 @@ void PathTraversal::ExpandInEdges(
         }
     }
     curr_frontier_.Swap(next_frontier_);
-    if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+    if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
 }
 
 void PathTraversal::ExpandEdges(
@@ -1066,7 +1068,7 @@ void PathTraversal::ExpandEdges(
         }
     }
     curr_frontier_.Swap(next_frontier_);
-    if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+    if (ShouldKillThisTask(task_ctx)) throw TaskKilled();
 }
 
 }  // namespace traversal

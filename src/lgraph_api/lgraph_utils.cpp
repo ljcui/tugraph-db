@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include "fma-common/utils.h"
 #include "lgraph/lgraph_utils.h"
+#include "lgraph/lgraph_exceptions.h"
 
 namespace lgraph_api {
 
@@ -161,13 +162,13 @@ void* alloc_buffer(size_t bytes) {
 #if USE_VALGRIND
     buffer = malloc(bytes);
     if (!buffer) {
-        throw std::bad_alloc();
+        throw lgraph_api::MallocError();
     }
 #else
     buffer = mmap(nullptr, bytes, PROT_READ | PROT_WRITE,
                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (buffer == MAP_FAILED) {
-        throw std::runtime_error("memory allocation failed");
+        throw lgraph_api::MmapError("memory allocation failed");
     }
 #endif
     return buffer;

@@ -16,41 +16,80 @@
 
 namespace lgraph_api {
 #define ERROR_CODES \
-    X(InvalidArguments, "InvalidArguments") \
-    X(InvalidGalaxy, "InvalidGalaxy")   \
-    X(InvalidGraphDB, "InvalidGraphDB")   \
-    X(InvalidTransaction, "InvalidTransaction") \
-    X(InvalidIterator, "InvalidIterator")   \
-    X(InvalidTransactionFork, "InvalidTransactionFork") \
-    X(TaskKilled, "TaskKilled")   \
-    X(TransactionConflict, "TransactionConflict")  \
-    X(WriteNotAllowed, "WriteNotAllowed")   \
-    X(DBNotExist, "DBNotExist")  \
-    X(IOError, "IOError")  \
-    X(Unauthorized, "Unauthorized")  \
-    X(InternalError, "InternalError")  \
-    X(BadRequest, "BadRequest")   \
-    X(LmdbException, "LmdbException")  \
-    X(FullTextIndexException, "FullTextIndexException")   \
-    X(PythonPluginTimeout, "PythonPluginTimeout")  \
-    X(InputError, "InputError")   \
-    X(OutOfRange, "OutOfRange")   \
-    X(LgraphPeekError, "LgraphPeekError")   \
-    X(LgraphExportError, "LgraphExportError")  \
-    X(LgraphBinlogError, "LgraphBinlogError")   \
-    X(LgraphCliError, "LgraphCliError")  \
-    X(OlapOnDiskError, "OlapOnDiskError")   \
-    X(RestServerError, "RestServerError")  \
-    X(MismatchedMajorVersion, "MismatchedMajorVersion")   \
-    X(Filesystem, "Filesystem")  \
-    X(CorrupttedDB, "CorrupttedDB")   \
-    X(CorrupttedDbConfig, "CorrupttedDbConfig")  \
-    X(PythonPluginError, "PythonPluginError")   \
-    X(PluginError, "PluginError")   \
-    X(RestClientError, "RestClientError")   \
-    X(PythonApiError, "PythonApiError")  \
-    X(ConvertError, "ConvertError")  \
-    X(UnsupportedType, "UnsupportedType")  \
+X(InvalidArguments, "InvalidArguments") \
+X(InvalidGalaxy, "InvalidGalaxy")   \
+X(InvalidGraphDB, "InvalidGraphDB")   \
+X(InvalidTransaction, "InvalidTransaction") \
+X(InvalidIterator, "InvalidIterator")   \
+X(InvalidTransactionFork, "InvalidTransactionFork") \
+X(TaskKilled, "TaskKilled")   \
+X(TransactionConflict, "TransactionConflict")  \
+X(WriteNotAllowed, "WriteNotAllowed")   \
+X(DBNotExist, "DBNotExist")  \
+X(IOError, "IOError")  \
+X(Unauthorized, "Unauthorized")  \
+X(InternalError, "InternalError")  \
+X(BadRequest, "BadRequest")   \
+X(LmdbException, "LmdbException")  \
+X(FullTextIndexException, "FullTextIndexException")   \
+X(PythonPluginTimeout, "PythonPluginTimeout")  \
+X(InputError, "InputError")   \
+X(OutOfRange, "OutOfRange")   \
+X(LgraphPeekError, "LgraphPeekError")   \
+X(LgraphExportError, "LgraphExportError")  \
+X(LgraphBinlogError, "LgraphBinlogError")   \
+X(LgraphCliError, "LgraphCliError")  \
+X(OlapOnDiskError, "OlapOnDiskError")   \
+X(OlapOnDBError, "OlapOnDBError")   \
+X(OlapError, "OlapError")   \
+X(RestServerError, "RestServerError")  \
+X(MismatchedMajorVersion, "MismatchedMajorVersion")   \
+X(Filesystem, "Filesystem")  \
+X(CorrupttedDB, "CorrupttedDB")         \
+X(CorrupttedData, "CorrupttedData")         \
+X(CorrupttedDbConfig, "CorrupttedDbConfig")  \
+X(PythonPluginError, "PythonPluginError")   \
+X(PluginError, "PluginError")   \
+X(RestClientError, "RestClientError")   \
+X(PythonApiError, "PythonApiError")  \
+X(ConvertError, "ConvertError")         \
+X(Unsupported, "Unsupported")           \
+X(Unexpected, "Unsupported")           \
+X(UnsupportedType, "UnsupportedType")   \
+X(LargeString, "String size too large") \
+X(UnsupportedPointer, "UnsupportedPointer") \
+X(AddIndexError, "AddIndexError")       \
+X(OnlineImportError, "OnlineImportError")   \
+X(UnknownSpatialType, "UnknownSpatialType") \
+X(UnknownType, "UnknownType")           \
+X(BadCast, "BadCast")                   \
+X(Invalidname, "Invalidname")           \
+X(InvalidUserNum, "InvalidUserNum")     \
+X(InvalidRoleNum, "InvalidRoleNum")     \
+X(InvalidGraphNum, "InvalidGraphNum")   \
+X(InvalidLabelNum, "InvalidLabelNum")   \
+X(InvalidFieldNum, "InvalidFieldNum")   \
+X(InvalidDesc, "InvalidDesc")  \
+X(InvalidGraphSize, "InvalidGraphSize") \
+X(InvalidInvalidPassword, "InvalidInvalidPassword") \
+X(TimeZoneError, "TimeZoneError")       \
+X(MaxVidReached, "MaxVidReached") \
+X(AuditLogError, "AuditLogError") \
+X(MaxEidReached, "MaxEidReached") \
+X(MmapError, "MmapError")    \
+X(MallocError, "MallocError")  \
+X(TraversalError, "TraversalError") \
+X(BoltError, "BoltError") \
+X(NoVertexFoundByIndex, "NoVertexFoundByIndex")     \
+X(NoEdgeFoundByIndex, "NoEdgeFoundByIndex") \
+X(ParallelBitsetError, "ParallelBitsetError") \
+X(ResultRecordError, "ResultRecordError")   \
+X(HaStateMachineError, "HaStateMachineError") \
+X(DBManagementClientError, "DBManagementClientError") \
+X(HaConfigError, "HaConfigError")       \
+X(UnknownSymbolNodeScope, "UnknownSymbolNodeScope") \
+X(CypherPathError, "CypherPathError") \
+X(ImportV3Error, "ImportV3Error")
 
 enum class ErrorCode {
 #define X(code, msg) code,

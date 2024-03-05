@@ -176,7 +176,7 @@ class Graph {
     VertexId AddVertex(KvTransaction& txn, const Value& prop) {
         VertexId vid = GetAndIncNextVid(txn);
         if (vid >= ::lgraph::_detail::MAX_VID) {
-            throw std::runtime_error("Max vertex id reached. DB can only hold 1<<40 vertcies.");
+            throw lgraph_api::MaxVidReached("Max vertex id reached. DB can only hold 1<<40 vertcies.");
         }
         VertexValue vov(prop);
         if (prop.Size() > ::lgraph::_detail::NODE_SPLIT_THRESHOLD) {
