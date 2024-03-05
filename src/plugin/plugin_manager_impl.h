@@ -43,7 +43,7 @@ inline size_t BinaryRead(fma_common::BinaryBuffer& stream, lgraph_api::Parameter
             }
         }
     }
-    throw std::runtime_error("Failed to read parameter from stream, bad content");
+    throw lgraph_api::PluginError("Failed to read parameter from stream, bad content");
 }
 
 template<>
@@ -61,7 +61,7 @@ inline size_t BinaryRead(fma_common::BinaryBuffer& stream, lgraph_api::SigSpec& 
             return s + t;
         }
     }
-    throw std::runtime_error("Failed to read SigSpec from stream, bad content");
+    throw lgraph_api::PluginError("Failed to read SigSpec from stream, bad content");
 }
 }  // namespace fma_common
 
@@ -110,7 +110,7 @@ struct PluginInfoBase {
                 }
             }
         }
-        throw std::runtime_error("Failed to read plugin info from stream, bad content");
+        throw lgraph_api::PluginError("Failed to read plugin info from stream, bad content");
         return 0;
     }
 };

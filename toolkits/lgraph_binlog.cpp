@@ -21,6 +21,7 @@
 #include "protobuf/ha.pb.h"
 #include "lgraph/lgraph_rpc_client.h"
 
+using lgraph_api::LgraphBinlogError;
 void ProcessLogs(const std::vector<std::string>& files, int64_t beg_time, int64_t end_time,
                  int64_t limit, const std::unordered_set<int64_t>& skip_ids,
                  const std::function<bool(const lgraph::BackupLogEntry& l)>& sink,
@@ -30,7 +31,7 @@ void ProcessLogs(const std::vector<std::string>& files, int64_t beg_time, int64_
     double tlast = t1;
     for (auto& fname : files) {
         fma_common::InputFmaStream in(fname, 4 << 20);
-        if (!in.Good()) throw std::runtime_error("Failed to open file " + fname);
+        if (!in.Good()) throw LgraphBinlogError("Failed to open file " + fname);
         lgraph::BackupLogEntry l;
         while (lgraph::BackupLog::ReadNextLogEntry(in, &l)) {
             if (l.time() < beg_time || l.time() >= end_time ||
@@ -38,7 +39,7 @@ void ProcessLogs(const std::vector<std::string>& files, int64_t beg_time, int64_
                 continue;
             }
             if (!sink(l)) {
-                throw std::runtime_error("Failed to process log entry [" + l.DebugString() + "]");
+                throw LgraphBinlogError("Failed to process log entry [" + l.DebugString() + "]");
             }
             if (++n_processed >= limit) break;
             if (print_stats && n_processed % 100 == 0) {
@@ -195,22 +196,18 @@ int main(int argc, char** argv) {
                 lgraph::StateMachine sm(config, nullptr);
                 sm.Start();
                 log_sink = [&](const lgraph::BackupLogEntry& l) -> bool {
-                    try {
-                        lgraph::LGraphResponse resp;
-                        lgraph::LGraphRequest m_req;
-                        m_req.CopyFrom(l.req());
-                        m_req.release_user();
-                        m_req.set_user(user);
-                        sm.ApplyRequestDirectly(&m_req, &resp);
-                        if (resp.error_code() !=
-                            lgraph::LGraphResponse::ErrorCode::LGraphResponse_ErrorCode_SUCCESS) {
-                            throw std::runtime_error(resp.error());
-                        } else {
-                            return true;
-                        }
-                    } catch (std::exception& e) {
-                        std::throw_with_nested(
-                            std::runtime_error("Error while applying request: " + l.DebugString()));
+                    lgraph::LGraphResponse resp;
+                    lgraph::LGraphRequest m_req;
+                    m_req.CopyFrom(l.req());
+                    m_req.release_user();
+                    m_req.set_user(user);
+                    sm.ApplyRequestDirectly(&m_req, &resp);
+                    if (resp.error_code() !=
+                        lgraph::LGraphResponse::ErrorCode::LGraphResponse_ErrorCode_SUCCESS) {
+                        LOG_ERROR() << FMA_FMT("Error while applying request: {}", l.DebugString());
+                        throw LgraphBinlogError(resp.error());
+                    } else {
+                        return true;
                     }
                 };
                 ProcessLogs(input_files, min_time, max_time, limit, skip_ids, log_sink, nullptr,

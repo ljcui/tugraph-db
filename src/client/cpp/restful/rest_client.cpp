@@ -230,7 +230,7 @@ RestClient::RestClient(const std::string& url, const std::string& cert_path,
 #ifndef _WIN32
     if (!cert_path.empty()) {
         fma_common::InputFmaStream is(cert_path);
-        if (!is.Good()) throw std::runtime_error("Error opening certificate file " + cert_path);
+        if (!is.Good()) throw lgraph_api::RestClientError("Error opening certificate file " + cert_path);
         std::string cert_buf;
         cert_buf.resize(is.Size());
         is.Read(&cert_buf[0], cert_buf.size());
@@ -794,7 +794,7 @@ void RestClient::SetVertexProperty(const std::string& db, lgraph::VertexId vid,
     if (field_names.size() != field_data.size()) {
         LOG_WARN()
             << "[RestClient] SetVertexProperty failed! field_names.size() != field_data.size()";
-        throw std::runtime_error("field_names and field_data should have the same size.");
+        throw lgraph_api::RestClientError("field_names and field_data should have the same size.");
     }
     json::value js_prop;
     for (size_t i = 0; i < field_names.size(); i++) {
@@ -812,7 +812,7 @@ void RestClient::SetEdgeProperty(const std::string& db, const lgraph::EdgeUid& e
     if (field_names.size() != field_data.size()) {
         LOG_WARN()
             << "[RestClient] SetEdgeProperty failed! field_names.size() != field_data.size()";
-        throw std::runtime_error("field_names and field_data should have the same size.");
+        throw lgraph_api::RestClientError("field_names and field_data should have the same size.");
     }
     json::value js_prop;
     for (size_t i = 0; i < field_names.size(); i++) {

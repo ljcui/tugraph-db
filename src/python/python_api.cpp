@@ -66,7 +66,7 @@ inline FieldData ObjectToFieldData(const pybind11::object& o) {
     } else if (pybind11::isinstance<pybind11::bool_>(o)) {
         return FieldData(o.cast<bool>());
     } else {
-        throw std::runtime_error("Illegal field data given.");
+        throw PythonApiError("Illegal field data given.");
     }
 }
 
@@ -1978,7 +1978,7 @@ void register_gemini_adapter(pybind11::module& m) {
                 } else if (pybind11::isinstance<pybind11::bool_>(weight)) {
                     self.EmitWeightedEdge<bool>(src, dst, weight.cast<bool>());
                 } else {
-                    throw std::runtime_error("Not supported weight type.");
+                    throw PythonApiError("Not supported weight type.");
                 }
             },
             "Append a weighted edge to the opened file.\n"

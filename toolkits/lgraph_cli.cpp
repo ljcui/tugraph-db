@@ -26,6 +26,7 @@
 #include "bolt/to_string.h"
 #include "linenoise/linenoise.h"
 #include "tabulate/table.hpp"
+#include "lgraph/lgraph_exceptions.h"
 using namespace boost;
 
 enum class OutputFormat {
@@ -33,7 +34,7 @@ enum class OutputFormat {
     CSV,
     JSON
 };
-
+using lgraph_api::LgraphCliError;
 std::any ReadMessage(asio::ip::tcp::socket& socket, bolt::Hydrator& hydrator) {
     hydrator.ClearErr();
     uint16_t size = 0;
@@ -53,8 +54,8 @@ std::any ReadMessage(asio::ip::tcp::socket& socket, bolt::Hydrator& hydrator) {
     }
     auto ret = hydrator.Hydrate({(const char*)buffer.data(), buffer.size()});
     if (ret.second) {
-        throw std::runtime_error(FMA_FMT(
-            "Failed to parse bolt message, error: {}", ret.second.value()));
+        throw LgraphCliError(
+            "Failed to parse bolt message, error: {}", ret.second.value());
     }
     return ret.first;
 }

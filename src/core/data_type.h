@@ -353,28 +353,28 @@ inline void SetOffset(char* offset_array, size_t i, size_t off) {
     PackDataOffset r = static_cast<PackDataOffset>(off);
     memcpy(offset_array + sizeof(PackDataOffset) * i, &r, sizeof(PackDataOffset));
 }
-using lgraph_api::InputError;
+
 inline void CheckVid(VertexId vid) {
     if (vid < 0 || vid > ::lgraph::_detail::MAX_VID) {
-        throw InputError("vertex id out of range: must be a number between 0 and 1<<40 - 2");
+        throw lgraph_api::InputError("vertex id out of range: must be a number between 0 and 1<<40 - 2");
     }
 }
 
 inline void CheckEid(EdgeId eid) {
     if (eid < 0 || eid > ::lgraph::_detail::MAX_EID) {
-        throw InputError("edge id out of range: must be a number between 0 and 1<<32 - 2");
+        throw lgraph_api::InputError("edge id out of range: must be a number between 0 and 1<<32 - 2");
     }
 }
 
 inline void CheckTid(TemporalId tid) {
     if (tid > ::lgraph::_detail::MAX_TID) {
-        throw InputError("edge id out of range: must be a number between 0 and 1<<32 - 2");
+        throw lgraph_api::InputError("edge id out of range: must be a number between 0 and 1<<32 - 2");
     }
 }
 
 inline void CheckLid(size_t lid) {
     if (lid > ::lgraph::_detail::MAX_LID) {
-        throw InputError("label id out of range: must be a number between 0 and 65534");
+        throw lgraph_api::InputError("label id out of range: must be a number between 0 and 65534");
     }
 }
 

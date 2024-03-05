@@ -58,7 +58,7 @@ struct MessageQueueUtils {
             offset += rsize;
         }
         rsize = offset;
-        if (offset != s) throw std::runtime_error("error receiving message");
+        if (offset != s) throw lgraph_api::PythonPluginError("error receiving message");
     }
 
     template <typename T>
@@ -75,14 +75,14 @@ struct MessageQueueUtils {
                   boost::posix_time::microseconds(timeout_milliseconds * 1000);
         bool input_ready = mq.timed_receive(&tmp, MAX_MSG_SIZE(), rsize, priority, to);
         if (!input_ready) return false;
-        if (rsize != sizeof(s)) throw std::runtime_error("broken input");
+        if (rsize != sizeof(s)) throw lgraph_api::PythonPluginError("broken input");
         memcpy(&s, tmp, sizeof(s));
         std::string bytes(s, 0);
         RecvBufFromMq(mq, &bytes[0], s, rsize, priority);
-        if (rsize != s) throw std::runtime_error("broken input");
+        if (rsize != s) throw lgraph_api::PythonPluginError("broken input");
         fma_common::BinaryBuffer buf(bytes.data(), bytes.size());
         size_t r = data.Deserialize(buf);
-        if (r != bytes.size()) throw std::runtime_error("broken input: cannot deserialize");
+        if (r != bytes.size()) throw lgraph_api::PythonPluginError("broken input: cannot deserialize");
         return true;
     }
 

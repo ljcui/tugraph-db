@@ -468,7 +468,7 @@ bool Export(lgraph_api::GraphDB& db, const std::string& exportdir, const std::st
     LOG_INFO() << "Config file generated in [" << config_file.Path() << "]";
     return true;
 }
-
+using lgraph_api::LgraphPeekError;
 int main(int argc, char** argv) {
     std::string db_dir = "./testdb";
     std::string export_dir = "./exportdir";
@@ -500,20 +500,20 @@ int main(int argc, char** argv) {
     // check db_dir and export_dir
     fma_common::FileSystem& db_fs = fma_common::FileSystem::GetFileSystem(db_dir);
     if (!db_fs.IsDir(db_dir)) {
-        throw std::runtime_error("DB directory: \"" + db_dir + "\" does not exist.");
+        throw LgraphPeekError("DB directory {} does not exist.", db_dir);
     } else {
         LOG_INFO() << "DB directory has been found.";
     }
 
     if (format != "csv" && format != "json") {
-        throw std::runtime_error("format error, can only be \"json\" or \"csv\"");
+        throw LgraphPeekError(R"(format error, can only be "json" or "csv")");
     }
 
     fma_common::FileSystem& export_fs = fma_common::FileSystem::GetFileSystem(export_dir);
     if (!export_fs.IsDir(export_dir)) {
         LOG_INFO() << "Export directory does not exist, creating...";
         if (!export_fs.Mkdir(export_dir)) {
-            throw std::runtime_error("Creating export directory: \"" + export_dir + "\" fail.");
+            throw LgraphPeekError("Creating export directory {} fail.", export_dir);
         } else {
             LOG_INFO() << "Export directory has been created, now exporting...";
         }

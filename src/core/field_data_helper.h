@@ -863,7 +863,7 @@ inline size_t ParseStringIntoFieldData(FieldType ft, const char* b, const char* 
     case FieldType::LINESTRING:
     case FieldType::POLYGON:
     case FieldType::SPATIAL:
-        throw std::runtime_error("do not support spatial now!");
+        throw lgraph_api::UnsupportedType("do not support spatial now!");
     }  // switch
     FMA_ASSERT(false);
     return 0;
@@ -1104,7 +1104,7 @@ inline FieldData ValueToFieldData(const Value& v, FieldType ft) {
             ::lgraph_api::SRID s = ::lgraph_api::ExtractSRID(ewkb);
             switch (s) {
                 case ::lgraph_api::SRID::NUL:
-                    throw std::runtime_error("cannot convert to Point data!");
+                    throw lgraph_api::ConvertError("cannot convert to Point data!");
                 case ::lgraph_api::SRID::WGS84:
                     return FieldData(::lgraph_api::Point<::lgraph_api::Wgs84>(ewkb));
                 case ::lgraph_api::SRID::CARTESIAN:
@@ -1117,7 +1117,7 @@ inline FieldData ValueToFieldData(const Value& v, FieldType ft) {
             ::lgraph_api::SRID s = ::lgraph_api::ExtractSRID(ewkb);
             switch (s) {
                 case ::lgraph_api::SRID::NUL:
-                    throw std::runtime_error("cannot convert to Point data!");
+                    throw lgraph_api::ConvertError("cannot convert to Point data!");
                 case ::lgraph_api::SRID::WGS84:
                     return FieldData(::lgraph_api::LineString<::lgraph_api::Wgs84>(ewkb));
                 case ::lgraph_api::SRID::CARTESIAN:
@@ -1130,7 +1130,7 @@ inline FieldData ValueToFieldData(const Value& v, FieldType ft) {
             ::lgraph_api::SRID s = ::lgraph_api::ExtractSRID(ewkb);
             switch (s) {
                 case ::lgraph_api::SRID::NUL:
-                    throw std::runtime_error("cannot convert to Point data!");
+                    throw lgraph_api::ConvertError("cannot convert to Point data!");
                 case ::lgraph_api::SRID::WGS84:
                     return FieldData(::lgraph_api::Polygon<::lgraph_api::Wgs84>(ewkb));
                 case ::lgraph_api::SRID::CARTESIAN:
@@ -1143,7 +1143,7 @@ inline FieldData ValueToFieldData(const Value& v, FieldType ft) {
             ::lgraph_api::SRID s = ::lgraph_api::ExtractSRID(ewkb);
             switch (s) {
                 case ::lgraph_api::SRID::NUL:
-                    throw std::runtime_error("cannot convert to spatial data!");
+                    throw lgraph_api::ConvertError("cannot convert to spatial data!");
                 case ::lgraph_api::SRID::WGS84:
                     return FieldData(::lgraph_api::Spatial<::lgraph_api::Wgs84>(ewkb));
                 case ::lgraph_api::SRID::CARTESIAN:

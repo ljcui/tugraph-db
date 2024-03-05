@@ -15,7 +15,7 @@
 #pragma once
 
 #include "olap/olap_io.h"
-
+#include "lgraph/lgraph_exceptions.h"
 namespace lgraph_api {
 namespace olap {
 
@@ -69,7 +69,7 @@ class OlapOnDisk : public OlapBase<EdgeData> {
     void Load(ConfigBase<EdgeData> config,
                     EdgeDirectionPolicy edge_direction_policy = DUAL_DIRECTION) {
         if (this->num_vertices_ != 0 || this->num_edges_ != 0) {
-            throw std::runtime_error("Graph should not be loaded twice!");
+            throw OlapOnDiskError("Graph should not be loaded twice!");
         }
 
         this->edge_direction_policy_ = edge_direction_policy;

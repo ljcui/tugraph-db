@@ -458,7 +458,7 @@ void RestServer::Start() {
         });
         listener_ = http_listener(addr, server_config);
 #else
-        throw std::runtime_error("SSL is not supported on Windows.");
+        throw lgraph_api::RestServerError("SSL is not supported on Windows.");
 #endif
     } else {
         listener_ = http_listener(addr);
@@ -2157,7 +2157,7 @@ void RestServer::HandlePostSchema(const std::string& user, const std::string& to
     if (proto_resp.error_code() == LGraphResponse::SUCCESS) {
         std::string log;
         if (!proto_resp.has_schema_response())
-            throw std::runtime_error("should have schema response!");
+            throw lgraph_api::RestServerError("should have schema response!");
         if (proto_resp.schema_response().has_error_message())
             return RespondBadRequest(request, proto_resp.schema_response().error_message());
         if (proto_resp.schema_response().has_log())
@@ -2380,7 +2380,7 @@ void RestServer::HandlePostImport(const std::string& user, const std::string& to
     if (proto_resp.error_code() == LGraphResponse::SUCCESS) {
         std::string log;
         if (!proto_resp.has_import_response())
-            throw std::runtime_error("should have import response!");
+            throw lgraph_api::RestServerError("should have import response!");
         if (proto_resp.import_response().has_error_message())
             return RespondBadRequest(request, proto_resp.import_response().error_message());
         if (proto_resp.import_response().has_log())

@@ -260,7 +260,7 @@ void lgraph::GraphManager::ReloadFromDisk(KvStore* store, KvTransaction& txn,
             conf.name = graph_name;
             fma_common::BinaryBuffer buf(value.Data(), value.Size());
             if (fma_common::BinaryRead(buf, conf) != value.Size()) {
-                throw std::runtime_error("Failed to read DB config for graph " + graph_name);
+                throw lgraph_api::CorrupttedDbConfig("Failed to read DB config for graph " + graph_name);
             }
             std::string secret = conf.dir;
             conf.dir = GetGraphActualDir(parent_dir_, conf.dir);
@@ -270,7 +270,7 @@ void lgraph::GraphManager::ReloadFromDisk(KvStore* store, KvTransaction& txn,
             conf.load_plugins = config_.load_plugins;
             // LOG_DEBUG() << "Openning graph with config {" << fma_common::ToString(conf) << "}";
             std::unique_ptr<LightningGraph> graph(new LightningGraph(conf));
-            if (!graph->CheckDbSecret(secret)) throw std::runtime_error("DB corruptted.");
+            if (!graph->CheckDbSecret(secret)) throw lgraph_api::CorrupttedDB();
             graphs_.emplace(graph_name, GcDb(graph.release()));
         }
     }
@@ -299,8 +299,8 @@ std::vector<std::string> lgraph::GraphManager::Backup(const std::string& backup_
         ret.push_back(graph_dir + "/data.mdb");
         if (!fma_common::file_system::MkDir(graph_dir)) {
             LOG_WARN() << "Error backing up graph " << name << ": cannot create dir " << graph_dir;
-            throw std::runtime_error("Error backing up graph [" + name + "]: cannot create dir " +
-                                     graph_dir);
+            throw lgraph_api::Filesystem(
+                "Error backing up graph {}: cannot create dir {}", name, graph_dir);
         }
         g->Backup(graph_dir);
     }

@@ -495,7 +495,7 @@ bool lgraph::Galaxy::LoadSnapshot(const std::string& dir) {
 static inline void TryMkDir(const std::string& dir, const fma_common::FileSystem& fs) {
     if (!fs.Mkdir(dir)) {
         LOG_WARN() << "Failed to create dir " << dir;
-        throw std::runtime_error("Failed to create dir " + dir);
+        throw lgraph_api::Filesystem("Failed to create dir " + dir);
     }
 }
 
@@ -510,7 +510,7 @@ std::vector<std::string> lgraph::Galaxy::SaveSnapshot(const std::string& dir) {
         LOG_DEBUG() << "Snapshot dir " << dir << " already exists, overwriting...";
         if (!fs.RemoveDir(dir)) {
             LOG_WARN() << "Failed to remove dir " << dir;
-            throw std::runtime_error("Failed to remove dir " + dir);
+            throw lgraph_api::Filesystem("Failed to remove dir " + dir);
         }
     }
     TryMkDir(dir, fs);
@@ -771,7 +771,7 @@ void lgraph::Galaxy::CheckTuGraphVersion(KvTransaction& txn) {
     if (major != _detail::VER_MAJOR) {
         LOG_WARN() << "Mismatching major version: DB is created with ver " << major
                                  << ", while current TuGraph is ver " << _detail::VER_MAJOR;
-        throw std::runtime_error("Mismatch DB and software version.");
+        throw lgraph_api::MismatchedMajorVersion("Mismatch DB and software version.");
     }
     if (minor != _detail::VER_MINOR) {
         LOG_WARN() << "DB is created with ver " << major << "." << minor

@@ -97,8 +97,8 @@ class PythonWorkerProcess {
             [this](const char* b, size_t n) { PrintMessageToLog(b, n); },
             [this](const char* b, size_t n) { PrintMessageToWarn(b, n); }));
         if (process_->get_id() == 0) {
-            throw std::runtime_error(fma_common::StringFormatter::Format(
-                "Error spawning Python process: {}", process_->get_exit_status()));
+            throw lgraph_api::PythonPluginError(
+                "Error spawning Python process: {}", process_->get_exit_status());
         }
     }
 
@@ -326,20 +326,20 @@ class PythonPluginManagerImpl : public PluginManagerImplBase {
 
     virtual void LoadPlugin(const std::string& user, const std::string& name,
                             PluginInfoBase* pinfo, std::string& error) {
-        throw std::runtime_error("Python plugin is disabled in this version.");
+        throw lgraph_api::PythonPluginError("Python plugin is disabled in this version.");
     }
 
     virtual void UnloadPlugin(const std::string& user, const std::string& name,
                               PluginInfoBase* pinfo, std::string& error) {
-        throw std::runtime_error("Python plugin is disabled in this version.");
+        throw lgraph_api::PythonPluginError("Python plugin is disabled in this version.");
     }
 
     virtual PluginInfoBase* CreatePluginInfo() {
-        throw std::runtime_error("Python plugin is disabled in this version.");
+        throw lgraph_api::PythonPluginError("Python plugin is disabled in this version.");
     }
 
     virtual std::string GetPluginPath(const std::string& name) {
-        throw std::runtime_error("Python plugin is disabled in this version.");
+        throw lgraph_api::PythonPluginError("Python plugin is disabled in this version.");
     }
 
     std::string GetTaskName(const std::string& name) override { return "[PYTHON_PLUGIN] " + name; }
@@ -347,7 +347,7 @@ class PythonPluginManagerImpl : public PluginManagerImplBase {
     virtual void DoCall(const std::string& user, AccessControlledDB* db_with_access_control,
                         const std::string name, PluginInfoBase* pinfo, const std::string& request,
                         double timeout, bool in_process, std::string& output) {
-        throw std::runtime_error("Python plugin is disabled in this version.");
+        throw lgraph_api::PythonPluginError("Python plugin is disabled in this version.");
     }
 };
 #endif

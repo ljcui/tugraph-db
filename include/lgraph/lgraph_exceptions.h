@@ -15,62 +15,76 @@
 #include "fma-common/string_formatter.h"
 
 namespace lgraph_api {
+#define ERROR_CODES \
+    X(InvalidArguments, "InvalidArguments") \
+    X(InvalidGalaxy, "InvalidGalaxy")   \
+    X(InvalidGraphDB, "InvalidGraphDB")   \
+    X(InvalidTransaction, "InvalidTransaction") \
+    X(InvalidIterator, "InvalidIterator")   \
+    X(InvalidTransactionFork, "InvalidTransactionFork") \
+    X(TaskKilled, "TaskKilled")   \
+    X(TransactionConflict, "TransactionConflict")  \
+    X(WriteNotAllowed, "WriteNotAllowed")   \
+    X(DBNotExist, "DBNotExist")  \
+    X(IOError, "IOError")  \
+    X(Unauthorized, "Unauthorized")  \
+    X(InternalError, "InternalError")  \
+    X(BadRequest, "BadRequest")   \
+    X(LmdbException, "LmdbException")  \
+    X(FullTextIndexException, "FullTextIndexException")   \
+    X(PythonPluginTimeout, "PythonPluginTimeout")  \
+    X(InputError, "InputError")   \
+    X(OutOfRange, "OutOfRange")   \
+    X(LgraphPeekError, "LgraphPeekError")   \
+    X(LgraphExportError, "LgraphExportError")  \
+    X(LgraphBinlogError, "LgraphBinlogError")   \
+    X(LgraphCliError, "LgraphCliError")  \
+    X(OlapOnDiskError, "OlapOnDiskError")   \
+    X(RestServerError, "RestServerError")  \
+    X(MismatchedMajorVersion, "MismatchedMajorVersion")   \
+    X(Filesystem, "Filesystem")  \
+    X(CorrupttedDB, "CorrupttedDB")   \
+    X(CorrupttedDbConfig, "CorrupttedDbConfig")  \
+    X(PythonPluginError, "PythonPluginError")   \
+    X(PluginError, "PluginError")   \
+    X(RestClientError, "RestClientError")   \
+    X(PythonApiError, "PythonApiError")  \
+    X(ConvertError, "ConvertError")  \
+    X(UnsupportedType, "UnsupportedType")  \
+
 enum class ErrorCode {
-    OK = 0,
-    InvalidArguments,
-    InvalidGalaxy,
-    InvalidGraphDB,
-    InvalidTransaction,
-    InvalidIterator,
-    InvalidTransactionFork,
-    TaskKilled,
-    TransactionConflict,
-    WriteNotAllowed,
-    DBNotExist,
-    IOError,
-    Unauthorized,
-    InternalError,
-    BadRequest,
-    LmdbException,
-    FullTextIndexException,
-    PythonPluginTimeout,
-    InputError,
-    OutOfRange,
-    LgraphPeekError,
+#define X(code, msg) code,
+    ERROR_CODES
+#undef X
 };
 
-inline const char* ToString(ErrorCode code) {
+inline const char* ErrorCodeToString(ErrorCode code) {
     switch (code) {
-        case ErrorCode::OK: return "Ok";
-        case ErrorCode::InvalidArguments: return "InvalidArguments";
-        case ErrorCode::InvalidGalaxy: return "InvalidGalaxy";
-        case ErrorCode::InvalidGraphDB: return "InvalidGraphDB";
-        case ErrorCode::InvalidTransaction: return "InvalidTransaction";
-        case ErrorCode::InvalidIterator: return "InvalidIterator";
-        case ErrorCode::InvalidTransactionFork: return "InvalidTransactionFork";
-        case ErrorCode::TaskKilled: return "TaskKilled";
-        case ErrorCode::TransactionConflict: return "TransactionConflict";
-        case ErrorCode::WriteNotAllowed: return "WriteNotAllowed";
-        case ErrorCode::DBNotExist: return "DBNotExist";
-        case ErrorCode::IOError: return "IOError";
-        case ErrorCode::Unauthorized: return "Unauthorized";
-        case ErrorCode::InternalError: return "InternalError";
-        case ErrorCode::BadRequest: return "BadRequest";
-        case ErrorCode::LmdbException: return "LmdbException";
-        case ErrorCode::FullTextIndexException: return "FullTextIndexException";
-        case ErrorCode::PythonPluginTimeout: return "PythonPluginTimeout";
-        case ErrorCode::InputError: return "InputError";
-        case ErrorCode::OutOfRange: return "OutOfRange";
-        case ErrorCode::LgraphPeekError: return "LgraphPeekError";
-        default: return "UnknownErrorCode";
+#define X(code, msg) case ErrorCode::code: return #code;
+        ERROR_CODES
+#undef X
+    default: return "Unknown Error Code";
+    }
+}
+
+inline const char* ErrorCodeDesc(ErrorCode code) {
+    switch (code) {
+#define X(code, msg) case ErrorCode::code: return msg;
+        ERROR_CODES
+#undef X
+    default: return "Unknown Error Code";
     }
 }
 
 class LgraphException : public std::exception {
  public:
+    explicit LgraphException(ErrorCode code)
+        : code_(code), msg_(ErrorCodeDesc(code)) {
+        what_ = FMA_FMT("[{}] {}", ErrorCodeToString(code_), msg_);
+    }
     explicit LgraphException(ErrorCode code, const std::string& msg)
         : code_(code), msg_(msg) {
-        what_ = FMA_FMT("[{}] {}", ToString(code_), msg_);
+        what_ = FMA_FMT("[{}] {}", ErrorCodeToString(code_), msg_);
     }
     explicit LgraphException(ErrorCode code, const char* msg)
         : code_(code), msg_(msg) {}
@@ -85,51 +99,22 @@ class LgraphException : public std::exception {
     std::string what_;
 };
 
-#define DEFINE_EXCEPTION(name, default_msg)                           \
+#define DEFINE_EXCEPTION(name)                                        \
 class name : public LgraphException {                                 \
  public:                                                              \
     name()                                                            \
-        : LgraphException(ErrorCode::name, default_msg) {}            \
+        : LgraphException(ErrorCode::name) {}                         \
     explicit name(const std::string& err)                             \
         : LgraphException(ErrorCode::name, err) {}                    \
     explicit name(const char* err)                                    \
         : LgraphException(ErrorCode::name, err) {}                    \
     template <typename... Ts>                                         \
-    name(const char* format, const Ts&... ds)                         \
+    explicit name(const char* format, const Ts&... ds)                \
         : LgraphException(ErrorCode::name, FMA_FMT(format, ds...)) {} \
 }
 
-/** @brief   User input error. Base class for a variety of input errors. */
-DEFINE_EXCEPTION(InputError, "InputError");
-/** @brief   Data out of range. */
-DEFINE_EXCEPTION(OutOfRange, "OutOfRange");
-/** @brief   An invalid parameter is passed. */
-DEFINE_EXCEPTION(InvalidArguments, "Invalid Arguments");
-/** @brief   Function called on an invalid Galaxy. */
-DEFINE_EXCEPTION(InvalidGalaxy, "Invalid Galaxy.");
-/** @brief   Function called on an invalid GraphDB. */
-DEFINE_EXCEPTION(InvalidGraphDB, "Invalid GraphDB.");
-/** @brief   Function called on an invalid transaction. */
-DEFINE_EXCEPTION(InvalidTransaction, "Invalid transaction.");
-/** @brief   Function called on an invalid iterator. */
-DEFINE_EXCEPTION(InvalidIterator, "Invalid iterator.");
-/** @brief   ForkTxn called on a write transaction. */
-DEFINE_EXCEPTION(InvalidTransactionFork, "Write transactions cannot be forked.");
-/** @brief   Task is being killed per user request or timeout. */
-DEFINE_EXCEPTION(TaskKilled, "Task is killed.");
-/** @brief   A conflict is detected when committing this transaction. */
-DEFINE_EXCEPTION(TransactionConflict, "Transaction conflicts with an earlier one.");
-/** @brief   Write operation is tried on a read-only GraphDB or read-only transaction. */
-DEFINE_EXCEPTION(WriteNotAllowed, "Write operation is not allowed.");
-/** @brief   Specified database does not exist, wrong directory? */
-DEFINE_EXCEPTION(DBNotExist, "The specified TuGraph DB does not exist.");
-/** @brief   An i/o error. */
-DEFINE_EXCEPTION(IOError, "IO Error.");
-/** @brief   User not authorized to perform this action. */
-DEFINE_EXCEPTION(Unauthorized, "Unauthorized.");
-DEFINE_EXCEPTION(InternalError, "Internal error.");
-DEFINE_EXCEPTION(BadRequest, "Bad request.");
-DEFINE_EXCEPTION(PythonPluginTimeout, "Python plugin timeout.");
-DEFINE_EXCEPTION(LgraphPeekError, "LgraphPeekError.");
+#define X(code, msg) DEFINE_EXCEPTION(code);
+ERROR_CODES
+#undef X
 
 }  // namespace lgraph_api
