@@ -85,7 +85,7 @@ static ParallelVector<VertexData> ExtractVertexData(
             extract(vit, data[i]);
         }
     }
-    if (ShouldKillThisTask(task_ctx)) throw std::runtime_error("Task killed");
+    if (ShouldKillThisTask(task_ctx)) throw lgraph_api::TaskKilled();
     return data;
 }
 

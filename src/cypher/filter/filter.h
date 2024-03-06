@@ -61,7 +61,7 @@ struct FieldDataHash {
         case FieldType::BLOB:
             return std::hash<std::string>()(fd.AsBlob());
         default:
-            throw std::runtime_error("Unhandled data type, probably corrupted data.");
+            throw lgraph_api::CorrupttedData("Unhandled data type, probably corrupted data.");
         }
     }
 };

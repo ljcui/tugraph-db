@@ -72,7 +72,7 @@ class ColumnParser : public BlockParser {
         std::unique_ptr<fma_common::InputFmaStream> stream(new fma_common::InputFmaStream(path));
         if (!stream->Good()) {
             LOG_INFO() << "Failed to open input file " << path;
-            throw std::runtime_error("failed to open input file [" + path + "]");
+            throw lgraph_api::ColumnParserError("failed to open input file [" + path + "]");
         }
         own_stream_ = true;
         forgiving_ = forgiving;
@@ -437,7 +437,7 @@ class JsonLinesParser : public BlockParser {
           max_errors_(max_err_msgs) {
         if (!stream_->Good()) {
             LOG_INFO() << "Failed to open input file " << path;
-            throw std::runtime_error("failed to open input file [" + path + "]");
+            throw lgraph_api::ColumnParserError("failed to open input file [" + path + "]");
         }
         init(block_size, n_threads, n_header_lines);
     }
@@ -616,10 +616,10 @@ class JsonLinesParser : public BlockParser {
                     // TODO(shw): support import for polygon type;
                 case FieldType::SPATIAL:
                     // TODO(shw): support import for spatial type;
-                    throw std::runtime_error("do not support spatial type now!");
+                    throw lgraph_api::ColumnParserError("do not support spatial type now!");
                 }
                 if (fd.is_null()) {
-                    throw std::bad_cast();
+                    throw lgraph_api::BadCast();
                 }
                 fds.emplace_back(std::move(fd));
             }

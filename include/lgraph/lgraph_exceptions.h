@@ -89,7 +89,11 @@ X(DBManagementClientError, "DBManagementClientError") \
 X(HaConfigError, "HaConfigError")       \
 X(UnknownSymbolNodeScope, "UnknownSymbolNodeScope") \
 X(CypherPathError, "CypherPathError") \
-X(ImportV3Error, "ImportV3Error")
+X(ImportV3Error, "ImportV3Error")      \
+X(ImportV2Error, "ImportV2Error")      \
+X(ImportConfigError, "ImportConfigError") \
+X(FileCutError, "FileCutError")         \
+X(ColumnParserError, "ColumnParserError")
 
 enum class ErrorCode {
 #define X(code, msg) code,

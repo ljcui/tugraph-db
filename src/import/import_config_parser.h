@@ -146,7 +146,7 @@ class KeyWordFunc {
         const std::map<std::string, KeyWord>& map = StrToKeyWordMap();
         auto it = map.find(s);
         if (it == map.end()) {
-            throw std::runtime_error("unknown keyword str: [" + s + "]");
+            throw lgraph_api::ImportConfigError("unknown keyword str: [" + s + "]");
         }
         return it->second;
     }
@@ -155,7 +155,7 @@ class KeyWordFunc {
         const std::map<FieldType, KeyWord>& map = FieldTypeToKeyWordMap();
         auto it = map.find(ft);
         if (it == map.end()) {
-            throw std::runtime_error(FMA_FMT("unknown field type [{}]", ft));
+            throw lgraph_api::ImportConfigError("unknown field type [{}]", ft);
         }
         return it->second;
     }
@@ -164,8 +164,8 @@ class KeyWordFunc {
         const std::map<KeyWord, FieldType>& map = KeyWordToFieldTypeMap();
         auto it = map.find(kw);
         if (it == map.end())
-            throw std::runtime_error(
-                FMA_FMT("keyword [{}] is not a FieldType", KeyWordToStrMap().at(kw)));
+            throw lgraph_api::ImportConfigError(
+                "keyword [{}] is not a FieldType", KeyWordToStrMap().at(kw));
         return it->second;
     }
 
@@ -182,7 +182,8 @@ class KeyWordFunc {
         } else if (kw == KeyWord::DESC) {
             return TemporalFieldOrder::DESC;
         } else {
-            throw std::runtime_error(FMA_FMT("keyword [{}] is not a TemporalFieldOrder", s));
+            throw lgraph_api::ImportConfigError(
+                "keyword [{}] is not a TemporalFieldOrder", s);
         }
     }
 
@@ -329,8 +330,8 @@ struct LabelDesc {
         for (size_t i = 0; i < columns.size(); ++i) {
             if (columns[i].name == field_name) return i;
         }
-        throw std::runtime_error(
-            FMA_FMT("field name [{}] not found in label [{}]", field_name, name));
+        throw lgraph_api::ImportConfigError(
+            "field name [{}] not found in label [{}]", field_name, name);
     }
 
     std::vector<ColumnSpec> GetColumnSpecs() const {
@@ -341,16 +342,16 @@ struct LabelDesc {
         for (size_t i = 0; i < columns.size(); ++i) {
             if (columns[i].name == field_name) return columns[i];
         }
-        throw std::runtime_error(
-            FMA_FMT("field name [{}] not found in label [{}]", field_name, name));
+        throw lgraph_api::ImportConfigError(
+            "field name [{}] not found in label [{}]", field_name, name);
     }
 
     ColumnSpec GetPrimaryField() const {
-        if (!is_vertex) throw std::runtime_error("No primary column found");
+        if (!is_vertex) throw lgraph_api::ImportConfigError("No primary column found");
         for (auto it = columns.begin(); it != columns.end(); ++it) {
             if (it->primary) return *it;
         }
-        throw std::runtime_error("No primary column found");
+        throw lgraph_api::ImportConfigError("No primary column found");
     }
 
     bool HasPrimaryField() const {
@@ -363,11 +364,11 @@ struct LabelDesc {
     }
 
     ColumnSpec GetTemporalField() const {
-        if (is_vertex) throw std::runtime_error("No temporal column found");
+        if (is_vertex) throw lgraph_api::ImportConfigError("No temporal column found");
         for (auto it = columns.begin(); it != columns.end(); ++it) {
             if (it->temporal) return *it;
         }
-        throw std::runtime_error("No temporal column found");
+        throw lgraph_api::ImportConfigError("No temporal column found");
     }
 
     bool HasTemporalField() const {
@@ -493,7 +494,7 @@ struct CsvDesc {
         for (size_t i = 0; i < columns.size(); ++i) {
             if (columns[i] == s) return i;
         }
-        throw std::runtime_error(FMA_FMT("No id name [{}] found", s));
+        throw lgraph_api::ImportConfigError("No id name [{}] found", s);
     }
 
     size_t FindIdxExcludeSkip(std::string s) const {
@@ -507,7 +508,7 @@ struct CsvDesc {
             }
             pos++;
         }
-        throw std::runtime_error(FMA_FMT("No id name [{}] found", s));
+        throw lgraph_api::ImportConfigError("No id name [{}] found", s);
     }
 
     bool CheckValid() const {
@@ -515,25 +516,26 @@ struct CsvDesc {
         bool find_dst_id = false;
         std::set<std::string> set;
         for (auto& col : columns) {
-            if (col.empty()) throw std::runtime_error("column field cannot be empty");
+            if (col.empty()) throw lgraph_api::ImportConfigError("column field cannot be empty");
             if (col == KeyWordFunc::GetStrFromKeyWord(KeyWord::SKIP)) {
                 continue;
             } else if (col == KeyWordFunc::GetStrFromKeyWord(KeyWord::SRC_ID)) {
-                if (find_src_id) throw std::runtime_error("SRC_ID defined more than once");
+                if (find_src_id) throw lgraph_api::ImportConfigError("SRC_ID defined more than once");
                 find_src_id = true;
             } else if (col == KeyWordFunc::GetStrFromKeyWord(KeyWord::DST_ID)) {
-                if (find_dst_id) throw std::runtime_error("DST_ID defined more than once");
+                if (find_dst_id) throw lgraph_api::ImportConfigError("DST_ID defined more than once");
                 find_dst_id = true;
             } else {
                 if (set.find(col) != set.end())
-                    throw std::runtime_error(FMA_FMT("field [{}] appear more than once", col));
+                    throw lgraph_api::ImportConfigError(
+                        "field [{}] appear more than once", col);
                 set.insert(col);
             }
         }
         if (!find_src_id && !is_vertex_file)
-            throw std::runtime_error("SRC_ID should be defined in edge file");
+            throw lgraph_api::ImportConfigError("SRC_ID should be defined in edge file");
         if (!find_dst_id && !is_vertex_file)
-            throw std::runtime_error("DST_ID should be defined in edge file");
+            throw lgraph_api::ImportConfigError("DST_ID should be defined in edge file");
         return true;
     }
 
@@ -550,7 +552,7 @@ struct CsvDesc {
             }
             pos++;
         }
-        if (!find) throw std::runtime_error("SRD_ID not found in columns");
+        if (!find) throw lgraph_api::ImportConfigError("SRD_ID not found in columns");
         return pos;
     }
 
@@ -567,12 +569,13 @@ struct CsvDesc {
             }
             pos++;
         }
-        if (!find) throw std::runtime_error("SRD_ID not found in columns");
+        if (!find) throw lgraph_api::ImportConfigError("SRD_ID not found in columns");
         return pos;
     }
 
     bool IsSkip(size_t pos) const {
-        if (pos >= columns.size()) throw std::runtime_error(FMA_FMT("pos [{}] out of range", pos));
+        if (pos >= columns.size()) throw lgraph_api::ImportConfigError(
+            "pos [{}] out of range", pos);
         return columns[pos] == KeyWordFunc::GetStrFromKeyWord(KeyWord::SKIP);
     }
 
@@ -639,7 +642,8 @@ struct CsvDesc {
                 return fs;
             }
         }
-        throw std::runtime_error(FMA_FMT("field [{}] not found in FieldSpec vector", name));
+        throw lgraph_api::ImportConfigError(
+            "field [{}] not found in FieldSpec vector", name);
     }
 };
 
@@ -655,7 +659,8 @@ struct SchemaDesc {
             if (it.is_vertex && it.name == label) {
                 return it;
             }
-        throw std::runtime_error(FMA_FMT("vertex label [{}] not found in schema", label));
+        throw lgraph_api::ImportConfigError(
+            "vertex label [{}] not found in schema", label);
     }
 
     LabelDesc FindEdgeLabel(std::string label) const {
@@ -663,7 +668,8 @@ struct SchemaDesc {
             if (!it.is_vertex && it.name == label) {
                 return it;
             }
-        throw std::runtime_error(FMA_FMT("edge label [{}] not found in schema", label));
+        throw lgraph_api::ImportConfigError(
+            "edge label [{}] not found in schema", label);
     }
 
     std::string ToString() const {
@@ -1005,7 +1011,7 @@ class ImportConfParser {
         std::sort(column_ids.begin(), column_ids.end());
         for (size_t i = 1; i < column_ids.size(); ++i) {
             if (column_ids[i] == column_ids[i - 1])
-                throw std::runtime_error("same column name exists");
+                throw lgraph_api::ImportConfigError("same column name exists");
         }
 
         // all fields should be defined except optional
@@ -1088,8 +1094,7 @@ struct ColumnSpec {
             kw = KeyWord::BLOB;
             break;
         default:
-            throw std::runtime_error(
-                fma_common::StringFormatter::Format("unexpected data type: [{}]", (int)dt));
+            throw lgraph_api::ImportConfigError("unexpected data type: [{}]", (int)dt);
         }
         return KeyWordFunc::GetStrFromKeyWord(kw);
     }

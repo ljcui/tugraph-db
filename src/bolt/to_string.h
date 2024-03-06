@@ -74,7 +74,7 @@ nlohmann::json ToJsonObj(const std::any& item) {
     } else {
         auto err = std::string("Unsupported type: ") + item.type().name();
         LOG_ERROR() << err;
-        throw std::runtime_error(err);
+        throw lgraph_api::BoltError(err);
     }
 }
 

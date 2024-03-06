@@ -169,8 +169,8 @@ class DenseString {
 
     void SetContent(const char* ptr, size_t s) {
         if (s > std::numeric_limits<decltype(size_)>::max()) {
-            throw std::runtime_error(FMA_FMT("DenseString cannot hold data larger than {}.",
-                                             std::numeric_limits<decltype(size_)>::max()));
+            throw lgraph_api::LargeString("DenseString cannot hold data larger than {}.",
+                                          std::numeric_limits<decltype(size_)>::max());
         }
         if (s > SMALL_BUF_SIZE) {
             ptr_ = new char[s];

@@ -22,7 +22,7 @@ class FileCutter {
     explicit FileCutter(const std::string& filename) : filename_(filename) {
         file_.Open(filename_);
         if (!file_.Good()) {
-            throw std::runtime_error("cannot open " + filename);
+            throw lgraph_api::Filesystem("cannot open " + filename);
         }
         buf_.resize(ONLINE_IMPORT_LIMIT_HARD);
     }
@@ -53,7 +53,7 @@ class FileCutter {
                 end++;
             }
             if ((size_t)(end - begin) >= ONLINE_IMPORT_LIMIT_HARD) {
-                throw std::runtime_error("too long input line");
+                throw lgraph_api::FileCutError("too long input line");
             }
         }
         return true;

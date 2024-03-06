@@ -46,7 +46,7 @@ lgraph::AccessControlledDB lgraph::import_v2::Importer::OpenGraph(Galaxy& galaxy
     if (graphs.find(config_.graph) != graphs.end()) {
         if (!empty_db) {
             if (!config_.delete_if_exists) {
-                throw std::runtime_error(
+                throw lgraph_api::ImportV2Error(
                     "Graph already exists. If you want to overwrite the graph, use --overwrite "
                     "true.");
             } else {
@@ -90,7 +90,7 @@ void lgraph::import_v2::Importer::DoImportOffline() {
         if (!file.is_vertex_file) {
             if (!schema.FindEdgeLabel(file.label)
                      .MeetEdgeConstraints(file.edge_src.label, file.edge_dst.label)) {
-                throw std::runtime_error(FMA_FMT("{} not meet the edge constraints", file.path));
+                throw lgraph_api::ImportV2Error("{} not meet the edge constraints", file.path);
             }
             file.edge_src.id = schema.FindVertexLabel(file.edge_src.label).GetPrimaryField().name;
             file.edge_dst.id = schema.FindVertexLabel(file.edge_dst.label).GetPrimaryField().name;
@@ -124,8 +124,8 @@ void lgraph::import_v2::Importer::DoImportOffline() {
                 LOG_INFO() << FMA_FMT("Add {} label:{} success", v.is_vertex ? "vertex" : "edge",
                                      v.name);
             } else {
-                throw std::runtime_error(
-                    FMA_FMT("Add {} label:{} error", v.is_vertex ? "vertex" : "edge", v.name));
+                throw lgraph_api::ImportV2Error(
+                    "Add {} label:{} error", v.is_vertex ? "vertex" : "edge", v.name);
             }
         }
     }
@@ -196,7 +196,7 @@ void lgraph::import_v2::Importer::DoImportOffline() {
     auto ret = std::find_if(data_files.begin(), data_files.end(),
                             [](auto& cd) { return cd.is_vertex_file; });
     if (ret == data_files.end()) {
-        throw std::runtime_error(FMA_FMT("No vertex data file found in offline importing"));
+        throw lgraph_api::ImportV2Error("No vertex data file found in offline importing");
     }
 
     // order the files according to labels

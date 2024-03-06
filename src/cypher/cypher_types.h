@@ -107,7 +107,7 @@ struct FieldData {
 
     bool operator==(const FieldData& rhs) const {
         if (type != rhs.type)
-            throw std::runtime_error("Unable to compare between SCALAR and ARRAY.");
+            throw lgraph_api::Unsupported("Unable to compare between SCALAR and ARRAY.");
         if (type == SCALAR) return scalar == rhs.scalar;
         if (type == ARRAY) CYPHER_TODO();
         return false;
@@ -117,7 +117,7 @@ struct FieldData {
 
     bool operator>(const FieldData& rhs) const {
         if (type != rhs.type)
-            throw std::runtime_error("Unable to compare between SCALAR and ARRAY.");
+            throw lgraph_api::Unsupported("Unable to compare between SCALAR and ARRAY.");
         if (type == SCALAR) return scalar > rhs.scalar;
         if (type == ARRAY) CYPHER_TODO();
         return false;
@@ -125,7 +125,7 @@ struct FieldData {
 
     bool operator>=(const FieldData& rhs) const {
         if (type != rhs.type)
-            throw std::runtime_error("Unable to compare between SCALAR and ARRAY.");
+            throw lgraph_api::Unsupported("Unable to compare between SCALAR and ARRAY.");
         if (type == SCALAR) return scalar >= rhs.scalar;
         if (type == ARRAY) CYPHER_TODO();
         return false;
@@ -175,7 +175,6 @@ struct FieldData {
             str.append("]");
             return str;
         }
-        throw std::runtime_error("internal error: unhandled type: " + std::to_string((int)type));
     }
 };
 
