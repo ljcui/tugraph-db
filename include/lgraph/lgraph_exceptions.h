@@ -18,6 +18,7 @@
 namespace lgraph_api {
 
 #define ERROR_CODES \
+X(OSGraphInvalidDeveloper, "OSGraph invalid developer.") \
 X(UnknownError, "Unknown error.") \
 X(InvalidGalaxy, "Invalid Galaxy.") \
 X(InvalidGraphDB, "Invalid GraphDB.") \

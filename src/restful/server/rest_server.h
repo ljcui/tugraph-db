@@ -58,6 +58,7 @@ class RestServer {
         EXPORT = 23,
         UpdateTokenTime = 24,
         GetTokenTime = 25,
+        OSGRAPH = 26,
     };
 
     static std::unordered_map<utility::string_t, RestPathCases> GetPathToCaseDict() {
@@ -87,7 +88,8 @@ class RestServer {
              {RestStrings::REFRESH, RestPathCases::REFRESH},
              {RestStrings::LOGOUT, RestPathCases::LOGOUT},
              {RestStrings::UpdateTokenTime, RestPathCases::UpdateTokenTime},
-             {RestStrings::GetTokenTime, RestPathCases::GetTokenTime}});
+             {RestStrings::GetTokenTime, RestPathCases::GetTokenTime},
+             {RestStrings::OSGRAPH, RestPathCases::OSGRAPH}});
     }
 
  public:
@@ -260,6 +262,13 @@ class RestServer {
                          const utility::string_t& relative_path,
                          const std::vector<utility::string_t>& paths,
                          const web::json::value& body) const;
+
+    void HandlePostOSGraph(const std::string& user, const std::string& token,
+                           const web::http::http_request& request,
+                           const utility::string_t& relative_path,
+                           const std::vector<utility::string_t>& paths,
+                           const web::json::value& body) const;
+
     void HandlePostPlugin(const std::string& user, const std::string& token,
                           const web::http::http_request& request,
                           const utility::string_t& relative_path,

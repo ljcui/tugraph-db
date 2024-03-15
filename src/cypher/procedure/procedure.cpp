@@ -21,7 +21,6 @@
 #include "core/thread_id.h"
 #include "db/galaxy.h"
 #include "parser/data_typedef.h"
-#include "server/state_machine.h"
 #include "restful/server/json_convert.h"
 #include "cypher/graph/common.h"
 #include "cypher/procedure/procedure.h"
@@ -30,6 +29,22 @@
 #include "cypher/monitor/memory_monitor_allocator.h"
 #include "fma-common/encrypt.h"
 #include "import/import_v3.h"
+
+namespace lgraph {
+std::vector<std::tuple<std::string,std::string,std::string>>
+get_repo_contribution(lgraph_api::GraphDB &db, const std::string &request);
+std::vector<std::tuple<std::string, std::string, std::string>>
+get_developer_contribution(lgraph_api::GraphDB &db, const std::string &request);
+std::vector<std::tuple<std::string, std::string, std::string>>
+get_repo_by_repo(lgraph_api::GraphDB &db, const std::string &request);
+std::vector<std::tuple<std::string, std::string, std::string>>
+get_developer_by_developer(lgraph_api::GraphDB &db, const std::string &request);
+std::vector<std::tuple<std::string, std::string, std::string>>
+get_repo_developers_profile(lgraph_api::GraphDB &db, const std::string &request);
+std::vector<std::tuple<std::string, std::string, std::string>>
+get_developer_repos_profile(lgraph_api::GraphDB &db, const std::string &request);
+bool export_es_data(lgraph_api::GraphDB &db, const std::string &request, std::string &response);
+};
 
 namespace cypher {
 
@@ -1502,6 +1517,138 @@ void BuiltinProcedure::DbAddEdgeConstraints(RTContext *ctx, const Record *record
     }
     auto ac_db = ctx->galaxy_->OpenGraph(ctx->user_, ctx->graph_);
     ac_db.AddEdgeConstraints(label, edge_constraints);
+}
+
+void BuiltinProcedure::get_repo_by_repo(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                      const VEC_STR &yield_items, std::vector<Record> *records) {
+    using namespace parser;
+    CYPHER_ARG_CHECK(args.size() == 1, "need 1 parameters, e.g. osgraph.get_repo_by_repo(request)")
+    CYPHER_ARG_CHECK(args[0].type == parser::Expression::STRING, "request type should be string")
+    if (ctx->txn_) ctx->txn_->Abort();
+
+    const auto& request = args[0].String();
+    auto ac_db = ctx->galaxy_->OpenGraph(ctx->user_, ctx->graph_);
+    lgraph_api::GraphDB db(&ac_db, true);
+    auto res = lgraph::get_repo_by_repo(db, request);
+    for (auto& item : res) {
+        Record r;
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<0>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<1>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<2>(item))));
+        records->emplace_back(r.Snapshot());
+    }
+}
+
+void BuiltinProcedure::get_developer_by_developer(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                        const VEC_STR &yield_items, std::vector<Record> *records) {
+    using namespace parser;
+    CYPHER_ARG_CHECK(args.size() == 1, "need 1 parameters, e.g. osgraph.get_developer_by_developer(request)")
+    CYPHER_ARG_CHECK(args[0].type == parser::Expression::STRING, "request type should be string")
+    if (ctx->txn_) ctx->txn_->Abort();
+
+    const auto& request = args[0].String();
+    auto ac_db = ctx->galaxy_->OpenGraph(ctx->user_, ctx->graph_);
+    lgraph_api::GraphDB db(&ac_db, true);
+    auto res = lgraph::get_developer_by_developer(db, request);
+    for (auto& item : res) {
+        Record r;
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<0>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<1>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<2>(item))));
+        records->emplace_back(r.Snapshot());
+    }
+}
+
+void BuiltinProcedure::get_repo_developers_profile(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                                  const VEC_STR &yield_items, std::vector<Record> *records) {
+    using namespace parser;
+    CYPHER_ARG_CHECK(args.size() == 1, "need 1 parameters, e.g. osgraph.get_repo_developers_profile(request)")
+    CYPHER_ARG_CHECK(args[0].type == parser::Expression::STRING, "request type should be string")
+    if (ctx->txn_) ctx->txn_->Abort();
+
+    const auto& request = args[0].String();
+    auto ac_db = ctx->galaxy_->OpenGraph(ctx->user_, ctx->graph_);
+    lgraph_api::GraphDB db(&ac_db, true);
+    auto res = lgraph::get_repo_developers_profile(db, request);
+    for (auto& item : res) {
+        Record r;
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<0>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<1>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<2>(item))));
+        records->emplace_back(r.Snapshot());
+    }
+}
+
+void BuiltinProcedure::get_developer_repos_profile(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                                   const VEC_STR &yield_items, std::vector<Record> *records) {
+    using namespace parser;
+    CYPHER_ARG_CHECK(args.size() == 1, "need 1 parameters, e.g. osgraph.get_developer_repos_profile(request)")
+    CYPHER_ARG_CHECK(args[0].type == parser::Expression::STRING, "request type should be string")
+    if (ctx->txn_) ctx->txn_->Abort();
+
+    const auto& request = args[0].String();
+    auto ac_db = ctx->galaxy_->OpenGraph(ctx->user_, ctx->graph_);
+    lgraph_api::GraphDB db(&ac_db, true);
+    auto res = lgraph::get_developer_repos_profile(db, request);
+    for (auto& item : res) {
+        Record r;
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<0>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<1>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<2>(item))));
+        records->emplace_back(r.Snapshot());
+    }
+}
+
+void BuiltinProcedure::get_repo_contribution(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                            const VEC_STR &yield_items, std::vector<Record> *records) {
+    using namespace parser;
+    CYPHER_ARG_CHECK(args.size() == 1, "need 1 parameters, e.g. osgraph.get_repo_contribution(request)")
+    CYPHER_ARG_CHECK(args[0].type == parser::Expression::STRING, "request type should be string")
+    if (ctx->txn_) ctx->txn_->Abort();
+
+    const auto& request = args[0].String();
+    auto ac_db = ctx->galaxy_->OpenGraph(ctx->user_, ctx->graph_);
+    lgraph_api::GraphDB db(&ac_db, true);
+    auto res = lgraph::get_repo_contribution(db, request);
+    for (auto& item : res) {
+        Record r;
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<0>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<1>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<2>(item))));
+        records->emplace_back(r.Snapshot());
+    }
+}
+
+void BuiltinProcedure::get_developer_contribution(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                               const VEC_STR &yield_items, std::vector<Record> *records) {
+    using namespace parser;
+    CYPHER_ARG_CHECK(args.size() == 1, "need 1 parameters, e.g. osgraph.get_developer_contribution(request)")
+    CYPHER_ARG_CHECK(args[0].type == parser::Expression::STRING, "request type should be string")
+    if (ctx->txn_) ctx->txn_->Abort();
+
+    const auto& request = args[0].String();
+    auto ac_db = ctx->galaxy_->OpenGraph(ctx->user_, ctx->graph_);
+    lgraph_api::GraphDB db(&ac_db, true);
+    auto res = lgraph::get_developer_contribution(db, request);
+    for (auto& item : res) {
+        Record r;
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<0>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<1>(item))));
+        r.AddConstant(lgraph::FieldData::String(std::move(std::get<2>(item))));
+        records->emplace_back(r.Snapshot());
+    }
+}
+
+void BuiltinProcedure::export_es_data(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                      const VEC_STR &yield_items, std::vector<Record> *records) {
+    using namespace parser;
+    CYPHER_ARG_CHECK(args.empty(), "need 0 parameters, e.g. osgraph.export_es_data()")
+    if (ctx->txn_) ctx->txn_->Abort();
+
+    auto ac_db = ctx->galaxy_->OpenGraph(ctx->user_, ctx->graph_);
+    lgraph_api::GraphDB db(&ac_db, true);
+    std::string res;
+    lgraph::export_es_data(db, "", res);
 }
 
 void BuiltinProcedure::DbmsMetaCountDetail(RTContext *ctx, const Record *record,

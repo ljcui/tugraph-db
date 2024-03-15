@@ -1,0 +1,367 @@
+{
+  "schema": [{
+    "label": "github_user",
+    "primary": "id",
+    "type": "VERTEX",
+    "detach_property": true,
+    "properties": [{
+      "name": "id",
+      "type": "INT32"
+    }, {
+      "name": "name",
+      "type": "STRING"
+    }]
+  }, {
+    "label": "github_repo",
+    "primary": "id",
+    "type": "VERTEX",
+    "detach_property": true,
+    "properties": [{
+      "name": "id",
+      "type": "INT32"
+    }, {
+      "name": "name",
+      "type": "STRING"
+    },
+      {
+        "name": "opened_issue",
+        "type": "INT32",
+        "optional": true
+      },
+      {
+        "name": "closed_issue",
+        "type": "INT32",
+        "optional": true
+      },
+      {
+        "name": "opened_pr",
+        "type": "INT32",
+        "optional": true
+      },
+      {
+        "name": "merged_pr",
+        "type": "INT32",
+        "optional": true
+      },
+      {
+        "name": "code_additions",
+        "type": "INT32",
+        "optional": true
+      },
+      {
+        "name": "code_deletions",
+        "type": "INT32",
+        "optional": true
+      },
+      {
+        "name": "code_changed_files",
+        "type": "INT32",
+        "optional": true
+      },
+      {
+        "name": "star",
+        "type": "INT32",
+        "optional": true
+      },
+      {
+        "name": "fork",
+        "type": "INT32",
+        "optional": true
+      },
+      {
+        "name": "commits",
+        "type": "INT32",
+        "optional": true
+      },
+      {
+        "name": "comments",
+        "type": "INT32",
+        "optional": true
+      }
+
+    ]
+  }, {
+    "label": "github_organization",
+    "primary": "id",
+    "type": "VERTEX",
+    "detach_property": true,
+    "properties": [{
+      "name": "id",
+      "type": "INT32"
+    }, {
+      "name": "name",
+      "type": "STRING"
+    }]
+  }, {
+    "label": "language",
+    "primary": "name",
+    "type": "VERTEX",
+    "detach_property": true,
+    "properties": [{
+      "name": "name",
+      "type": "STRING"
+    }]
+  },
+    {
+      "label": "topic",
+      "primary": "name",
+      "type": "VERTEX",
+      "detach_property": true,
+      "properties": [{
+        "name": "name",
+        "type": "STRING"
+      }]
+    },
+    {
+      "label": "license",
+      "primary": "name",
+      "type": "VERTEX",
+      "detach_property": true,
+      "properties": [{
+        "name": "name",
+        "type": "STRING"
+      }]
+    },
+    {
+      "label": "issue",
+      "primary": "id",
+      "type": "VERTEX",
+      "detach_property": true,
+      "properties": [{
+        "name": "id",
+        "type": "STRING"
+      },
+        {
+          "name": "created_at",
+          "type": "INT32",
+          "optional": true
+        },
+        {
+          "name": "closed_at",
+          "type": "INT32",
+          "optional": true
+        },
+        {
+          "name": "state",
+          "type": "STRING",
+          "optional": true
+        }
+      ]
+    }, {
+      "label": "pr",
+      "primary": "id",
+      "type": "VERTEX",
+      "detach_property": true,
+      "properties": [{
+        "name": "id",
+        "type": "STRING"
+      },
+        {
+          "name": "created_at",
+          "type": "INT32",
+          "optional": true
+        },
+        {
+          "name": "closed_at",
+          "type": "INT32",
+          "optional": true
+        },
+        {
+          "name": "merged",
+          "type": "BOOL",
+          "optional": true
+        },
+        {
+          "name": "additions",
+          "type": "INT32",
+          "optional": true
+        }, {
+          "name": "deletions",
+          "type": "INT32",
+          "optional": true
+        }, {
+          "name": "changed_files",
+          "type": "INT32",
+          "optional": true
+        }
+      ]
+    }, {
+      "label": "use_lang",
+      "type": "EDGE",
+      "detach_property": false,
+      "properties": [],
+      "constraints": [
+        ["github_repo", "language"]
+      ]
+    },
+    {
+      "label": "use_license",
+      "type": "EDGE",
+      "detach_property": false,
+      "properties": [],
+      "constraints": [
+        ["github_repo", "license"]
+      ]
+    },
+    {
+      "label": "star",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_user", "github_repo"]
+      ]
+    }, {
+      "label": "has_repo",
+      "type": "EDGE",
+      "detach_property": false,
+      "properties": [],
+      "constraints": [
+        ["github_organization", "github_repo"]
+      ]
+    }, {
+      "label": "fork",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_user", "github_repo"]
+      ]
+    }, {
+      "label": "push",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }, {
+        "name": "commits",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_user", "github_repo"]
+      ]
+    }, {
+      "label": "open_pr",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_user", "pr"]
+      ]
+    }, {
+      "label": "close_pr",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_user", "pr"]
+      ]
+    },
+    {
+      "label": "comment_pr",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_user", "pr"]
+      ]
+    },
+    {
+      "label": "review_pr",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_user", "pr"]
+      ]
+    },
+    {
+      "label": "open_issue",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_user", "issue"]
+      ]
+    },
+    {
+      "label": "close_issue",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_user", "issue"]
+      ]
+    },
+    {
+      "label": "comment_issue",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_user", "issue"]
+      ]
+    },
+
+    {
+      "label": "has_issue",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_repo", "issue"]
+      ]
+    }, {
+      "label": "has_pr",
+      "type": "EDGE",
+      "detach_property": true,
+      "properties": [{
+        "name": "created_at",
+        "type": "INT32"
+      }],
+      "constraints": [
+        ["github_repo", "pr"]
+      ]
+    },
+    {
+      "label": "has_topic",
+      "type": "EDGE",
+      "detach_property": false,
+      "properties": [],
+      "constraints": [
+        ["github_repo", "topic"]
+      ]
+    }
+  ]
+}
