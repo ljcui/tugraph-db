@@ -85,6 +85,27 @@ class BuiltinProcedure {
     static void DbSubgraph(RTContext *ctx, const Record *record, const VEC_EXPR &args,
                            const VEC_STR &yield_items, std::vector<Record> *records);
 
+    static void export_es_data(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                     const VEC_STR &yield_items, std::vector<Record> *records);
+
+    static void get_repo_contribution(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                               const VEC_STR &yield_items, std::vector<Record> *records);
+
+    static void get_developer_contribution(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                        const VEC_STR &yield_items, std::vector<Record> *records);
+
+    static void get_repo_by_repo(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                               const VEC_STR &yield_items, std::vector<Record> *records);
+
+    static void get_developer_by_developer(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                 const VEC_STR &yield_items, std::vector<Record> *records);
+
+    static void get_repo_developers_profile(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                           const VEC_STR &yield_items, std::vector<Record> *records);
+
+    static void get_developer_repos_profile(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                            const VEC_STR &yield_items, std::vector<Record> *records);
+
     static void DbVertexLabels(RTContext *ctx, const Record *record, const VEC_EXPR &args,
                                const VEC_STR &yield_items, std::vector<Record> *records);
 
@@ -611,6 +632,39 @@ static std::vector<Procedure> global_procedures = {
                                   {"signature", {1, lgraph_api::LGraphType::STRING}},
                                   {"read_only", {2, lgraph_api::LGraphType::BOOLEAN}}},
               true, false),
+
+    Procedure("osgraph.get_repo_contribution", BuiltinProcedure::get_repo_contribution, Procedure::SIG_SPEC{},
+          Procedure::SIG_SPEC{{"start_node", {0, lgraph_api::LGraphType::STRING}},
+                                  {"relationship", {1, lgraph_api::LGraphType::STRING}},
+                                  {"end_node", {2, lgraph_api::LGraphType::STRING}}},true, false),
+
+    Procedure("osgraph.get_developer_contribution", BuiltinProcedure::get_developer_contribution, Procedure::SIG_SPEC{},
+              Procedure::SIG_SPEC{{"start_node", {0, lgraph_api::LGraphType::STRING}},
+                                  {"relationship", {1, lgraph_api::LGraphType::STRING}},
+                                  {"end_node", {2, lgraph_api::LGraphType::STRING}}},true, false),
+
+    Procedure("osgraph.get_repo_by_repo", BuiltinProcedure::get_repo_by_repo, Procedure::SIG_SPEC{},
+              Procedure::SIG_SPEC{{"start_node", {0, lgraph_api::LGraphType::STRING}},
+                                  {"relationship", {1, lgraph_api::LGraphType::STRING}},
+                                  {"end_node", {2, lgraph_api::LGraphType::STRING}}},true, false),
+
+    Procedure("osgraph.get_developer_by_developer", BuiltinProcedure::get_developer_by_developer, Procedure::SIG_SPEC{},
+              Procedure::SIG_SPEC{{"start_node", {0, lgraph_api::LGraphType::STRING}},
+                                  {"relationship", {1, lgraph_api::LGraphType::STRING}},
+                                  {"end_node", {2, lgraph_api::LGraphType::STRING}}},true, false),
+
+    Procedure("osgraph.get_repo_developers_profile", BuiltinProcedure::get_repo_developers_profile, Procedure::SIG_SPEC{},
+              Procedure::SIG_SPEC{{"start_node", {0, lgraph_api::LGraphType::STRING}},
+                                  {"relationship", {1, lgraph_api::LGraphType::STRING}},
+                                  {"end_node", {2, lgraph_api::LGraphType::STRING}}},true, false),
+
+    Procedure("osgraph.get_developer_repos_profile", BuiltinProcedure::get_developer_repos_profile, Procedure::SIG_SPEC{},
+              Procedure::SIG_SPEC{{"start_node", {0, lgraph_api::LGraphType::STRING}},
+                                  {"relationship", {1, lgraph_api::LGraphType::STRING}},
+                                  {"end_node", {2, lgraph_api::LGraphType::STRING}}},true, false),
+
+    Procedure("osgraph.export_es_data", BuiltinProcedure::export_es_data, Procedure::SIG_SPEC{},
+              Procedure::SIG_SPEC{{"res", {0, lgraph_api::LGraphType::STRING}}},true, false),
 
     Procedure("dbms.meta.countDetail", BuiltinProcedure::DbmsMetaCountDetail, Procedure::SIG_SPEC{},
               Procedure::SIG_SPEC{{"is_vertex", {0, lgraph_api::LGraphType::BOOLEAN}},

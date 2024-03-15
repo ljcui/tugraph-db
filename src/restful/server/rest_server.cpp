@@ -1966,6 +1966,38 @@ void RestServer::HandlePostIndex(const std::string& user, const std::string& tok
         return RespondRSMError(request, proto_resp, relative_path, "VertexIndex");
 }
 
+bool update_vertex(lgraph_api::GraphDB &db, const std::string &request, std::string &response);
+bool update_edge(lgraph_api::GraphDB &db, const std::string &request, std::string &response);
+void RestServer::HandlePostOSGraph(const std::string& user, const std::string& token,
+                                const web::http::http_request& request,
+                                const utility::string_t& relative_path,
+                                const std::vector<utility::string_t>& paths,
+                                const web::json::value& body) const {
+    // /osgraph/update_vertex
+    if (paths.size() == 4) {
+        const std::string& graph = _TS(paths[1]);
+        const std::string& api = _TS(paths[3]);
+        auto db = galaxy_->OpenGraph(user, graph);
+        lgraph_api::GraphDB gdb(&db, false);
+        std::string data;
+        ExtractStringField(body, RestStrings::DATA, data);
+        if (api == "update_vertex") {
+            std::string response;
+            update_vertex(gdb, data, response);
+            web::json::value res;
+            res[RestStrings::RESULT] = web::json::value(_TU(response));
+            return RespondSuccess(request, res);
+        } else if (api == "update_edge") {
+            std::string response;
+            update_edge(gdb, data, response);
+            web::json::value res;
+            res[RestStrings::RESULT] = web::json::value(_TU(response));
+            return RespondSuccess(request, res);
+        }
+    }
+    return RespondBadURI(request);
+}
+
 void RestServer::HandlePostPlugin(const std::string& user, const std::string& token,
                                   const web::http::http_request& request,
                                   const utility::string_t& relative_path,
@@ -3123,6 +3155,8 @@ void RestServer::do_handle_post(http_request request, const web::json::value& bo
                 case RestPathCases::CPP_PLUGIN:
                 case RestPathCases::PYTHON_PLUGIN:
                     return HandlePostPlugin(user, token, request, relative_path, paths, body);
+                case RestPathCases::OSGRAPH:
+                    return HandlePostOSGraph(user, token, request, relative_path, paths, body);
                 case RestPathCases::MISC:
                     return HandlePostSubGraph(user, token, request, relative_path, paths, body);
                 case RestPathCases::IMPORT:

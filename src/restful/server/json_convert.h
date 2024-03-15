@@ -123,6 +123,7 @@ static const utility::string_t LOGIN = _TU("login");
 static const utility::string_t LOGOUT = _TU("logout");
 static const utility::string_t UpdateTokenTime = _TU("update_token_time");
 static const utility::string_t GetTokenTime = _TU("get_token_time");
+static const utility::string_t OSGRAPH = _TU("osgraph");
 static const utility::string_t MAX_SIZE_GB = _TU("max_size_GB");
 static const utility::string_t MEM = _TU("memory");
 static const utility::string_t MEM_LIMIT = _TU("memory_limit");
