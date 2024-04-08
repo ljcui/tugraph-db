@@ -1,8 +1,9 @@
 {
   "host": "0.0.0.0",
   "port": 7070,
-  "enable_rpc": true,
+  "enable_rpc": false,
   "rpc_port": 9090,
+  "bolt_port":7687,
   "verbose": 1,
   "log_dir": "log",
   "unlimited_token": 1,
