@@ -1968,6 +1968,7 @@ void RestServer::HandlePostIndex(const std::string& user, const std::string& tok
 
 bool update_vertex(lgraph_api::GraphDB &db, const std::string &request, std::string &response);
 bool update_edge(lgraph_api::GraphDB &db, const std::string &request, std::string &response);
+bool get_es_data_ids(lgraph_api::GraphDB &db, const std::string &request, std::string &response);
 void RestServer::HandlePostOSGraph(const std::string& user, const std::string& token,
                                 const web::http::http_request& request,
                                 const utility::string_t& relative_path,
@@ -1990,6 +1991,12 @@ void RestServer::HandlePostOSGraph(const std::string& user, const std::string& t
         } else if (api == "update_edge") {
             std::string response;
             update_edge(gdb, data, response);
+            web::json::value res;
+            res[RestStrings::RESULT] = web::json::value(_TU(response));
+            return RespondSuccess(request, res);
+        } else if (api == "get_es_data_ids") {
+            std::string response;
+            get_es_data_ids(gdb, data, response);
             web::json::value res;
             res[RestStrings::RESULT] = web::json::value(_TU(response));
             return RespondSuccess(request, res);

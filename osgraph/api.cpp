@@ -264,6 +264,53 @@ bool update_edge(lgraph_api::GraphDB &db, const std::string &request, std::strin
     }
 }
 
+bool get_es_data_ids(lgraph_api::GraphDB &db, const std::string &request, std::string &response) {
+    try {
+        nlohmann::json input = nlohmann::json::parse(request);
+        bool is_user = input["is_user"].get<bool>();
+        std::string name;
+        if (is_user) {
+            name = "github_user";
+        } else {
+            name = "github_repo";
+        }
+        nlohmann::json output;
+        auto txn = db.CreateReadTxn();
+        EdgeUid star_euid;
+        star_euid.lid = txn.GetEdgeLabelId("star");
+        for (auto& item : input["ids"]) {
+            int32_t id = item.get<int32_t>();
+            auto iter = txn.GetVertexByUniqueIndex(name, "id", FieldData::Int32(id));
+            auto all_fds = iter.GetAllFields();
+            nlohmann::json line;
+            line["id"] = all_fds.at("id").AsInt32();
+            line["name"] = all_fds.at("name").AsString();
+            if (!is_user) {
+                int32_t star_count = 0;
+                for (auto eit = iter.GetInEdgeIterator(star_euid, true); eit.IsValid(); eit.Next()) {
+                    if (eit.GetLabelId() != star_euid.lid) {
+                        break;
+                    }
+                    star_count++;
+                }
+                line["star"] = star_count;
+            }
+            output.push_back(line);
+        }
+        response = output.dump();
+        return true;
+    } catch (const std::exception &e) {
+        auto err = e.what();
+        LOG_WARN() << "get_es_data_ids, exception: " << err;
+        nlohmann::json output;
+        output["ok"] = false;
+        output["response"] = std::string("Error on get_es_data_ids: ") + err;
+        response = output.dump();
+        return false;
+    }
+}
+
+
 struct contribution {
     int64_t vid = 0;
     int64_t count = 0;
