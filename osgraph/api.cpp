@@ -490,8 +490,13 @@ get_repo_contribution(lgraph_api::GraphDB &db, const std::string& request) {
     };
     create_response("push", push_statistics);
     create_response("open_pr", open_pr_statistics);
-    create_response("review_pr", review_pr_statistics);
-    create_response("comment_pr", comment_pr_statistics);
+    {
+        // merge
+        for (auto& [vid, count] : comment_pr_statistics) {
+            review_pr_statistics[vid] += count;
+        }
+        create_response("code_review", review_pr_statistics);
+    }
     create_response("open_issue", open_issue_statistics);
     create_response("comment_issue", comment_issue_statistics);
     return ret;
@@ -609,8 +614,13 @@ get_developer_contribution(lgraph_api::GraphDB &db, const std::string& request) 
     };
     create_response("push", push_statistics);
     create_response("open_pr", open_pr_statistics);
-    create_response("review_pr", review_pr_statistics);
-    create_response("comment_pr", comment_pr_statistics);
+    {
+        // merge
+        for (auto& [vid, count] : comment_pr_statistics) {
+            review_pr_statistics[vid] += count;
+        }
+        create_response("code_review", review_pr_statistics);
+    }
     create_response("open_issue", open_issue_statistics);
     create_response("comment_issue", comment_issue_statistics);
 
@@ -836,7 +846,7 @@ get_repo_by_repo(lgraph_api::GraphDB &db, const std::string& request) {
         LOG_INFO() << "finish to merge common developers";
         std::vector<std::tuple<std::string, std::string, std::string>> records;
         txn = db.CreateReadTxn();
-        int count = 0;
+        int64_t virtual_id = 0;
         for (auto& item : ret) {
             records.emplace_back();
             {
@@ -849,7 +859,7 @@ get_repo_by_repo(lgraph_api::GraphDB &db, const std::string& request) {
             }
             {
                 nlohmann::json v_repl;
-                v_repl["id"] = count++;
+                v_repl["id"] = --virtual_id;
                 v_repl["src"] = item.repo_vid1;
                 v_repl["dst"] = item.repo_vid2;
                 v_repl["type"] = "common_developer";
@@ -863,6 +873,56 @@ get_repo_by_repo(lgraph_api::GraphDB &db, const std::string& request) {
                 auto iter = txn.GetVertexIterator(item.repo_vid2);
                 v_node["properties"]["name"] = iter.GetField("name").AsString();
                 std::get<2>(records.back()) = v_node.dump();
+            }
+        }
+
+        std::set<int64_t> repo_vids;
+        std::unordered_map<int64_t, std::set<int64_t>> org_repo;
+        for (auto& item : ret) {
+            repo_vids.insert(item.repo_vid1);
+            repo_vids.insert(item.repo_vid2);
+        }
+        auto has_repo_id = txn.GetEdgeLabelId("has_repo");
+        EdgeUid has_repo_euid;
+        has_repo_euid.lid = has_repo_id;
+        for (auto vid : repo_vids) {
+            auto iter = txn.GetVertexIterator(vid);
+            for (auto eit = iter.GetInEdgeIterator(has_repo_euid, true); eit.IsValid(); eit.Next()) {
+                if (eit.GetLabelId() != has_repo_euid.lid) {
+                    break;
+                }
+                org_repo[eit.GetSrc()].insert(vid);
+                break;
+            }
+        }
+        for (const auto& [org, repos] : org_repo) {
+            for (auto vid : repos) {
+                records.emplace_back();
+                {
+                    nlohmann::json v_node;
+                    v_node["id"] = vid;
+                    v_node["type"] = "github_repo";
+                    auto iter = txn.GetVertexIterator(vid);
+                    v_node["properties"]["name"] = iter.GetField("name").AsString();
+                    std::get<0>(records.back()) = v_node.dump();
+                }
+                {
+                    nlohmann::json v_repl;
+                    v_repl["id"] = --virtual_id;
+                    v_repl["src"] = vid;
+                    v_repl["dst"] = org;
+                    v_repl["type"] = "belong_to";
+                    v_repl["properties"] = nlohmann::json::object();
+                    std::get<1>(records.back()) = v_repl.dump();
+                }
+                {
+                    nlohmann::json v_node;
+                    v_node["id"] = org;
+                    v_node["type"] = "github_organization";
+                    auto iter = txn.GetVertexIterator(org);
+                    v_node["properties"]["name"] = iter.GetField("name").AsString();
+                    std::get<2>(records.back()) = v_node.dump();
+                }
             }
         }
         txn.Abort();
