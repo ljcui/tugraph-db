@@ -1138,6 +1138,13 @@ get_developer_by_developer(lgraph_api::GraphDB &db, const std::string& request) 
     return records;
 }
 
+struct developer_profile {
+    int prs = 0;
+    int commits = 0;
+    std::string company;
+    std::string country;
+};
+
 std::vector<std::tuple<std::string,std::string,std::string>>
 get_repo_developers_profile(lgraph_api::GraphDB &db, const std::string& request) {
     nlohmann::json input = nlohmann::json::parse(request);
@@ -1151,13 +1158,15 @@ get_repo_developers_profile(lgraph_api::GraphDB &db, const std::string& request)
 
     int16_t has_pr_id = txn.GetEdgeLabelId("has_pr");
     int16_t star_id = txn.GetEdgeLabelId("star");
+    int16_t push_id = txn.GetEdgeLabelId("push");
     int16_t open_pr_id = txn.GetEdgeLabelId("open_pr");
 
     std::vector<std::tuple<std::string,std::string,std::string>> records;
 
     EdgeUid has_pr_euid; has_pr_euid.lid = has_pr_id;
     EdgeUid open_pr_euid; open_pr_euid.lid = open_pr_id;
-    std::unordered_map<int64_t, int64_t> developer_prs;
+    EdgeUid push_euid; push_euid.lid = push_id;
+    std::unordered_map<int64_t, developer_profile> developers;
     std::unordered_map<std::string, std::set<int64_t>> company_developers;
     for (auto eit = repo_iter.GetOutEdgeIterator(has_pr_euid, true); eit.IsValid(); eit.Next()) {
         if (eit.GetLabelId() != has_pr_euid.lid) {
@@ -1168,17 +1177,32 @@ get_repo_developers_profile(lgraph_api::GraphDB &db, const std::string& request)
             if (open_pr_eit.GetLabelId() != open_pr_euid.lid) {
                 break;
             }
-            developer_prs[open_pr_eit.GetSrc()]++;
+            developers[open_pr_eit.GetSrc()].prs++;
             break;
         }
     }
-    for (auto& [d_vid, pr_count] : developer_prs) {
+    for (auto eit = repo_iter.GetInEdgeIterator(push_euid, true); eit.IsValid(); eit.Next()) {
+        if (eit.GetLabelId() != push_euid.lid) {
+            break;
+        }
+        developers[eit.GetSrc()].commits++;
+    }
+
+    for (auto& [d_vid, profile] : developers) {
         auto developer_iter = txn.GetVertexIterator(d_vid);
         auto company = developer_iter.GetField("company");
         if (company.IsString()) {
             const auto& val = company.AsString();
             if (!val.empty()) {
+                profile.company = val;
                 company_developers[val].insert(d_vid);
+            }
+        }
+        auto country = developer_iter.GetField("country");
+        if (country.IsString()) {
+            const auto& val = country.AsString();
+            if (!val.empty()) {
+                profile.country = val;
             }
         }
     }
@@ -1212,7 +1236,7 @@ get_repo_developers_profile(lgraph_api::GraphDB &db, const std::string& request)
             v_repl["type"] = "PR";
             int64_t count = 0;
             for (auto d_vid : pair.second) {
-                count += developer_prs.at(d_vid);
+                count += developers.at(d_vid).prs;
             }
             v_repl["properties"]["count"] = count;
             std::get<1>(records.back()) = v_repl.dump();
@@ -1227,7 +1251,7 @@ get_repo_developers_profile(lgraph_api::GraphDB &db, const std::string& request)
     }
 
 
-    std::unordered_map<std::string, std::set<int64_t>> country_developers;
+    std::unordered_map<std::string, std::set<int64_t>> country_stars;
     EdgeUid star_euid; star_euid.lid = star_id;
     for (auto eit = repo_iter.GetInEdgeIterator(star_euid, true); eit.IsValid(); eit.Next()) {
         if (eit.GetLabelId() != star_euid.lid) {
@@ -1238,11 +1262,11 @@ get_repo_developers_profile(lgraph_api::GraphDB &db, const std::string& request)
         if (country.IsString()) {
             const auto& val = country.AsString();
             if (!val.empty()) {
-                country_developers[val].insert(developer_iter.GetId());
+                country_stars[val].insert(developer_iter.GetId());
             }
         }
     }
-    std::vector<std::pair<std::string, std::set<int64_t>>> sort_tmp1(country_developers.begin(), country_developers.end());
+    std::vector<std::pair<std::string, std::set<int64_t>>> sort_tmp1(country_stars.begin(), country_stars.end());
     std::sort(sort_tmp1.begin(), sort_tmp1.end(),[](const auto& a, const auto& b) {
         return a.second.size() > b.second.size();
     });
@@ -1281,23 +1305,48 @@ get_repo_developers_profile(lgraph_api::GraphDB &db, const std::string& request)
         }
     }
 
-    std::vector<std::pair<int64_t, int64_t>> sort_tmp2 (developer_prs.begin(), developer_prs.end());
+    std::vector<std::pair<int64_t, developer_profile>> sort_tmp2 (developers.begin(), developers.end());
     std::sort(sort_tmp2.begin(), sort_tmp2.end(),[](const auto& a, const auto& b) {
-        return a.second > b.second;
+        return (a.second.prs + a.second.commits) > (b.second.prs + b.second.commits);
     });
     std::unordered_map<std::string, std::set<int64_t>> country_core_developers;
-    for (auto& [d_vid, count_pr] : sort_tmp2) {
+    std::unordered_map<std::string, std::set<int64_t>> company_core_developers;
+    for (auto& [d_vid, profile] : sort_tmp2) {
         for (auto& pair : sort_tmp1) {
-            if (pair.second.count(d_vid)) {
+            if (profile.country == pair.first) {
                 if (country_core_developers[pair.first].size() < developer_topn) {
                     country_core_developers[pair.first].insert(d_vid);
                 }
                 break;
             }
         }
+        for (auto& pair : sort_tmp) {
+            if (profile.company == pair.first) {
+                if (company_core_developers[pair.first].size() < developer_topn) {
+                    company_core_developers[pair.first].insert(d_vid);
+                }
+                break;
+            }
+        }
     }
-    for (auto& [country, developers] : country_core_developers) {
-        for (auto& d_vid : developers) {
+    for (auto& [country, d_vids] : country_core_developers) {
+        for (auto& d_vid : d_vids) {
+            auto& com = developers.at(d_vid).company;
+            if (company_core_developers.count(com)) {
+                company_core_developers[com].insert(d_vid);
+            }
+        }
+    }
+    for (auto& [company, d_vids] : company_core_developers) {
+        for (auto& d_vid : d_vids) {
+            auto& coun = developers.at(d_vid).country;
+            if (country_core_developers.count(coun)) {
+                country_core_developers[coun].insert(d_vid);
+            }
+        }
+    }
+    for (auto& [country, d_vids] : country_core_developers) {
+        for (auto& d_vid : d_vids) {
             records.emplace_back();
             {
                 nlohmann::json v_node;
@@ -1326,39 +1375,35 @@ get_repo_developers_profile(lgraph_api::GraphDB &db, const std::string& request)
             }
         }
     }
-    for (auto& [country, developers] : country_core_developers) {
-        for (auto& d_vid : developers) {
-            for (auto& item :  sort_tmp) {
-                if (item.second.count(d_vid)) {
-                    records.emplace_back();
-                    {
-                        nlohmann::json v_node;
-                        v_node["id"] = d_vid;
-                        v_node["type"] = "github_user";
-                        auto d_iter = txn.GetVertexIterator(d_vid);
-                        v_node["properties"]["name"] = d_iter.GetField("name").AsString();
-                        std::get<0>(records.back()) = v_node.dump();
-                    }
-                    {
-                        auto e_vid = --virtual_id;
-                        nlohmann::json v_repl;
-                        v_repl["id"] = e_vid;
-                        v_repl["src"] = d_vid;
-                        v_repl["dst"] = company_vid.at(item.first);
-                        v_repl["type"] = "belong_to";
-                        v_repl["properties"] = nlohmann::json::object();
-                        std::get<1>(records.back()) = v_repl.dump();
-                    }
-                    {
-                        nlohmann::json v_node;
-                        v_node["id"] = company_vid.at(item.first);
-                        v_node["type"] = "company";
-                        v_node["properties"]["name"] = item.first;
-                        std::get<2>(records.back()) = v_node.dump();
-                    }
-                    break;
-                }
+    for (auto& [company, d_vids] : company_core_developers) {
+        for (auto& d_vid : d_vids) {
+            records.emplace_back();
+            {
+                nlohmann::json v_node;
+                v_node["id"] = d_vid;
+                v_node["type"] = "github_user";
+                auto d_iter = txn.GetVertexIterator(d_vid);
+                v_node["properties"]["name"] = d_iter.GetField("name").AsString();
+                std::get<0>(records.back()) = v_node.dump();
             }
+            {
+                auto e_vid = --virtual_id;
+                nlohmann::json v_repl;
+                v_repl["id"] = e_vid;
+                v_repl["src"] = d_vid;
+                v_repl["dst"] = company_vid.at(company);
+                v_repl["type"] = "belong_to";
+                v_repl["properties"] = nlohmann::json::object();
+                std::get<1>(records.back()) = v_repl.dump();
+            }
+            {
+                nlohmann::json v_node;
+                v_node["id"] = company_vid.at(company);
+                v_node["type"] = "company";
+                v_node["properties"]["name"] = company;
+                std::get<2>(records.back()) = v_node.dump();
+            }
+            break;
         }
     }
 
