@@ -1881,11 +1881,15 @@ void BuiltinProcedure::DbmsGraphGetGraphSchema(RTContext *ctx, const Record *rec
             nlohmann::json property;
             property["name"] = fd.Name();
             property["type"] = lgraph_api::to_string(fd.Type());
-            property["optional"] = fd.IsOptional();
+            if (fd.IsOptional()) {
+                property["optional"] = true;
+            }
             auto vi = fd.GetVertexIndex();
             if (vi) {
                 property["index"] = true;
-                property["unique"] = vi->IsUnique();
+                if (vi->IsUnique()) {
+                    property["unique"] = true;
+                }
             }
             node["properties"].push_back(property);
         }
@@ -1905,18 +1909,22 @@ void BuiltinProcedure::DbmsGraphGetGraphSchema(RTContext *ctx, const Record *rec
             nlohmann::json property;
             property["name"] = fd.Name();
             property["type"] = lgraph_api::to_string(fd.Type());
-            property["optional"] = fd.IsOptional();
+            if (fd.IsOptional()) {
+                property["optional"] = true;
+            }
             auto vi = fd.GetEdgeIndex();
             if (vi) {
                 property["index"] = true;
-                property["unique"] = vi->IsUnique();
+                if (vi->IsUnique()) {
+                    property["unique"] = true;
+                }
             }
             edge["properties"].push_back(property);
         }
         graph_schema["schema"].push_back(edge);
     }
     Record r;
-    r.AddConstant(lgraph::FieldData(graph_schema.dump()));
+    r.AddConstant(lgraph::FieldData(graph_schema.dump(4)));
     records->emplace_back(r.Snapshot());
 }
 

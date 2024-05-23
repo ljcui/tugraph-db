@@ -814,8 +814,8 @@ class ImportConfParser {
                             R"(Label[{}]: "constraints" is not array)", ld.name);
                     for (auto& p : s["constraints"]) {
                         if (!p.is_array() || p.size() != 2)
-                            THROW_CODE(InputError,
-                                R"(Label[{}]: "constraints" element size should be 2)", ld.name);
+                            THROW_CODE(InputError, "Label[{}]: \"constraints\" element type "
+                                       "should be array and size should be 2", ld.name);
                         ld.edge_constraints.emplace_back(p[0], p[1]);
                     }
                 }
