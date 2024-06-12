@@ -132,17 +132,17 @@ NodeID PatternGraph::AddNode(const std::string &label, const std::string &alias,
 
 RelpID PatternGraph::AddRelationship(const std::set<std::string> &types, NodeID lhs, NodeID rhs,
                                      parser::LinkDirection direction, const std::string &alias,
-                                     Relationship::Derivation derivation) {
-    return AddRelationship(types, lhs, rhs, direction, alias, -1, -1, derivation);
+                                     Relationship::Derivation derivation, std::vector<Property> properties) {
+    return AddRelationship(types, lhs, rhs, direction, alias, -1, -1, derivation, std::move(properties));
 }
 
 RelpID PatternGraph::AddRelationship(const std::set<std::string> &types, NodeID lhs, NodeID rhs,
                                      parser::LinkDirection direction, const std::string &alias,
                                      int min_hop, int max_hop,
-                                     Relationship::Derivation derivation) {
+                                     Relationship::Derivation derivation, std::vector<Property> properties) {
     RelpID rid = _next_rid;
     _relationships.emplace_back(rid, types, lhs, rhs, direction, alias, min_hop, max_hop,
-                                derivation);
+                                derivation, std::move(properties));
     _relp_map.emplace(alias, rid);
     _next_rid++;
     auto r = GetNode(lhs).AddRelp(rid, true);
@@ -213,11 +213,29 @@ RelpID PatternGraph::BuildRelationship(const parser::TUP_RELATIONSHIP_PATTERN &r
     auto &relp_detail = std::get<1>(relp_pattern);
     auto &relp_types = std::get<1>(relp_detail);
     auto &range = std::get<2>(relp_detail);
+    auto &properties = std::get<3>(relp_detail);
+    auto &expr_prop = std::get<0>(properties);
+    std::vector<Property> props;
+    if (expr_prop.type == parser::Expression::MAP) {
+        for (auto &m : expr_prop.Map()) {
+            if (m.second.type == parser::Expression::VARIABLE ||
+                m.second.type == parser::Expression::PARAMETER) {
+                CYPHER_TODO();
+            }
+            Property prop;
+            prop.field = m.first;
+            prop.type = Property::VALUE;
+            prop.value = MakeFieldData(m.second);
+            props.emplace_back(std::move(prop));
+        }
+    }
+
     // convert vector to set
     std::set<std::string> r_types(relp_types.begin(), relp_types.end());
     auto &relp = GetRelationship(relp_var);
     if (!relp.Empty()) CYPHER_TODO();
-    return AddRelationship(r_types, lhs, rhs, direction, relp_var, range[0], range[1], derivation);
+    return AddRelationship(r_types, lhs, rhs, direction, relp_var,
+                           range[0], range[1], derivation, std::move(props));
 }
 
 std::string PatternGraph::DumpGraph() const {

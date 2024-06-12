@@ -17,8 +17,7 @@
 //
 #pragma once
 
-#include "filter/iterator.h"
-
+#include "core/data_type.h"
 namespace cypher {
 
 typedef int64_t NodeID;

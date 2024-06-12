@@ -18,7 +18,7 @@
 #pragma once
 
 #include <string>
-#include "cypher/graph/common.h"
+#include "cypher/filter/iterator.h"
 #include "parser/data_typedef.h"
 
 namespace cypher {
@@ -26,6 +26,7 @@ namespace cypher {
 class Relationship {
     RelpID id_ = -1;
     std::set<std::string> types_;
+    std::vector<Property> properties_;
     NodeID lhs_ = -1;
     NodeID rhs_ = -1;
     std::string alias_;
@@ -48,11 +49,11 @@ class Relationship {
     Relationship();
 
     Relationship(RelpID id, const std::set<std::string> &types, NodeID lhs, NodeID rhs,
-                 parser::LinkDirection direction, const std::string &alias, Derivation derivation);
+                 parser::LinkDirection direction, const std::string &alias, Derivation derivation, std::vector<Property> properties);
 
     Relationship(RelpID id, const std::set<std::string> &types, NodeID src, NodeID dst,
                  parser::LinkDirection direction, const std::string &alias, int min_hop,
-                 int max_hop, Derivation derivation);
+                 int max_hop, Derivation derivation, std::vector<Property> properties);
 
     Relationship(Relationship &&) = default;
 
@@ -61,6 +62,8 @@ class Relationship {
     RelpID ID() const;
 
     const std::set<std::string> &Types() const;
+
+    const std::vector<Property>& Properties() const;
 
     void SetTypes(const std::set<std::string> &types) { types_ = types; }
 

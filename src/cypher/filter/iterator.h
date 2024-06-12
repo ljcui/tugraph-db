@@ -20,6 +20,7 @@
 #include "core/lightning_graph.h"
 #include "cypher/cypher_types.h"
 #include "cypher/cypher_exception.h"
+#include "cypher/graph/common.h"
 
 namespace lgraph {
 
@@ -636,17 +637,6 @@ class EIter {
 
     EIter() = default;
 
-    EIter(lgraph::Transaction *txn, IteratorType type, lgraph::VertexId vid) {
-        Initialize(txn, type, vid);
-    }
-
-    EIter(lgraph::Transaction *txn, IteratorType type, lgraph::VertexId vid,
-          const std::set<std::string> &relp_types) {
-        Initialize(txn, type, vid, relp_types);
-    }
-
-    EIter(lgraph::Transaction *txn, lgraph::EdgeUid &euid) { Initialize(txn, euid); }
-
     ~EIter() { FreeIter(); }
 
     void FreeIter() {
@@ -683,10 +673,13 @@ class EIter {
         _oeit = nullptr;
     }
 
-    void Initialize(lgraph::Transaction *txn, IteratorType type, lgraph::VertexId vid) {
+    void Initialize(lgraph::Transaction *txn, IteratorType type, lgraph::VertexId vid,
+                    const std::set<std::string> &relp_types,
+                    const std::vector<cypher::Property>& properties) {
         FreeIter();
         _txn = txn;
         _type = type;
+        properties_ = properties;
         switch (_type) {
         case OUT_EDGE:
             _oeit = new lgraph::graph::OutEdgeIterator(_txn->GetOutEdgeIterator(vid));
@@ -706,18 +699,6 @@ class EIter {
                 }
                 break;
             }
-        default:
-            throw lgraph::CypherException("EIter constructor type error.");
-        }
-    }
-
-    void Initialize(lgraph::Transaction *txn, IteratorType type, lgraph::VertexId vid,
-                    const std::set<std::string> &relp_types) {
-        FreeIter();
-        _txn = txn;
-        _type = type;
-        if (relp_types.empty()) return Initialize(txn, type, vid);
-        switch (_type) {
         case TYPE_OUT_EDGE:
             _toeit = new TypeEdgeIterator<lgraph::graph::OutEdgeIterator>(
                 _txn, new lgraph::graph::OutEdgeIterator(_txn->GetOutEdgeIterator(vid)),
@@ -745,6 +726,10 @@ class EIter {
             }
         default:
             throw lgraph::CypherException("EIter constructor type error.");
+        }
+
+        if (!MatchPropertyFilter()) {
+            Next();
         }
     }
 
@@ -795,7 +780,36 @@ class EIter {
         }
     }
 
+    bool MatchPropertyFilter() {
+        if (properties_.empty()) {
+            return true;
+        }
+        auto fields = GetFields();
+        std::unordered_map<std::string, FieldData> map;
+        for (size_t i = 0; i < fields.size(); i++) {
+            map.emplace(fields[i].first, std::move(fields[i].second));
+        }
+        bool match = true;
+        for (auto &item : properties_) {
+            auto iter = map.find(item.field);
+            if (iter == map.end() || item.value != iter->second) {
+                match = false;
+                break;
+            }
+        }
+        return match;
+    }
+
     bool Next() {
+        while (InternalNext()) {
+            if (MatchPropertyFilter()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool InternalNext() {
         switch (_type) {
         case OUT_EDGE:
             return (_oeit && _oeit->Next());
@@ -1060,6 +1074,7 @@ class EIter {
     };
     lgraph::Transaction *_txn = nullptr;
     bool _is_out;  // for undirected edge
+    std::vector<cypher::Property> properties_;
 
     bool _CheckItPtr() const {
         switch (_type) {

@@ -440,12 +440,10 @@ static lgraph::FieldData MakeFieldData(const Expression &expr) {
             ld = lgraph::FieldData(expr.String());
             break;
         }
-    case Expression::PARAMETER:
-        break;
     case Expression::NULL_:
         break;
     default:
-        LOG_WARN() << "Unhandled expression type " << expr.type;
+        THROW_CODE(CypherException, "Unsupported expression type {} to create field data", expr.type);
     }
     return ld;
 }

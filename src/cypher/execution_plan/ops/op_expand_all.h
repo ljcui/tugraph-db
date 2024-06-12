@@ -30,6 +30,7 @@ class ExpandAll : public OpBase {
 
     void _InitializeEdgeIter(RTContext *ctx) {
         auto &types = relp_->Types();
+        auto &properties = relp_->Properties();
         auto iter_type = lgraph::EIter::NA;
         switch (expand_direction_) {
         case ExpandTowards::FORWARD:
@@ -42,7 +43,7 @@ class ExpandAll : public OpBase {
             iter_type = types.empty() ? lgraph::EIter::BI_EDGE : lgraph::EIter::BI_TYPE_EDGE;
             break;
         }
-        eit_->Initialize(ctx->txn_->GetTxn().get(), iter_type, start_->PullVid(), types);
+        eit_->Initialize(ctx->txn_->GetTxn().get(), iter_type, start_->PullVid(), types, properties);
     }
 
     bool _CheckToSkipEdgeFilter(RTContext *ctx) const {

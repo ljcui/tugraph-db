@@ -24,18 +24,19 @@ Relationship::Relationship() : id_(-1), derivation_(UNKNOWN) {}
 
 Relationship::Relationship(RelpID id, const std::set<std::string> &types, NodeID lhs, NodeID rhs,
                            parser::LinkDirection direction, const std::string &alias,
-                           Derivation derivation)
+                           Derivation derivation, std::vector<Property> properties)
     : id_(id),
       types_(types),
       lhs_(lhs),
       rhs_(rhs),
       alias_(alias),
       direction_(direction),
-      derivation_(derivation) {}
+      derivation_(derivation),
+      properties_(std::move(properties)) {}
 
 Relationship::Relationship(RelpID id, const std::set<std::string> &types, NodeID src, NodeID dst,
                            parser::LinkDirection direction, const std::string &alias, int min_hop,
-                           int max_hop, Derivation derivation)
+                           int max_hop, Derivation derivation, std::vector<Property> properties)
     : id_(id),
       types_(types),
       lhs_(src),
@@ -44,13 +45,16 @@ Relationship::Relationship(RelpID id, const std::set<std::string> &types, NodeID
       direction_(direction),
       derivation_(derivation),
       min_hop_(min_hop),
-      max_hop_(max_hop) {
+      max_hop_(max_hop),
+      properties_(std::move(properties)) {
     its_.resize(max_hop_ < 0 ? 0 : max_hop_);
 }
 
 RelpID Relationship::ID() const { return id_; }
 
 const std::set<std::string> &Relationship::Types() const { return types_; }
+
+const std::vector<Property>& Relationship::Properties() const { return properties_; };
 
 NodeID Relationship::Src() const {
     switch (direction_) {
