@@ -27,26 +27,26 @@ Relationship::Relationship(RelpID id, const std::set<std::string> &types, NodeID
                            Derivation derivation, std::vector<Property> properties)
     : id_(id),
       types_(types),
+      properties_(std::move(properties)),
       lhs_(lhs),
       rhs_(rhs),
       alias_(alias),
       direction_(direction),
-      derivation_(derivation),
-      properties_(std::move(properties)) {}
+      derivation_(derivation) {}
 
 Relationship::Relationship(RelpID id, const std::set<std::string> &types, NodeID src, NodeID dst,
                            parser::LinkDirection direction, const std::string &alias, int min_hop,
                            int max_hop, Derivation derivation, std::vector<Property> properties)
     : id_(id),
       types_(types),
+      properties_(std::move(properties)),
       lhs_(src),
       rhs_(dst),
       alias_(alias),
       direction_(direction),
       derivation_(derivation),
       min_hop_(min_hop),
-      max_hop_(max_hop),
-      properties_(std::move(properties)) {
+      max_hop_(max_hop) {
     its_.resize(max_hop_ < 0 ? 0 : max_hop_);
 }
 

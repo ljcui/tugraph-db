@@ -728,7 +728,7 @@ class EIter {
             throw lgraph::CypherException("EIter constructor type error.");
         }
 
-        if (!MatchPropertyFilter()) {
+        if (IsValid() && !MatchPropertyFilter()) {
             Next();
         }
     }

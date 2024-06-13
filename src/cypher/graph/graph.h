@@ -135,7 +135,8 @@ class PatternGraph {
 
     RelpID AddRelationship(Relationship *relp) {
         return AddRelationship(relp->Types(), relp->Lhs(), relp->Rhs(), relp->direction_,
-                               relp->Alias(), relp->MinHop(), relp->MaxHop(), relp->derivation_, relp->properties_);
+                               relp->Alias(), relp->MinHop(), relp->MaxHop(),
+                               relp->derivation_, relp->Properties());
     }
 
     NodeID BuildNode(const parser::TUP_NODE_PATTERN &node_pattern, Node::Derivation derivation);
