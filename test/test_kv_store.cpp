@@ -58,20 +58,19 @@ std::string random_str(int len) {
 
 namespace fs = std::filesystem;
 void createOrClearDirectory(const fs::path& path) {
-    if(fs::exists(path)) {
-        if(fs::is_directory(path)) {
+    if (fs::exists(path)) {
+        if (fs::is_directory(path)) {
             for(const auto& entry : fs::directory_iterator(path)) {
                 fs::remove_all(entry.path());
             }
-            std::cout << "Directory exists, cleared its contents." << std::endl;
         } else {
             std::cout << "Path exists but is not a directory!" << std::endl;
+            std::exit(-1);
         }
     } else {
-        if(fs::create_directories(path)) {
-            std::cout << "Directory created successfully." << std::endl;
-        } else {
+        if (!fs::create_directories(path)) {
             std::cout << "Failed to create directory!" << std::endl;
+            std::exit(-1);
         }
     }
 }
@@ -110,26 +109,39 @@ TEST_F(TestKvStore, benchmark) {
     RandomNumberGenerator timestamp_rng(1686983797, 1718519797);
     MDB_txn *txn;
     int rc;
+    struct TestDate {
+        uint64_t src;
+        uint64_t edge_label;
+        uint64_t dst;
+        uint64_t edge_key;
+        uint64_t timestamp;
+        std::string edge_data;
+    };
+    std::vector<TestDate> test_date;
     for (auto i = 0; i < 100000; i++) {
-        uint64_t src = vid_rng.next();
-        uint64_t edge_label = label_rng.next();
-        uint64_t dst = vid_rng.next();
-        uint64_t edge_key = i;
-        uint64_t timestamp = timestamp_rng.next();
-        std::string edge_data = random_str(10);
+        TestDate date;
+        date.src = vid_rng.next();
+        date.edge_label = label_rng.next();
+        date.dst = vid_rng.next();
+        date.edge_key = i;
+        date.timestamp = timestamp_rng.next();
+        date.edge_data = random_str(10);
+        test_date.emplace_back(std::move(date));
+    }
 
-
-        // tugraph
-        E(mdb_txn_begin(std::get<0>(tugraph), nullptr, MDB_NOSYNC, &txn));
+    // tugraph
+    auto tugraph_t1 = steady_clock::now();
+    E(mdb_txn_begin(std::get<0>(tugraph), nullptr, MDB_NOSYNC, &txn));
+    for (auto item : test_date) {
         // Primary Index: [src] [edge_label] [dst] [edge_key] -> [timestamp]
         {
             std::string key;
-            key.append((const char *)&src, sizeof(uint64_t));
-            key.append((const char *)&edge_label, sizeof(uint64_t));
-            key.append((const char *)&dst, sizeof(uint64_t));
-            key.append((const char *)&edge_key, sizeof(uint64_t));
+            key.append((const char *)&item.src, sizeof(uint64_t));
+            key.append((const char *)&item.edge_label, sizeof(uint64_t));
+            key.append((const char *)&item.dst, sizeof(uint64_t));
+            key.append((const char *)&item.edge_key, sizeof(uint64_t));
             std::string val;
-            val.append((const char *)&timestamp, sizeof(uint64_t));
+            val.append((const char *)&item.timestamp, sizeof(uint64_t));
 
             MDB_val k = {key.size(), (void *)key.data()};
             MDB_val v = {val.size(), nullptr};
@@ -139,32 +151,36 @@ TEST_F(TestKvStore, benchmark) {
         // Secondary Index: [src] [edge_label] [timestamp] [dst] [edge_key] -> [other_edge_data]
         {
             std::string key;
-            key.append((const char *)&src, sizeof(uint64_t));
-            key.append((const char *)&edge_label, sizeof(uint64_t));
-            key.append((const char *)&timestamp, sizeof(uint64_t));
-            key.append((const char *)&dst, sizeof(uint64_t));
-            key.append((const char *)&edge_key, sizeof(uint64_t));
-            std::string val = edge_data;
+            key.append((const char *)&item.src, sizeof(uint64_t));
+            key.append((const char *)&item.edge_label, sizeof(uint64_t));
+            key.append((const char *)&item.timestamp, sizeof(uint64_t));
+            key.append((const char *)&item.dst, sizeof(uint64_t));
+            key.append((const char *)&item.edge_key, sizeof(uint64_t));
+            std::string val = item.edge_data;
 
             MDB_val k = {key.size(), (void *)key.data()};
             MDB_val v = {val.size(), nullptr};
             E(mdb_put(txn, std::get<2>(tugraph), &k, &v, MDB_RESERVE));
             memcpy((char *)(v.mv_data), val.data(), val.size());
         }
-        E(mdb_txn_commit(txn));
+    }
+    E(mdb_txn_commit(txn));
+    auto tugraph_t2 = steady_clock::now();
 
-        // SF
-        E(mdb_txn_begin(std::get<0>(sf), nullptr, MDB_NOSYNC, &txn));
+    // SF
+    auto sf_t1 = steady_clock::now();
+    E(mdb_txn_begin(std::get<0>(sf), nullptr, MDB_NOSYNC, &txn));
+    for (auto item : test_date) {
         // Primary Index: [src] [edge_label] [dst] [edge_key] -> [timestamp] [other_edge_data]
         {
             std::string key;
-            key.append((const char *)&src, sizeof(uint64_t));
-            key.append((const char *)&edge_label, sizeof(uint64_t));
-            key.append((const char *)&dst, sizeof(uint64_t));
-            key.append((const char *)&edge_key, sizeof(uint64_t));
+            key.append((const char *)&item.src, sizeof(uint64_t));
+            key.append((const char *)&item.edge_label, sizeof(uint64_t));
+            key.append((const char *)&item.dst, sizeof(uint64_t));
+            key.append((const char *)&item.edge_key, sizeof(uint64_t));
             std::string val;
-            val.append((const char *)&timestamp, sizeof(uint64_t));
-            val.append(edge_data);
+            val.append((const char *)&item.timestamp, sizeof(uint64_t));
+            val.append(item.edge_data);
 
             MDB_val k = {key.size(), (void *)key.data()};
             MDB_val v = {val.size(), nullptr};
@@ -174,11 +190,11 @@ TEST_F(TestKvStore, benchmark) {
         // Secondary Index: [src] [edge_label] [timestamp] [dst] [edge_key] -> []
         {
             std::string key;
-            key.append((const char *)&src, sizeof(uint64_t));
-            key.append((const char *)&edge_label, sizeof(uint64_t));
-            key.append((const char *)&timestamp, sizeof(uint64_t));
-            key.append((const char *)&dst, sizeof(uint64_t));
-            key.append((const char *)&edge_key, sizeof(uint64_t));
+            key.append((const char *)&item.src, sizeof(uint64_t));
+            key.append((const char *)&item.edge_label, sizeof(uint64_t));
+            key.append((const char *)&item.timestamp, sizeof(uint64_t));
+            key.append((const char *)&item.dst, sizeof(uint64_t));
+            key.append((const char *)&item.edge_key, sizeof(uint64_t));
             std::string val;
 
             MDB_val k = {key.size(), (void *)key.data()};
@@ -186,20 +202,24 @@ TEST_F(TestKvStore, benchmark) {
             E(mdb_put(txn, std::get<2>(sf), &k, &v, MDB_RESERVE));
             memcpy((char *)(v.mv_data), val.data(), val.size());
         }
-        E(mdb_txn_commit(txn));
+    }
+    E(mdb_txn_commit(txn));
+    auto sf_t2 = steady_clock::now();
 
-        // RF
-        E(mdb_txn_begin(std::get<0>(rf), nullptr, MDB_NOSYNC, &txn));
+    // RF
+    auto rf_t1 = steady_clock::now();
+    E(mdb_txn_begin(std::get<0>(rf), nullptr, MDB_NOSYNC, &txn));
+    for (auto item : test_date) {
         // Primary Index: [src] [edge_label] [dst] [edge_key] -> [timestamp] [other_edge_data]
         {
             std::string key;
-            key.append((const char *)&src, sizeof(uint64_t));
-            key.append((const char *)&edge_label, sizeof(uint64_t));
-            key.append((const char *)&dst, sizeof(uint64_t));
-            key.append((const char *)&edge_key, sizeof(uint64_t));
+            key.append((const char *)&item.src, sizeof(uint64_t));
+            key.append((const char *)&item.edge_label, sizeof(uint64_t));
+            key.append((const char *)&item.dst, sizeof(uint64_t));
+            key.append((const char *)&item.edge_key, sizeof(uint64_t));
             std::string val;
-            val.append((const char *)&timestamp, sizeof(uint64_t));
-            val.append(edge_data);
+            val.append((const char *)&item.timestamp, sizeof(uint64_t));
+            val.append(item.edge_data);
 
             MDB_val k = {key.size(), (void *)key.data()};
             MDB_val v = {val.size(), nullptr};
@@ -209,24 +229,31 @@ TEST_F(TestKvStore, benchmark) {
         // Secondary Index: [src] [edge_label] [timestamp] [dst] [edge_key] -> [other_edge_data]
         {
             std::string key;
-            key.append((const char *)&src, sizeof(uint64_t));
-            key.append((const char *)&edge_label, sizeof(uint64_t));
-            key.append((const char *)&timestamp, sizeof(uint64_t));
-            key.append((const char *)&dst, sizeof(uint64_t));
-            key.append((const char *)&edge_key, sizeof(uint64_t));
-            std::string val;
-            val.append(edge_data);
+            key.append((const char *)&item.src, sizeof(uint64_t));
+            key.append((const char *)&item.edge_label, sizeof(uint64_t));
+            key.append((const char *)&item.timestamp, sizeof(uint64_t));
+            key.append((const char *)&item.dst, sizeof(uint64_t));
+            key.append((const char *)&item.edge_key, sizeof(uint64_t));
+            std::string val = item.edge_data;
 
             MDB_val k = {key.size(), (void *)key.data()};
             MDB_val v = {val.size(), nullptr};
             E(mdb_put(txn, std::get<2>(rf), &k, &v, MDB_RESERVE));
             memcpy((char *)(v.mv_data), val.data(), val.size());
         }
-        E(mdb_txn_commit(txn));
     }
-    std::cout << "tugraph size: " << std::filesystem::file_size("tugraph/data.mdb") << std::endl;
-    std::cout << "sf size: " << std::filesystem::file_size("sf/data.mdb") << std::endl;
-    std::cout << "rf size: " << std::filesystem::file_size("rf/data.mdb") << std::endl;
+    E(mdb_txn_commit(txn));
+    auto rf_t2 = steady_clock::now();
+
+    std::cout << "TuGraph insert time: " << duration_cast<nanoseconds>(tugraph_t2 - tugraph_t1).count() / 1000000 << " ms " << std::endl;
+    std::cout << "SF      insert time: " << duration_cast<nanoseconds>(sf_t2 - sf_t1).count() / 1000000 << " ms " << std::endl;
+    std::cout << "RF      insert time: " << duration_cast<nanoseconds>(rf_t2 - rf_t1).count() / 1000000 << " ms " << std::endl;
+    std::cout << std::endl;
+
+    std::cout << "TuGraph data size: " << fs::file_size("tugraph/data.mdb") << std::endl;
+    std::cout << "SF      data size: " << fs::file_size("sf/data.mdb") << std::endl;
+    std::cout << "RF      data size: " << fs::file_size("rf/data.mdb") << std::endl;
+    std::cout << std::endl;
 
     // tugraph
     {
@@ -268,10 +295,8 @@ TEST_F(TestKvStore, benchmark) {
         mdb_cursor_close(cursor);
         mdb_txn_abort(txn);
         auto t2 = steady_clock::now();
-        std::cout << "tugraph: " << duration_cast<nanoseconds>(t2 - t1).count() / 1000000 << " ms "
-                  << std::endl
-                  << std::flush;
-        std::cout << "count: " << count << std::endl;
+        std::cout << "TuGraph query time: " << duration_cast<nanoseconds>(t2 - t1).count() / 1000000 << " ms " << std::endl;
+        //std::cout << "count: " << count << std::endl;
     }
 
     // sf
@@ -324,10 +349,8 @@ TEST_F(TestKvStore, benchmark) {
         mdb_cursor_close(cursor);
         mdb_txn_abort(txn);
         auto t2 = steady_clock::now();
-        std::cout << "sf: " << duration_cast<nanoseconds>(t2 - t1).count() / 1000000 << " ms "
-                  << std::endl
-                  << std::flush;
-        std::cout << "count: " << count << std::endl;
+        std::cout << "SF      query time: " << duration_cast<nanoseconds>(t2 - t1).count() / 1000000 << " ms " << std::endl;
+        //std::cout << "count: " << count << std::endl;
     }
 
     // rf
@@ -370,10 +393,8 @@ TEST_F(TestKvStore, benchmark) {
         mdb_cursor_close(cursor);
         mdb_txn_abort(txn);
         auto t2 = steady_clock::now();
-        std::cout << "rf: " << duration_cast<nanoseconds>(t2 - t1).count() / 1000000 << " ms "
-                  << std::endl
-                  << std::flush;
-        std::cout << "count: " << count << std::endl;
+        std::cout << "RF      query time: " << duration_cast<nanoseconds>(t2 - t1).count() / 1000000 << " ms " << std::endl;
+        //std::cout << "count: " << count << std::endl;
     }
 
     close_db(tugraph);
