@@ -126,6 +126,68 @@ void PushDownFilterAst(std::vector<SglQuery>& sql_query, const lgraph::SchemaInf
         }
     }
 }
+struct PatternItem {
+    bool is_vertex = false;
+    std::any reference;
+    std::vector<std::string> labels;
+    void Reset() {
+        is_vertex = false;
+        reference.reset();
+        labels.clear();
+    }
+};
+struct Neighbour {
+    std::vector<std::tuple<std::string,std::string>> in;
+    std::vector<std::tuple<std::string,std::string>> out;
+};
+void AddLabelBySchema(std::vector<SglQuery>& sql_query, const lgraph::SchemaInfo& si) {
+    std::unordered_map<std::string, Neighbour> neighbours;
+    for (auto& label : si.e_schema_manager.GetAllLabels()) {
+        auto s = si.e_schema_manager.GetSchema(label);
+        for (auto& pair : s->GetEdgeConstraints()) {
+            neighbours[pair.first].out.emplace_back(label, pair.second);
+            neighbours[pair.second].in.emplace_back(label, pair.first);
+        }
+    }
+    for (auto& query : sql_query) {
+        for (auto& part : query.parts) {
+            if (part.match_clause) {
+                auto match_clause = const_cast<Clause::TYPE_MATCH*>(part.match_clause);
+                auto &pattern = std::get<0>(*match_clause);
+                for (auto &pattern_part : pattern) {
+                    std::vector<PatternItem> items;
+                    auto &pattern_element = std::get<1>(pattern_part);
+                    TUP_RELATIONSHIP_PATTERN* rel;
+                    TUP_NODE_PATTERN* node;
+                    PatternItem item;
+                    // node
+                    item.is_vertex = true;
+                    node = &std::get<0>(pattern_element);
+                    item.reference = node;
+                    item.labels = std::get<1>(*node);
+                    items.emplace_back(item);
+                    for (auto& ele : std::get<1>(pattern_element)) {
+                        // relationship
+                        item.Reset();
+                        rel = &std::get<0>(ele);
+                        item.is_vertex = false;
+                        item.reference = rel;
+                        item.labels = std::get<1>(std::get<1>(*rel));
+                        items.emplace_back(item);
+
+                        // node
+                        item.Reset();
+                        node = &std::get<1>(ele);
+                        item.is_vertex = true;
+                        item.reference = node;
+                        item.labels = std::get<1>(*node);
+                        items.emplace_back(item);
+                    }
+                }
+            }
+        }
+    }
+}
 
 void CypherBaseVisitor::AstRewrite(cypher::RTContext *ctx) {
     if (ctx->graph_.empty()) {
