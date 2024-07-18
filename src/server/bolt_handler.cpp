@@ -208,11 +208,23 @@ std::function<void(bolt::BoltConnection &conn, bolt::BoltMsg msg,
         if (!galaxy->ValidateUser(principal, credentials)) {
             LOG_ERROR() << "Bolt authentication failed";
             bolt::PackStream ps;
-            ps.AppendFailure({{"code", "error"},
-                              {"message", "Authentication failed"}});
+            ps.AppendFailure({{"code", ErrorCodeToString(ErrorCode::Unauthorized)},
+                              {"message", ErrorCodeDesc(ErrorCode::Unauthorized)}});
             conn.Respond(std::move(ps.MutableBuffer()));
             conn.Close();
             return;
+        }
+        auto sm = BoltServer::Instance().StateMachine();
+        if (sm->GetGalaxy()->GetGlobalConfigPtr()->disable_default_password) {
+            if (principal == lgraph::_detail::DEFAULT_ADMIN_NAME &&
+                credentials == lgraph::_detail::DEFAULT_ADMIN_PASS) {
+                bolt::PackStream ps;
+                ps.AppendFailure({{"code", ErrorCodeToString(ErrorCode::DefaultPasswordDisabled)},
+                                  {"message", ErrorCodeDesc(ErrorCode::DefaultPasswordDisabled)}});
+                conn.Respond(std::move(ps.MutableBuffer()));
+                conn.Close();
+                return;
+            }
         }
         std::unordered_map<std::string, std::any> meta;
         meta["connection_id"] = std::string("bolt") + std::to_string(conn.conn_id());

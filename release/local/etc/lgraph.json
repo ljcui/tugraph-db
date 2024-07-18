@@ -8,6 +8,7 @@
     "enable_ha" : false,
     "verbose" : 1,
     "log_dir" : "/var/log/lgraph_log",
+    "disable_default_password": true,
     "disable_auth" : false,
     "ssl_auth" : false,
     "server_key" : "/usr/local/etc/lgraph/server-key.pem",

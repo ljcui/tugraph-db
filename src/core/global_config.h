@@ -86,6 +86,7 @@ struct BasicConfigs {
     // default disable plugin load/delete
     bool enable_plugin = false;
     BrowserOptions browser_options;
+    bool disable_default_password = false;
 };
 
 template <typename T>

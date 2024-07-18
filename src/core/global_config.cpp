@@ -337,5 +337,7 @@ fma_common::Configuration lgraph::GlobalConfig::InitConfig
     argparser.Add(browser_options.retain_connection_credentials,
                   "browser.retain_connection_credentials", true)
         .Comment("Config browser whether to store user credentials in local storage.");
+    argparser.Add(disable_default_password, "disable_default_password", true)
+        .Comment("Whether to allow a default password");
     return argparser;
 }
