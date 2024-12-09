@@ -32,6 +32,9 @@ class BlockingQueue {
         }
         condition_.notify_one();
     }
+    void Notify() {
+        condition_.notify_one();
+    }
     T Pop() {
         std::unique_lock<std::mutex> lock(mutex_);
         condition_.wait(lock, [this] {return !queue_.empty();});

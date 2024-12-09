@@ -18,7 +18,7 @@
 #include "fma-common/assert.h"
 
 namespace lgraph {
-static const int LGRAPH_MAX_THREADS = 480;
+static const int LGRAPH_MAX_THREADS = 65000;
 
 class ThreadIdAssigner {
     static const int N = LGRAPH_MAX_THREADS;

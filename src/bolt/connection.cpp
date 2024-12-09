@@ -22,6 +22,7 @@
 #include "bolt/connection.h"
 #include "bolt/messages.h"
 #include "bolt/to_string.h"
+#include "server/bolt_session.h"
 
 namespace bolt {
 using namespace boost::asio;
@@ -100,6 +101,10 @@ void BoltConnection::Start() {
 
 void BoltConnection::Close() {
     Connection::Close();
+    if (context_) {
+        auto session = (BoltSession*)GetContext();
+        session->msgs.Notify();
+    }
 }
 
 void BoltConnection::DoSend() {
