@@ -762,29 +762,30 @@ void Importer::EdgeDataToSST() {
                                 bool unique_index_ok = true;
                                 for (const auto& info : unique_index_info) {
                                     const FieldData& unique_index_col = line[info];
-                                    if (unique_index_col.IsNull() ||
-                                        unique_index_col.is_empty_buf()) {
-                                        OnErrorOffline("Invalid unique index key");
+                                    if (unique_index_col.IsNull()) {
+                                        OnErrorOffline(FMA_FMT("[file: {}] [edge label: {}] Invalid pair unique index value: Null",
+                                                               *edgeDataBlock->file_path, edgeDataBlock->schema->GetLabel()));
                                         continue;
                                     }
                                     if (unique_index_col.IsString() &&
                                         unique_index_col.string().size() >
                                             lgraph::_detail::MAX_KEY_SIZE) {
-                                        OnErrorOffline("Unique index string key is too long: "
+                                        OnErrorOffline(FMA_FMT("[file: {}] [edge label: {}] Pair unique index string key is too long: ",
+                                                               *edgeDataBlock->file_path, edgeDataBlock->schema->GetLabel())
                                                        + unique_index_col.string().substr(0, 1024));
                                         continue;
                                     }
                                     std::string unique_key;
-                                    unique_key.append((const char*)&info, sizeof(info));
-                                    unique_key.append(
-                                        (const char*)&(src_vid < dst_vid ? src_vid : dst_vid),
-                                        sizeof(VertexId));
-                                    unique_key.append(
-                                        (const char*)&(src_vid > dst_vid ? src_vid : dst_vid),
-                                        sizeof(VertexId));
+                                    unique_key.append((const char*)&(src_vid),
+                                                      sizeof(VertexId));
+                                    unique_key.append((const char*)&(dst_vid),
+                                                      sizeof(VertexId));
+                                    unique_key.append((const char*)&edgeDataBlock->label_id,
+                                                      sizeof(edgeDataBlock->label_id));
                                     AppendFieldData(unique_key, unique_index_col);
                                     if (!unique_index_keys.insert(unique_key, 0)) {
-                                        OnErrorOffline("Duplicate unique index field: " +
+                                        OnErrorOffline(FMA_FMT("[file: {}] [edge label: {}] Duplicate pair unique index field: ",
+                                                               *edgeDataBlock->file_path, edgeDataBlock->schema->GetLabel()) +
                                                        unique_index_col.ToString());
                                         unique_index_ok = false;
                                         break;
