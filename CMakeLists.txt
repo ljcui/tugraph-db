@@ -236,3 +236,13 @@ endif()
 install(TARGETS lgraph_server lgraph_cli RUNTIME DESTINATION bin)
 install(FILES /usr/local/lib64/libvsag.so DESTINATION lib64/lgraph)
 
+add_executable(flag_hnsw test/test_flat_hnsw.cpp)
+target_link_libraries(flag_hnsw PRIVATE
+		vsag
+		faiss.a
+		openblas.a
+		-static-libstdc++
+		-static-libgcc
+		pthread
+		dl
+)
