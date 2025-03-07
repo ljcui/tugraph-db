@@ -14,7 +14,9 @@
 // limitations under the License.
 
 #include <vsag/vsag.h>
-
+#include <faiss/impl/AuxIndexStructures.h>
+#include <faiss/impl/FaissException.h>
+#include <faiss/index_factory.h>
 #include <iostream>
 
 #define TIME_COST(name) \
@@ -33,11 +35,12 @@
               << std::chrono::duration_cast<std::chrono::milliseconds>(end##name - start##name).count() \
               << "ms" << std::endl
 
-int
-main(int argc, char** argv) {
+int64_t num_vectors = 100000;
+int64_t dim = 1000;
+int64_t topk = 10;
+
+int test_vsag() {
     /******************* Prepare Base Dataset *****************/
-    int64_t num_vectors = 10000;
-    int64_t dim = 1000;
     auto ids = new int64_t[num_vectors];
     auto vectors = new float[dim * num_vectors];
 
@@ -85,8 +88,6 @@ main(int argc, char** argv) {
     }
     TIME_END(index_Build);
 
-    index->GetMemoryUsage();
-
     /******************* KnnSearch For HNSW Index *****************/
     auto query_vector = new float[dim];
     for (int64_t i = 0; i < dim; ++i) {
@@ -103,7 +104,6 @@ main(int argc, char** argv) {
         }
     }
     )";
-    int64_t topk = 10;
     auto query = vsag::Dataset::Make();
     query->NumElements(1)->Dim(dim)->Float32Vectors(query_vector)->Owner(true);
     TIME_START(index_KnnSearch);
@@ -111,7 +111,7 @@ main(int argc, char** argv) {
     TIME_END(index_KnnSearch);
 
     /******************* Print Search Result *****************/
-    if (knn_result.has_value()) {
+    /*if (knn_result.has_value()) {
         auto result = knn_result.value();
         std::cout << "results: " << std::endl;
         for (int64_t i = 0; i < result->GetDim(); ++i) {
@@ -119,7 +119,47 @@ main(int argc, char** argv) {
         }
     } else {
         std::cerr << "Search Error: " << knn_result.error().message << std::endl;
-    }
+    }*/
 
     return 0;
+}
+
+void test_faiss_flat() {
+    auto ids = new int64_t[num_vectors];
+    auto vectors = new float[dim * num_vectors];
+
+    std::mt19937 rng;
+    rng.seed(47);
+    std::uniform_real_distribution<> distrib_real;
+    for (int64_t i = 0; i < num_vectors; ++i) {
+        ids[i] = i;
+    }
+    for (int64_t i = 0; i < dim * num_vectors; ++i) {
+        vectors[i] = distrib_real(rng);
+    }
+
+    std::unique_ptr<faiss::Index> flat_index_{nullptr};
+    flat_index_.reset(faiss::index_factory(
+            (int)dim, "Flat", faiss::MetricType::METRIC_L2));
+    TIME_START(faiss_add);
+    flat_index_->add(num_vectors, vectors);
+    TIME_END(faiss_add);
+
+    std::cout << "flat_index_->ntotal = " << flat_index_->ntotal << std::endl;
+
+    auto query_vector = new float[dim];
+    for (int64_t i = 0; i < dim; ++i) {
+        query_vector[i] = distrib_real(rng);
+    }
+    int nq = 1;
+    std::vector<float> distances(nq * topk);
+    std::vector<faiss::idx_t> labels(nq * topk);
+    TIME_START(faiss_search);
+    flat_index_->search(nq, query_vector, topk, distances.data(), labels.data());
+    TIME_END(faiss_search);
+}
+
+int main(int argc, char** argv) {
+    test_vsag();
+    test_faiss_flat();
 }

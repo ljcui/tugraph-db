@@ -243,6 +243,7 @@ target_link_libraries(flag_hnsw PRIVATE
 		openblas.a
 		-static-libstdc++
 		-static-libgcc
+		gfortran
 		pthread
 		dl
 )
