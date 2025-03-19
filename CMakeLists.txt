@@ -236,3 +236,14 @@ endif()
 install(TARGETS lgraph_server lgraph_cli RUNTIME DESTINATION bin)
 install(FILES /usr/local/lib64/libvsag.so DESTINATION lib64/lgraph)
 
+add_executable(vstore
+		vector_store/main.cpp
+		vector_store/vector_index_store.cpp
+		vector_store/exceptions.cpp
+		vector_store/logger.cpp
+)
+
+target_link_libraries(vstore PRIVATE
+		vsag
+		roaring.a
+)
