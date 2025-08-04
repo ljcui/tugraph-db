@@ -70,21 +70,20 @@ RUN wget https://tugraph-web.oss-cn-beijing.aliyuncs.com/tugraph/deps/cmake-3.25
     && tar xf cmake-3.25.2.tar.gz && cd cmake-3.25.2 \
     && ./bootstrap && make ${JFLAG} && make install && rm -rf /cmake-3.*
 
-# 1. Install boost-1.68 and the geometry extensions
+# 1. Install boost-1.78 and the geometry extensions
 # 2. Revise the macro INVALID_INDEX in geometry module to avoid macro conflict error with Antlr4
-# 3. Copy the boost geometry extensions to the boost-1.68 include directory(headers only)
-# if boost-1.68 is not accessible, replace it with the link below
-# - https://boostorg.jfrog.io/artifactory/main/release/1.68.0/source/boost_1_68_0.tar.gz
+# 3. Copy the boost geometry extensions to the boost-1.78 include directory(headers only)
+# if boost-1.78 is not accessible, replace it with the link below
+# - https://boostorg.jfrog.io/artifactory/main/release/1.78.0/source/boost_1_78_0.tar.gz
 # Geometry extensions is the `include/boost/geometry/extensions` directory in the repository and commit id below.
-# - Commit 5fbd2a11027f658decda5e43af73935e98a84ee5 @ https://github.com/boostorg/geometry.git
-RUN wget https://tugraph-web.oss-cn-beijing.aliyuncs.com/tugraph/deps/boost_1_68_0.tar.gz \
-    && wget https://tugraph-web.oss-cn-beijing.aliyuncs.com/tugraph/deps/geometry-extensions.tar.gz \
-    && tar xf boost_1_68_0.tar.gz && tar xf geometry-extensions.tar.gz \
-    && cd boost_1_68_0 && ./bootstrap.sh --with-libraries=system,random,thread,filesystem,chrono,atomic,date_time,regex,stacktrace,log \
+# - Commit 76cd664087f0529c983381f2089973e73861d85a @ https://github.com/boostorg/geometry.git
+RUN wget https://tugraph-web.oss-cn-beijing.aliyuncs.com/tugraph/deps/boost_1_78_0.tar.gz \
+    && wget https://tugraph-web.oss-cn-beijing.aliyuncs.com/tugraph/deps/geometry-extensions-1.78.tar.gz \
+    && tar xf boost_1_78_0.tar.gz && tar xf geometry-extensions-1.78.tar.gz \
+    && cd boost_1_78_0 && ./bootstrap.sh --with-libraries=system,random,thread,filesystem,chrono,atomic,date_time,regex,stacktrace,log \
     && ./b2 ${JFLAG} cxxflags="-std=c++17 -fPIC" install \
-    && sed -i '513s/BOOST_MPL_ASSERT_MSG((I < 1), INVALID_INDEX,/BOOST_MPL_ASSERT_MSG((I < 1), INVALID_INDEX_,/' /usr/local/include/boost/geometry/index/detail/predicates.hpp \
     && cp -r /extensions /usr/local/include/boost/geometry/ \
-    && rm -rf /boost_* /extensions /geometry-extensions.tar.gz
+    && rm -rf /boost_* /extensions /geometry-extensions-1.78.tar.gz
 
 # install protobuf
 # if it is not accessible, replace it with the link below
@@ -353,11 +352,11 @@ RUN wget -O /tmp/openblas-faiss.tar.gz https://tugraph-web.oss-cn-beijing.aliyun
     && rm -rf /tmp/openblas-faiss /tmp/openblas-faiss.tar.gz && ldconfig
 
 # install vsag
-RUN wget https://tugraph-web.oss-cn-beijing.aliyuncs.com/tugraph/deps/vsag-0.11.5.tar.gz -O /tmp/vsag.tar.gz && \
+RUN wget https://tugraph-web.oss-cn-beijing.aliyuncs.com/tugraph/deps/vsag-0.14.4-no-aio.tar.gz -O /tmp/vsag.tar.gz && \
     cd /tmp && mkdir vsag && tar -xzf vsag.tar.gz --strip-components=1 -C vsag && cd vsag && \
     yum install -y libgfortran5.x86_64 && ln -s /usr/lib64/libgfortran.so.5.0.0 /usr/local/lib/libgfortran.so && ldconfig && \
-    mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_INTEL_MKL=OFF -DDISABLE_AVX2_FORCE=ON -DDISABLE_AVX512_FORCE=ON .. && \
-    make ${JFLAG} && make install && \
+    mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_INTEL_MKL=OFF -DENABLE_TOOLS=OFF -DENABLE_TESTS=OFF -DENABLE_EXAMPLES=OFF -DDISABLE_AVX2_FORCE=ON -DDISABLE_AVX512_FORCE=ON .. && \
+    make ${JFLAG} && make install && cp /tmp/vsag/build/_deps/roaringbitmap-build/src/libroaring.a /usr/local/lib/ && \
     cd / && rm -rf /tmp/vsag*
 
 RUN sed -i '3 s/-lgomp/-l:libgomp.a/' /usr/local/lib64/libgomp.spec
@@ -368,6 +367,7 @@ ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk \
     PATH=/opt/apache-maven-3.8.7/bin:$PATH
 
 # set locale
-RUN localedef -c -f UTF-8 -i zh_CN zh_CN.utf8
-ENV LANG     zh_CN.utf8
-ENV LC_ALL   zh_CN.utf8
+#RUN localedef -c -f UTF-8 -i zh_CN zh_CN.utf8
+#ENV LANG     zh_CN.utf8
+#ENV LC_ALL   zh_CN.utf8
+

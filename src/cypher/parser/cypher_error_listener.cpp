@@ -12,7 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include <cstdio>          // Ensure EOF macro is defined
+#pragma push_macro("EOF")  // hide EOF for antlr headers
 #include "parser/cypher_error_listener.h"
+#pragma pop_macro("EOF")  // bring EOF back
+
 #include "cypher/cypher_exception.h"
 using namespace parser;
 

@@ -2,15 +2,6 @@ parser grammar GqlParser;
 
 options { tokenVocab = GqlLexer; }
 
-@parser::postinclude {
-#pragma push_macro("EOF")
-#undef EOF
-}
-
-@parser::epilogue {
-#pragma pop_macro("EOF")
-}
-
 gqlRequest
    : gqlProgram SEMICOLON? EOF
    ;

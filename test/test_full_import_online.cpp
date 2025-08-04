@@ -13,9 +13,9 @@
 */
 #include "./ut_utils.h"
 #include "./ut_config.h"
-#include "cpprest/json.h"
 #include "import/import_client.h"
 #include "lgraph/lgraph_rpc_client.h"
+#include "cpprest/json.h"
 
 class TestFullImportOnline : public TuGraphTest {
  public:

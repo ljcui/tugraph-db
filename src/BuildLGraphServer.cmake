@@ -81,9 +81,6 @@ if (NOT (CMAKE_SYSTEM_NAME STREQUAL "Darwin"))
             lgraph_cypher_lib
             geax_isogql
             bolt
-            vsag
-            /opt/OpenBLAS/lib/libopenblas.a
-            faiss
             # begin static linking
             -Wl,-Bstatic
             cpprest
@@ -142,7 +139,6 @@ add_executable(${TARGET_SERVER}
 target_link_libraries(${TARGET_SERVER}
         ${TARGET_SERVER_LIB}
         librocksdb.a
-        vsag
         /opt/OpenBLAS/lib/libopenblas.a
         faiss
 )

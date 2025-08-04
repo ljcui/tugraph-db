@@ -19,13 +19,15 @@
 #define FRONTEND_ISOGQL_GQLASTVISITOR_H_
 
 #include <type_traits>
-
+#include <cstdio>          // Ensure EOF macro is defined
+#pragma push_macro("EOF")  // hide EOF for antlr headers
 #include "antlr4-runtime.h"
 #include "geax-front-end/GEAXErrorCode.h"
 #include "geax-front-end/ast/Ast.h"
 #include "geax-front-end/isogql/GQLResolveCtx.h"
 #include "geax-front-end/isogql/parser/GqlParserBaseVisitor.h"
 #include "parser/GqlParser.h"
+#pragma pop_macro("EOF")  // bring EOF back
 
 namespace geax {
 namespace frontend {

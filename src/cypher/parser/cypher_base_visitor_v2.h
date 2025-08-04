@@ -16,8 +16,12 @@
 
 #pragma once
 
+#include <cstdio>          // Ensure EOF macro is defined
+#pragma push_macro("EOF")  // hide EOF for antlr headers
 #include "antlr4-runtime/antlr4-runtime.h"
 #include "parser/generated/LcypherVisitor.h"
+#pragma pop_macro("EOF")  // bring EOF back
+
 #include "cypher/cypher_exception.h"
 #include "geax-front-end/common/ObjectAllocator.h"
 #include "geax-front-end/ast/Ast.h"

@@ -18,9 +18,13 @@
 
 #include <cassert>
 #include <tuple>
+
+#include <cstdio>          // Ensure EOF macro is defined
+#pragma push_macro("EOF")  // hide EOF for antlr headers
 #include "antlr4-runtime/antlr4-runtime.h"
-#include "parser/expression.h"
 #include "parser/generated/LcypherVisitor.h"
+#pragma pop_macro("EOF")  // bring EOF back
+
 #include "fma-common/utils.h"
 #include "parser/clause.h"
 #include "cypher/cypher_exception.h"

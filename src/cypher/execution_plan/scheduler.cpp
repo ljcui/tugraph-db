@@ -15,18 +15,22 @@
 //
 // Created by wt on 18-8-14.
 //
+#include <cstdio>          // Ensure EOF macro is defined
+#pragma push_macro("EOF")  // hide EOF for antlr headers
+
 #include "./antlr4-runtime.h"
 #include "geax-front-end/ast/AstNode.h"
 #include "geax-front-end/ast/AstDumper.h"
 #include "geax-front-end/isogql/GQLResolveCtx.h"
 #include "geax-front-end/isogql/GQLAstVisitor.h"
 #include "geax-front-end/isogql/parser/AntlrGqlParser.h"
+#include "parser/generated/LcypherLexer.h"
+#include "parser/generated/LcypherParser.h"
+#pragma pop_macro("EOF")  // bring EOF back
 
 #include "tools/lgraph_log.h"
 #include "core/task_tracker.h"
 
-#include "parser/generated/LcypherLexer.h"
-#include "parser/generated/LcypherParser.h"
 #include "parser/cypher_base_visitor.h"
 #include "parser/cypher_base_visitor_v2.h"
 #include "parser/cypher_error_listener.h"
