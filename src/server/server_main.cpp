@@ -189,8 +189,6 @@ class LGraphDaemon : public Service {
           {.block_cache_size = FLAGS_block_cache,
            .row_cache_size = FLAGS_row_cache,
            .ft_apply_interval = FLAGS_ft_apply_interval,
-           .ft_apply_batch_size = FLAGS_ft_apply_batch_size,
-           .ft_apply_max_delay_ms = FLAGS_ft_apply_max_delay_ms,
            .ft_writer_threads = FLAGS_ft_writer_threads,
            .ft_writer_memory_budget = FLAGS_ft_writer_memory_budget,
            .vt_apply_interval = FLAGS_vt_apply_interval,

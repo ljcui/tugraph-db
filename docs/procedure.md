@@ -105,7 +105,7 @@ CALL db.index.fulltext.deleteIndex('namesAndTeams');
 
 回放点的全文索引WAL日志。
 
-写入全文索引数据后，系统会在事务提交后立即触发一次wal回放，同时保留后台周期检查作为兜底。
+写入全文索引数据后，系统不会主动触发wal回放，只会由后台定时任务进行回放，默认每隔1秒ApplyWAL一次。
 
 这个调用是手动触发一次wal的回放。
 ```

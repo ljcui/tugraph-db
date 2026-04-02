@@ -56,7 +56,7 @@ bool WaitUntilBusy(
 bool WaitUntilQueryCount(
     GraphDB* graph_db, const std::string& index_name, const std::string& query,
     size_t expected_count,
-    std::chrono::milliseconds timeout = std::chrono::seconds(1)) {
+    std::chrono::milliseconds timeout = std::chrono::seconds(3)) {
   auto deadline = std::chrono::steady_clock::now() + timeout;
   while (true) {
     auto txn = graph_db->BeginTransaction();
@@ -345,10 +345,10 @@ TEST(FTIndex, indexVertex) {
   txn->Commit();
 }
 
-TEST(FTIndex, committedWalIsAppliedWithoutWaitingForPeriodicTimer) {
+TEST(FTIndex, committedWalIsAppliedByPeriodicTimer) {
   fs::remove_all(testdb);
   GraphDBOptions options;
-  options.ft_apply_interval_ = 3600;
+  options.ft_apply_interval_ = 1;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
 
@@ -360,7 +360,7 @@ TEST(FTIndex, committedWalIsAppliedWithoutWaitingForPeriodicTimer) {
 
   EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
                                   "near_real_time_token", 1,
-                                  std::chrono::milliseconds(800)));
+                                  std::chrono::milliseconds(2500)));
 
   txn = graphDB->BeginTransaction();
   auto viter = txn->NewVertexIterator(
@@ -372,65 +372,7 @@ TEST(FTIndex, committedWalIsAppliedWithoutWaitingForPeriodicTimer) {
 
   EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
                                   "near_real_time_token", 0,
-                                  std::chrono::milliseconds(800)));
-}
-
-TEST(FTIndex, committedWalVisibilityRespectsMicroBatchDelay) {
-  fs::remove_all(testdb);
-  GraphDBOptions options;
-  options.ft_apply_interval_ = 3600;
-  options.ft_apply_max_delay_ms_ = 200;
-  auto graphDB = GraphDB::Open(testdb, options);
-  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
-
-  auto txn = graphDB->BeginTransaction();
-  txn->CreateVertex({"label1"},
-                    {{"id", Value::Integer(1)},
-                     {"str", Value::String("delayed_visibility_token")}});
-  txn->Commit();
-
-  txn = graphDB->BeginTransaction();
-  int count = 0;
-  for (auto result = txn->QueryVertexByFTIndex("ft_index",
-                                               "delayed_visibility_token", 10);
-       result->Valid(); result->Next()) {
-    count++;
-  }
-  EXPECT_EQ(count, 0);
-  txn->Commit();
-
-  EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
-                                  "delayed_visibility_token", 1,
-                                  std::chrono::milliseconds(1200)));
-}
-
-TEST(FTIndex, applyBatchSizeTriggersFlushBeforeDelayExpires) {
-  fs::remove_all(testdb);
-  GraphDBOptions options;
-  options.ft_apply_interval_ = 3600;
-  options.ft_apply_batch_size_ = 2;
-  options.ft_apply_max_delay_ms_ = 1000;
-  auto graphDB = GraphDB::Open(testdb, options);
-  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
-
-  auto txn = graphDB->BeginTransaction();
-  txn->CreateVertex({"label1"},
-                    {{"id", Value::Integer(1)},
-                     {"str", Value::String("batch_threshold_token_one")}});
-  txn->Commit();
-
-  txn = graphDB->BeginTransaction();
-  txn->CreateVertex({"label1"},
-                    {{"id", Value::Integer(2)},
-                     {"str", Value::String("batch_threshold_token_two")}});
-  txn->Commit();
-
-  EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
-                                  "batch_threshold_token_one", 1,
-                                  std::chrono::milliseconds(300)));
-  EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
-                                  "batch_threshold_token_two", 1,
-                                  std::chrono::milliseconds(300)));
+                                  std::chrono::milliseconds(2500)));
 }
 
 TEST(FTIndex, configuredWriterOptionsWork) {
@@ -449,13 +391,13 @@ TEST(FTIndex, configuredWriterOptionsWork) {
 
   EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
                                   "configured_writer_token", 1,
-                                  std::chrono::milliseconds(800)));
+                                  std::chrono::milliseconds(2500)));
 }
 
-TEST(FTIndex, reopenWithPendingWalIsAppliedImmediately) {
+TEST(FTIndex, reopenWithPendingWalIsAppliedByPeriodicTimer) {
   fs::remove_all(testdb);
   GraphDBOptions options;
-  options.ft_apply_interval_ = 3600;
+  options.ft_apply_interval_ = 1;
   {
     auto graphDB = GraphDB::Open(testdb, options);
     graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
@@ -470,7 +412,7 @@ TEST(FTIndex, reopenWithPendingWalIsAppliedImmediately) {
   auto graphDB = GraphDB::Open(testdb, options);
   EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
                                   "pending_restart_token", 1,
-                                  std::chrono::milliseconds(800)));
+                                  std::chrono::milliseconds(2500)));
 }
 
 TEST(FTIndex, corruptedWalIsRejected) {
@@ -819,7 +761,7 @@ TEST(FTIndex, updateVertex) {
 TEST(FTIndex, repeatedUpdatesInSingleTransactionApplyLatestDocument) {
   fs::remove_all(testdb);
   GraphDBOptions options;
-  options.ft_apply_interval_ = 3600;
+  options.ft_apply_interval_ = 1;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
 
@@ -828,7 +770,7 @@ TEST(FTIndex, repeatedUpdatesInSingleTransactionApplyLatestDocument) {
                                  {"str", Value::String("original_token")}});
   txn->Commit();
   EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index", "original_token",
-                                  1, std::chrono::milliseconds(800)));
+                                  1, std::chrono::milliseconds(2500)));
 
   txn = graphDB->BeginTransaction();
   auto viter = txn->NewVertexIterator(
@@ -842,13 +784,13 @@ TEST(FTIndex, repeatedUpdatesInSingleTransactionApplyLatestDocument) {
   txn->Commit();
 
   EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index", "original_token",
-                                  0, std::chrono::milliseconds(800)));
+                                  0, std::chrono::milliseconds(2500)));
   EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index", "middle_token", 0,
-                                  std::chrono::milliseconds(800)));
+                                  std::chrono::milliseconds(2500)));
   EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index", "latest_token", 1,
-                                  std::chrono::milliseconds(800)));
+                                  std::chrono::milliseconds(2500)));
   EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index", "final_token", 1,
-                                  std::chrono::milliseconds(800)));
+                                  std::chrono::milliseconds(2500)));
 }
 
 TEST(FTIndex, deleteOneMatchedLabelKeepsDocumentIndexed) {

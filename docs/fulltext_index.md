@@ -38,7 +38,7 @@ CREATE (nilsE:Employee {name: "Nils-Erik Karlsson", position: "Engineer", team: 
 (lisa)-[:REVIEWED {message: "Nils-Erik is reportedly difficult to work with."}]->(nilsE),
 (maya)-[:EMAILED {message: "I have booked a team meeting tomorrow."}]->(nils);
 
-#这里手动触发了一次回放全文索引的wal，该操作可选。默认系统会在事务提交后立即触发回放，同时保留后台周期检查作为兜底。
+#这里手动触发了一次回放全文索引的wal，该操作可选。默认系统只会由后台定时任务回放，默认每隔1秒ApplyWAL一次。
 CALL db.index.fulltext.applyWal();
 
 #全文搜索
