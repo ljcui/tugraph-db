@@ -462,8 +462,16 @@ void VertexFullTextIndex::StartTimer() {
       }
       active_callbacks_++;
     }
-    ApplyWAL();
     bool restart = false;
+    try {
+      ApplyWAL();
+    } catch (const std::exception& ex) {
+      LOG_ERROR("fulltext index [{}] apply WAL failed: {}", meta_.name(),
+                ex.what());
+    } catch (...) {
+      LOG_ERROR("fulltext index [{}] apply WAL failed with unknown error",
+                meta_.name());
+    }
     {
       std::lock_guard<std::mutex> lock(timer_mutex_);
       active_callbacks_--;

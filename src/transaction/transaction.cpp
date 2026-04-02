@@ -452,6 +452,11 @@ void Transaction::Commit() {
     if (!pending_fulltext_wals_.empty() || !pending_vector_wals_.empty()) {
       auto* write_batch = txn_->GetWriteBatch();
       for (const auto& wal : pending_fulltext_wals_) {
+        if (wal.index->IsDeleted()) {
+          THROW_CODE(FullTextIndexNotFound,
+                     "Fulltext index [{}] was deleted during transaction",
+                     wal.index->Name());
+        }
         auto s = write_batch->Put(db_->graph_cf().wal, wal.index->NextWALKey(),
                                   wal.update.SerializeAsString());
         if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());

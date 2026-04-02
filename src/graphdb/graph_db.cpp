@@ -307,6 +307,7 @@ void GraphDB::AddVertexFullTextIndex(
 
 void GraphDB::DeleteVertexFullTextIndex(const std::string& index_name) {
   std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
+  std::lock_guard<std::mutex> commit_lock(fulltext_index_commit_mutex_);
   if (!meta_info_.GetVertexFullTextIndex(index_name)) {
     THROW_CODE(FullTextIndexNotFound, "No such vertex fulltext index [{}]",
                index_name);
@@ -314,6 +315,7 @@ void GraphDB::DeleteVertexFullTextIndex(const std::string& index_name) {
   auto ft_index = meta_info_.GetVertexFullTextIndex(index_name);
   std::string path = ft_index->meta().path();
   uint32_t index_id = ft_index->index_id();
+  ft_index->MarkDeleted();
   ft_index->Stop();
   meta_info_.DeleteVertexFullTextIndex(index_name);
 

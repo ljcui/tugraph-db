@@ -19,6 +19,7 @@
 #pragma once
 #include <rocksdb/utilities/transaction_db.h>
 
+#include <atomic>
 #include <boost/asio.hpp>
 #include <chrono>
 #include <condition_variable>
@@ -118,6 +119,8 @@ class VertexFullTextIndex
   [[nodiscard]] const std::string& Name() const { return meta_.name(); }
   const meta::VertexFullTextIndex& meta() const { return meta_; }
   uint32_t index_id() const { return index_id_; }
+  [[nodiscard]] bool IsDeleted() const { return deleted_.load(); }
+  void MarkDeleted() { deleted_.store(true); }
   void Load();
   std::string IndexKey(int64_t vid);
   std::string NextWALKey();
@@ -154,6 +157,7 @@ class VertexFullTextIndex
   size_t active_callbacks_ = 0;
   bool started_ = false;
   bool stopped_ = false;
+  std::atomic<bool> deleted_{false};
   size_t interval_ = 1;
   boost::asio::steady_timer timer_;
 };

@@ -60,3 +60,25 @@ TEST(Cypher, create_redefine_local_alias_should_fail) {
       txn->Execute(&rtx, "create(n:test {id:1}) create(n:test {id:2})"),
       InputError, "already defined");
 }
+
+TEST(Cypher, fulltext_query_rejects_non_positive_top_n) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, {});
+  graphDB->AddVertexFullTextIndex("ft_index", {"test"}, {"name"});
+  cypher::RTContext rtx;
+
+  auto txn = graphDB->BeginTransaction();
+  EXPECT_THROW_CODE_MSG(
+      txn->Execute(
+          &rtx,
+          "CALL db.index.fulltext.queryNodes('ft_index', 'alice', 0) "
+          "YIELD node RETURN node"),
+      ReminderException, "top_n should be greater than 0");
+  EXPECT_THROW_CODE_MSG(
+      txn->Execute(
+          &rtx,
+          "CALL db.index.fulltext.queryNodes('ft_index', 'alice', -1) "
+          "YIELD node RETURN node"),
+      ReminderException, "top_n should be greater than 0");
+  txn->Rollback();
+}

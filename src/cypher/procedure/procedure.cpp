@@ -712,6 +712,7 @@ void BuiltinProcedure::DbIndexFullTextQueryNodes(
   auto index_name = args[0].constant.AsString();
   auto query = args[1].constant.AsString();
   auto top_n = args[2].constant.AsInteger();
+  CYPHER_ARG_CHECK(top_n > 0, "top_n should be greater than 0")
   for (auto viter = ctx->txn_->QueryVertexByFTIndex(index_name, query, top_n);
        viter->Valid(); viter->Next()) {
     std::vector<ProcedureResult> r;

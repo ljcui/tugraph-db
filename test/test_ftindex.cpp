@@ -23,6 +23,7 @@
 #include <thread>
 #include <vector>
 
+#include "common/byte_utils.h"
 #include "common/logger.h"
 #include "common/value.h"
 #include "graphdb/ftindex/include/lib.rs.h"
@@ -30,6 +31,7 @@
 #include "test_util.h"
 #include "transaction/transaction.h"
 using namespace graphdb;
+using common::AsChars;
 namespace fs = std::filesystem;
 static std::string testdb = "testdb";
 static std::string test_ftindex = "test_ftindex";
@@ -74,6 +76,21 @@ bool WaitUntilQueryCount(
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
+}
+
+size_t CountKeysWithPrefix(GraphDB* graph_db, rocksdb::ColumnFamilyHandle* cf,
+                           const std::string& prefix) {
+  auto txn = graph_db->BeginTransaction();
+  rocksdb::ReadOptions ro;
+  size_t count = 0;
+  std::unique_ptr<rocksdb::Iterator> iter(txn->dbtxn()->GetIterator(ro, cf));
+  for (iter->Seek(prefix); iter->Valid() && iter->key().starts_with(prefix);
+       iter->Next()) {
+    count++;
+  }
+  iter.reset();
+  txn->Rollback();
+  return count;
 }
 
 }  // namespace
@@ -341,6 +358,74 @@ TEST(FTIndex, corruptedWalIsRejected) {
   txn->Commit();
 
   EXPECT_THROW_CODE(index->ApplyWAL(), StorageEngineError);
+}
+
+TEST(FTIndex, periodicTimerSurvivesWalApplyFailure) {
+  fs::remove_all(testdb);
+  GraphDBOptions options;
+  options.ft_apply_interval_ = 1;
+  auto graphDB = GraphDB::Open(testdb, options);
+  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+
+  auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
+  ASSERT_TRUE(index != nullptr);
+
+  std::string bad_wal_key = index->NextWALKey();
+  auto txn = graphDB->BeginTransaction();
+  auto s = txn->dbtxn()->GetWriteBatch()->Put(graphDB->graph_cf().wal,
+                                              bad_wal_key, "bad_wal");
+  ASSERT_TRUE(s.ok());
+  txn->Commit();
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+  txn = graphDB->BeginTransaction();
+  s = txn->dbtxn()->GetWriteBatch()->Delete(graphDB->graph_cf().wal,
+                                            bad_wal_key);
+  ASSERT_TRUE(s.ok());
+  txn->Commit();
+
+  txn = graphDB->BeginTransaction();
+  txn->CreateVertex({"label1"},
+                    {{"id", Value::Integer(1)},
+                     {"str", Value::String("timer_survives_bad_wal")}});
+  txn->Commit();
+
+  EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
+                                  "timer_survives_bad_wal", 1,
+                                  std::chrono::milliseconds(2500)));
+}
+
+TEST(FTIndex, deleteIndexRejectsPendingTransactionCommit) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, {});
+  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+
+  auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
+  ASSERT_TRUE(index != nullptr);
+  std::string prefix(AsChars(index->index_id()), sizeof(index->index_id()));
+
+  auto txn = graphDB->BeginTransaction();
+  txn->CreateVertex({"label1"},
+                    {{"id", Value::Integer(1)},
+                     {"str", Value::String("should_not_commit")}});
+
+  graphDB->DeleteVertexFullTextIndex("ft_index");
+
+  EXPECT_THROW_CODE_MSG(txn->Commit(), FullTextIndexNotFound,
+                        "was deleted during transaction");
+  txn->Rollback();
+
+  auto read_txn = graphDB->BeginTransaction();
+  auto viter = read_txn->NewVertexIterator(
+      "label1", std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
+  EXPECT_FALSE(viter->Valid());
+  read_txn->Rollback();
+
+  EXPECT_EQ(CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().index, prefix),
+            0);
+  EXPECT_EQ(CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().wal, prefix),
+            0);
 }
 
 TEST(FTIndex, rollbackDoesNotBreakWalApply) {
