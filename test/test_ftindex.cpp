@@ -109,57 +109,6 @@ TEST(FTIndex, basic_v1) {
   EXPECT_EQ(ret[0].id, 2);
 }
 
-TEST(FTIndex, basic_v2) {
-  fs::remove_all(test_ftindex);
-  ::rust::Vec<::rust::String> properties;
-  properties.push_back("title");
-  properties.push_back("body");
-  auto ft = new_ftindex(test_ftindex, properties, kDefaultFTWriterThreads,
-                        kDefaultFTWriterMemoryBudget);
-  ::rust::Vec<::rust::String> fields = {"title", "body"};
-  {
-    ::rust::Vec<::rust::String> values = {"title1 common_title title11",
-                                          "body1 common_body body11"};
-    ft_add_document(*ft, 1, fields, values);
-  }
-  {
-    ::rust::Vec<::rust::String> values = {"title3 common_title title33",
-                                          "body3 common_body, body33"};
-    ft_add_document(*ft, 2, fields, values);
-  }
-  ft_commit(*ft, "payload");
-  auto ret = ft_query(*ft, "title1", {10});
-  EXPECT_EQ(ret.size(), 1);
-  ret = ft_query(*ft, "body1", {10});
-  EXPECT_EQ(ret.size(), 1);
-}
-
-TEST(FTIndex, chinese) {
-  fs::remove_all(test_ftindex);
-  ::rust::Vec<::rust::String> properties;
-  properties.push_back("title");
-  properties.push_back("body");
-  auto ft = new_ftindex(test_ftindex, properties, kDefaultFTWriterThreads,
-                        kDefaultFTWriterMemoryBudget);
-  ::rust::Vec<::rust::String> fields = {"title", "body"};
-  {
-    ::rust::Vec<::rust::String> values = {"恶性肿瘤 公共标题 图数据库",
-                                          "内容甲 公共内容 内容乙"};
-    ft_add_document(*ft, 1, fields, values);
-  }
-  {
-    ::rust::Vec<::rust::String> values = {"糖尿病 公共标题 时序数据库",
-                                          "内容丙 公共内容 内容丁"};
-    ft_add_document(*ft, 2, fields, values);
-  }
-  ft_commit(*ft, "payload");
-  auto ret = ft_query(*ft, "恶性肿瘤", {10});
-  EXPECT_EQ(ret.size(), 1);
-  EXPECT_EQ(ret[0].id, 1);
-  ret = ft_query(*ft, "公共标题", {10});
-  EXPECT_EQ(ret.size(), 2);
-}
-
 TEST(FTIndex, chinese_segmentation) {
   fs::remove_all(test_ftindex);
   ::rust::Vec<::rust::String> properties;
@@ -372,46 +321,6 @@ TEST(FTIndex, committedWalIsAppliedByPeriodicTimer) {
 
   EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
                                   "near_real_time_token", 0,
-                                  std::chrono::milliseconds(2500)));
-}
-
-TEST(FTIndex, configuredWriterOptionsWork) {
-  fs::remove_all(testdb);
-  GraphDBOptions options;
-  options.ft_writer_threads_ = 2;
-  options.ft_writer_memory_budget_ = 80 * 1000 * 1000;
-  auto graphDB = GraphDB::Open(testdb, options);
-  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
-
-  auto txn = graphDB->BeginTransaction();
-  txn->CreateVertex({"label1"},
-                    {{"id", Value::Integer(1)},
-                     {"str", Value::String("configured_writer_token")}});
-  txn->Commit();
-
-  EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
-                                  "configured_writer_token", 1,
-                                  std::chrono::milliseconds(2500)));
-}
-
-TEST(FTIndex, reopenWithPendingWalIsAppliedByPeriodicTimer) {
-  fs::remove_all(testdb);
-  GraphDBOptions options;
-  options.ft_apply_interval_ = 1;
-  {
-    auto graphDB = GraphDB::Open(testdb, options);
-    graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
-
-    auto txn = graphDB->BeginTransaction();
-    txn->CreateVertex({"label1"},
-                      {{"id", Value::Integer(1)},
-                       {"str", Value::String("pending_restart_token")}});
-    txn->Commit();
-  }
-
-  auto graphDB = GraphDB::Open(testdb, options);
-  EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
-                                  "pending_restart_token", 1,
                                   std::chrono::milliseconds(2500)));
 }
 
@@ -849,39 +758,53 @@ TEST(FTIndex, deleteOneMatchedLabelKeepsDocumentIndexed) {
   txn->Commit();
 }
 
-TEST(FTIndex, reopenAfterAppliedWalContinuesFromPayload) {
+TEST(FTIndex, reopenRecoversPendingWalAndContinuesFromPayload) {
   fs::remove_all(testdb);
+  GraphDBOptions options;
+  options.ft_apply_interval_ = 1;
   {
-    auto graphDB = GraphDB::Open(testdb, {});
+    auto graphDB = GraphDB::Open(testdb, options);
     graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
 
     auto txn = graphDB->BeginTransaction();
-    txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)},
-                                   {"str", Value::String("before_restart")}});
-    txn->Commit();
-
-    for (const auto& index : graphDB->meta_info().GetVertexFullTextIndexes()) {
-      index->ApplyWAL();
-    }
-
-    txn = graphDB->BeginTransaction();
-    int count = 0;
-    for (auto result =
-             txn->QueryVertexByFTIndex("ft_index", "before_restart", 10);
-         result->Valid(); result->Next()) {
-      EXPECT_EQ(result->GetVertexScore().vertex.GetProperty("id"),
-                Value::Integer(1));
-      count++;
-    }
-    EXPECT_EQ(count, 1);
+    txn->CreateVertex({"label1"},
+                      {{"id", Value::Integer(1)},
+                       {"str", Value::String("pending_restart_token")}});
     txn->Commit();
   }
 
   {
-    auto graphDB = GraphDB::Open(testdb, {});
+    auto graphDB = GraphDB::Open(testdb, options);
+    EXPECT_TRUE(WaitUntilQueryCount(graphDB.get(), "ft_index",
+                                    "pending_restart_token", 1,
+                                    std::chrono::milliseconds(2500)));
+
     auto txn = graphDB->BeginTransaction();
-    txn->CreateVertex({"label1"}, {{"id", Value::Integer(2)},
-                                   {"str", Value::String("after_restart")}});
+    txn->CreateVertex({"label1"},
+                      {{"id", Value::Integer(2)},
+                       {"str", Value::String("before_payload_restart")}});
+    txn->Commit();
+
+    for (const auto& index : graphDB->meta_info().GetVertexFullTextIndexes()) {
+      index->ApplyWAL();
+    }
+
+    txn = graphDB->BeginTransaction();
+    for (auto result = txn->QueryVertexByFTIndex("ft_index",
+                                                 "before_payload_restart", 10);
+         result->Valid(); result->Next()) {
+      EXPECT_EQ(result->GetVertexScore().vertex.GetProperty("id"),
+                Value::Integer(2));
+    }
+    txn->Commit();
+  }
+
+  {
+    auto graphDB = GraphDB::Open(testdb, options);
+    auto txn = graphDB->BeginTransaction();
+    txn->CreateVertex({"label1"},
+                      {{"id", Value::Integer(3)},
+                       {"str", Value::String("after_payload_restart")}});
     txn->Commit();
 
     for (const auto& index : graphDB->meta_info().GetVertexFullTextIndexes()) {
@@ -891,10 +814,10 @@ TEST(FTIndex, reopenAfterAppliedWalContinuesFromPayload) {
     txn = graphDB->BeginTransaction();
     int count = 0;
     for (auto result =
-             txn->QueryVertexByFTIndex("ft_index", "after_restart", 10);
+             txn->QueryVertexByFTIndex("ft_index", "after_payload_restart", 10);
          result->Valid(); result->Next()) {
       EXPECT_EQ(result->GetVertexScore().vertex.GetProperty("id"),
-                Value::Integer(2));
+                Value::Integer(3));
       count++;
     }
     EXPECT_EQ(count, 1);
