@@ -28,6 +28,52 @@ namespace fs = std::filesystem;
 using namespace boost::endian;
 using common::AsChars;
 namespace graphdb {
+namespace {
+
+std::string BuildFullTextIndexPath(const std::string& graph_path,
+                                   const std::string& index_name,
+                                   uint32_t index_id) {
+  return graph_path + "/ft/" + index_name + "_" +
+         std::to_string(big_to_native(index_id));
+}
+
+void DeleteFullTextIndexRanges(rocksdb::TransactionDB* db, GraphCF* graph_cf,
+                               uint32_t index_id) {
+  std::string start_key(AsChars(index_id), sizeof(index_id));
+  start_key.append(sizeof(int64_t), static_cast<char>(0x00));
+  std::string end_key(AsChars(index_id), sizeof(index_id));
+  end_key.append(sizeof(int64_t), static_cast<char>(0xff));
+
+  rocksdb::WriteBatch wb;
+  wb.DeleteRange(graph_cf->index, start_key, end_key);
+  wb.DeleteRange(graph_cf->wal, start_key, end_key);
+
+  rocksdb::WriteOptions wo;
+  rocksdb::TransactionDBWriteOptimizations two;
+  two.skip_concurrency_control = true;
+  two.skip_duplicate_key_check = true;
+  auto s = db->Write(wo, two, &wb);
+  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+}
+
+void ResetFullTextIndexPath(const std::string& path) {
+  std::error_code ec;
+  fs::remove_all(path, ec);
+  if (ec) {
+    THROW_CODE(StorageEngineError,
+               "failed to remove stale fulltext index directory {}: {}", path,
+               ec.message());
+  }
+  fs::create_directories(path, ec);
+  if (ec) {
+    THROW_CODE(StorageEngineError,
+               "failed to create fulltext index directory {}: {}", path,
+               ec.message());
+  }
+}
+
+}  // namespace
+
 std::unique_ptr<GraphDB> GraphDB::Open(const std::string& path,
                                        const GraphDBOptions& graph_options) {
   std::string rocksdb_path = path + "/data";
@@ -262,8 +308,6 @@ void GraphDB::AddVertexFullTextIndex(
     THROW_CODE(VertexFullTextIndexAlreadyExist,
                "Vertex fulltext index [{}] already exists", index_name);
   }
-  std::string ft_index_pth = path_ + "/ft/" + index_name;
-  std::filesystem::create_directories(ft_index_pth);
   std::unordered_set<uint32_t> lids, native_lids;
   std::unordered_set<uint32_t> pids, native_pids;
   for (const auto& label : labels) {
@@ -277,6 +321,10 @@ void GraphDB::AddVertexFullTextIndex(
     native_pids.insert(big_to_native(pid));
   }
   uint32_t index_id = id_generator().GetNextIndexId();
+  std::string ft_index_pth =
+      BuildFullTextIndexPath(path_, index_name, index_id);
+  DeleteFullTextIndexRanges(db_, &graph_cf_, index_id);
+  ResetFullTextIndexPath(ft_index_pth);
   // write meta info
   std::string meta_key;
   meta_key.append(1, static_cast<char>(MetaDataType::VertexFullTextIndex));

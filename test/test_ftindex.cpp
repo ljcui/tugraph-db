@@ -28,6 +28,7 @@
 #include "common/value.h"
 #include "graphdb/ftindex/include/lib.rs.h"
 #include "graphdb/graph_db.h"
+#include "proto/meta.pb.h"
 #include "test_util.h"
 #include "transaction/transaction.h"
 using namespace graphdb;
@@ -406,9 +407,8 @@ TEST(FTIndex, deleteIndexRejectsPendingTransactionCommit) {
   std::string prefix(AsChars(index->index_id()), sizeof(index->index_id()));
 
   auto txn = graphDB->BeginTransaction();
-  txn->CreateVertex({"label1"},
-                    {{"id", Value::Integer(1)},
-                     {"str", Value::String("should_not_commit")}});
+  txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)},
+                                 {"str", Value::String("should_not_commit")}});
 
   graphDB->DeleteVertexFullTextIndex("ft_index");
 
@@ -418,12 +418,13 @@ TEST(FTIndex, deleteIndexRejectsPendingTransactionCommit) {
 
   auto read_txn = graphDB->BeginTransaction();
   auto viter = read_txn->NewVertexIterator(
-      "label1", std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
+      "label1",
+      std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
   EXPECT_FALSE(viter->Valid());
   read_txn->Rollback();
 
-  EXPECT_EQ(CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().index, prefix),
-            0);
+  EXPECT_EQ(
+      CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().index, prefix), 0);
   EXPECT_EQ(CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().wal, prefix),
             0);
 }
@@ -908,4 +909,87 @@ TEST(FTIndex, reopenRecoversPendingWalAndContinuesFromPayload) {
     EXPECT_EQ(count, 1);
     txn->Commit();
   }
+}
+
+TEST(FTIndex, createIndexClearsStaleArtifactsFromPreviousFailedBuild) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, {});
+
+  std::string stale_path = testdb + "/ft/ft_index_1";
+  ::rust::Vec<::rust::String> properties = {"str"};
+  auto stale_ft = new_ftindex(stale_path, properties, kDefaultFTWriterThreads,
+                              kDefaultFTWriterMemoryBudget);
+  ::rust::Vec<::rust::String> fields = {"str"};
+  ::rust::Vec<::rust::String> values = {"stale_from_directory"};
+  ft_add_document(*stale_ft, 777, fields, values);
+  ft_commit(*stale_ft, "0");
+
+  uint32_t stale_index_id =
+      boost::endian::native_to_big(static_cast<uint32_t>(1));
+  int64_t stale_vid = boost::endian::native_to_big(static_cast<int64_t>(888));
+
+  std::string stale_index_key(AsChars(stale_index_id), sizeof(stale_index_id));
+  stale_index_key.append(AsChars(stale_vid), sizeof(stale_vid));
+
+  uint64_t stale_wal_id =
+      boost::endian::native_to_big(static_cast<uint64_t>(1));
+  std::string stale_wal_key(AsChars(stale_index_id), sizeof(stale_index_id));
+  stale_wal_key.append(AsChars(stale_wal_id), sizeof(stale_wal_id));
+
+  meta::FullTextIndexUpdate stale_update;
+  stale_update.set_type(meta::UpdateType::Add);
+  stale_update.set_vid(stale_vid);
+  stale_update.add_fields("str");
+  stale_update.add_values("stale_from_wal");
+
+  auto txn = graphDB->BeginTransaction();
+  auto s = txn->dbtxn()->GetWriteBatch()->Put(graphDB->graph_cf().index,
+                                              stale_index_key, {});
+  ASSERT_TRUE(s.ok());
+  s = txn->dbtxn()->GetWriteBatch()->Put(graphDB->graph_cf().wal, stale_wal_key,
+                                         stale_update.SerializeAsString());
+  ASSERT_TRUE(s.ok());
+  txn->Commit();
+
+  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+
+  txn = graphDB->BeginTransaction();
+  txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)},
+                                 {"str", Value::String("fresh_token")}});
+  txn->Commit();
+
+  auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
+  ASSERT_TRUE(index != nullptr);
+  index->ApplyWAL();
+
+  std::string prefix(AsChars(index->index_id()), sizeof(index->index_id()));
+  EXPECT_EQ(
+      CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().index, prefix), 1);
+
+  txn = graphDB->BeginTransaction();
+  int stale_dir_count = 0;
+  for (auto result =
+           txn->QueryVertexByFTIndex("ft_index", "stale_from_directory", 10);
+       result->Valid(); result->Next()) {
+    stale_dir_count++;
+  }
+  EXPECT_EQ(stale_dir_count, 0);
+
+  int stale_wal_count = 0;
+  for (auto result =
+           txn->QueryVertexByFTIndex("ft_index", "stale_from_wal", 10);
+       result->Valid(); result->Next()) {
+    stale_wal_count++;
+  }
+  EXPECT_EQ(stale_wal_count, 0);
+
+  int fresh_count = 0;
+  for (auto result = txn->QueryVertexByFTIndex("ft_index", "fresh_token", 10);
+       result->Valid(); result->Next()) {
+    EXPECT_EQ(result->GetVertexScore().vertex.GetProperty("id"),
+              Value::Integer(1));
+    fresh_count++;
+  }
+  EXPECT_EQ(fresh_count, 1);
+  txn->Commit();
 }
