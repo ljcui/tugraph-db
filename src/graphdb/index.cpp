@@ -520,6 +520,29 @@ void VertexFullTextIndex::Stop() {
   timer_cv_.wait(lock, [this] { return active_callbacks_ == 0; });
 }
 
+void VertexFullTextIndex::ResetForClear() {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    deleted_.store(false);
+    apply_id_ = 0;
+    next_wal_id_ = 1;
+    instance_.reset();
+    ::rust::Vec<::rust::String> fields;
+    for (const auto& prop : meta_.properties()) {
+      fields.push_back(prop);
+    }
+    instance_ = std::make_unique<::rust::Box<::FTIndex>>(new_ftindex(
+        meta_.path(), fields, writer_threads_, writer_memory_budget_));
+    ft_index_ = instance_->operator->();
+  }
+  {
+    std::lock_guard<std::mutex> lock(timer_mutex_);
+    active_callbacks_ = 0;
+    started_ = false;
+    stopped_ = false;
+  }
+}
+
 VertexFullTextIndex::VertexFullTextIndex(
     rocksdb::TransactionDB* db, boost::asio::io_service& service,
     GraphCF* graph_cf, IdGenerator* id_generator,
@@ -534,6 +557,8 @@ VertexFullTextIndex::VertexFullTextIndex(
       lids_(lids),
       pids_(pids),
       interval_(commit_interval),
+      writer_threads_(writer_threads),
+      writer_memory_budget_(writer_memory_budget),
       timer_(service) {
   ::rust::Vec<::rust::String> fields;
   for (auto& prop : meta_.properties()) {
@@ -993,6 +1018,27 @@ void VertexVectorIndex::Stop() {
 
   std::unique_lock<std::mutex> lock(timer_mutex_);
   timer_cv_.wait(lock, [this] { return active_callbacks_ == 0; });
+}
+
+void VertexVectorIndex::ResetForClear() {
+  std::lock_guard<std::mutex> apply_lock(apply_mutex_);
+  {
+    std::unique_lock<std::shared_mutex> write(mutex_);
+    hnsw_index_ = std::make_unique<FaissHnswIndex>(
+        meta_.dimensions(), meta_.distance_type(), meta_.hnsw_m(),
+        meta_.hnsw_ef_construction());
+    next_vector_id_ = 1;
+    next_wal_id_ = 1;
+    apply_id_ = 0;
+    deleted_vector_ids_.clear();
+    vectorid_vid_.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(timer_mutex_);
+    active_callbacks_ = 0;
+    started_ = false;
+    stopped_ = false;
+  }
 }
 
 int64_t VertexVectorIndex::NumElements() {

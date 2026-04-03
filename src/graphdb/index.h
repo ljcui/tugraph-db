@@ -129,6 +129,7 @@ class VertexFullTextIndex
                 const meta::FullTextIndexUpdate& wal);
   void DeleteIndex(txn::Transaction* txn, int64_t vid,
                    const meta::FullTextIndexUpdate& wal);
+  void ResetForClear();
 
  private:
   void StartTimer();
@@ -159,6 +160,8 @@ class VertexFullTextIndex
   bool stopped_ = false;
   std::atomic<bool> deleted_{false};
   size_t interval_ = 1;
+  size_t writer_threads_ = 1;
+  size_t writer_memory_budget_ = 0;
   boost::asio::steady_timer timer_;
 };
 
@@ -271,6 +274,7 @@ class VertexVectorIndex
   void AddIndex(txn::Transaction* txn, int64_t vid,
                 meta::VectorIndexUpdate& wal);
   void ApplyWAL();
+  void ResetForClear();
 
  private:
   void StartTimer();

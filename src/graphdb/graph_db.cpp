@@ -72,6 +72,39 @@ void ResetFullTextIndexPath(const std::string& path) {
   }
 }
 
+void ResetIndexPath(const std::string& path, const std::string& kind) {
+  std::error_code ec;
+  fs::remove_all(path, ec);
+  if (ec) {
+    THROW_CODE(StorageEngineError, "failed to remove stale {} directory {}: {}",
+               kind, path, ec.message());
+  }
+  fs::create_directories(path, ec);
+  if (ec) {
+    THROW_CODE(StorageEngineError, "failed to create {} directory {}: {}", kind,
+               path, ec.message());
+  }
+}
+
+void DeleteAllEntriesInColumnFamily(rocksdb::TransactionDB* db,
+                                    rocksdb::ColumnFamilyHandle* cf,
+                                    rocksdb::WriteBatch* wb) {
+  rocksdb::ReadOptions ro;
+  std::unique_ptr<rocksdb::Iterator> iter(db->NewIterator(ro, cf));
+  iter->SeekToFirst();
+  if (!iter->Valid()) {
+    return;
+  }
+  std::string begin = iter->key().ToString();
+  iter->SeekToLast();
+  if (!iter->Valid()) {
+    return;
+  }
+  std::string end = iter->key().ToString();
+  end.push_back('\0');
+  wb->DeleteRange(cf, begin, end);
+}
+
 }  // namespace
 
 std::unique_ptr<GraphDB> GraphDB::Open(const std::string& path,
@@ -189,6 +222,53 @@ std::unique_ptr<txn::Transaction> GraphDB::BeginTransaction() {
   rocksdb::TransactionOptions to;
   rocksdb::Transaction* txn = db_->BeginTransaction(wo, to);
   return std::make_unique<txn::Transaction>(txn, this);
+}
+
+void GraphDB::ClearData() {
+  std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
+  std::unique_lock<std::mutex> fulltext_commit_lock(
+      fulltext_index_commit_mutex_, std::defer_lock);
+  std::unique_lock<std::mutex> vector_commit_lock(vector_index_commit_mutex_,
+                                                  std::defer_lock);
+  std::lock(fulltext_commit_lock, vector_commit_lock);
+
+  auto ft_indexes = meta_info_.GetVertexFullTextIndexes();
+  auto vector_indexes = meta_info_.GetVertexVectorIndexes();
+
+  for (const auto& index : ft_indexes) {
+    index->Stop();
+  }
+  for (const auto& index : vector_indexes) {
+    index->Stop();
+  }
+
+  rocksdb::WriteBatch wb;
+  DeleteAllEntriesInColumnFamily(db_, graph_cf_.graph_topology, &wb);
+  DeleteAllEntriesInColumnFamily(db_, graph_cf_.vertex_property, &wb);
+  DeleteAllEntriesInColumnFamily(db_, graph_cf_.edge_property, &wb);
+  DeleteAllEntriesInColumnFamily(db_, graph_cf_.vertex_label_vid, &wb);
+  DeleteAllEntriesInColumnFamily(db_, graph_cf_.edge_type_eid, &wb);
+  DeleteAllEntriesInColumnFamily(db_, graph_cf_.index, &wb);
+  DeleteAllEntriesInColumnFamily(db_, graph_cf_.wal, &wb);
+
+  rocksdb::WriteOptions wo;
+  rocksdb::TransactionDBWriteOptimizations two;
+  two.skip_concurrency_control = true;
+  two.skip_duplicate_key_check = true;
+  auto s = db_->Write(wo, two, &wb);
+  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+
+  for (const auto& index : ft_indexes) {
+    ResetFullTextIndexPath(index->meta().path());
+    index->ResetForClear();
+    index->Start();
+  }
+  for (const auto& index : vector_indexes) {
+    ResetIndexPath(index->meta().path(), "vector index");
+    index->ResetForClear();
+    index->Start();
+  }
+  busy_index_.Clear();
 }
 
 void GraphDB::AddVertexPropertyIndex(
