@@ -95,24 +95,6 @@ class Transaction {
   std::shared_ptr<bolt::BoltConnection>& conn() { return conn_; }
 
  private:
-  struct PendingFullTextWALKey {
-    graphdb::VertexFullTextIndex* index = nullptr;
-    int64_t vid = 0;
-
-    bool operator==(const PendingFullTextWALKey& other) const {
-      return index == other.index && vid == other.vid;
-    }
-  };
-
-  struct PendingFullTextWALKeyHash {
-    size_t operator()(const PendingFullTextWALKey& key) const {
-      size_t hash = std::hash<graphdb::VertexFullTextIndex*>{}(key.index);
-      hash ^= std::hash<int64_t>{}(key.vid) + 0x9e3779b9 + (hash << 6) +
-              (hash >> 2);
-      return hash;
-    }
-  };
-
   struct PendingFullTextWAL {
     std::shared_ptr<graphdb::VertexFullTextIndex> index;
     meta::FullTextIndexUpdate update;
@@ -127,8 +109,6 @@ class Transaction {
   graphdb::GraphDB* db_;
   std::shared_ptr<bolt::BoltConnection> conn_;
   std::vector<PendingFullTextWAL> pending_fulltext_wals_;
-  std::unordered_map<PendingFullTextWALKey, size_t, PendingFullTextWALKeyHash>
-      pending_fulltext_wal_positions_;
   std::vector<PendingVectorWAL> pending_vector_wals_;
 };
 

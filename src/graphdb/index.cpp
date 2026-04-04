@@ -776,11 +776,14 @@ void VertexFullTextIndex::ApplyWAL() {
                  "failed to parse fulltext index wal payload");
     }
     if (update.type() == meta::UpdateType::Add) {
-      batch.AddDelete(update.vid());
       batch.AddDocument(update.vid(), update.mutable_fields(),
                         update.mutable_values());
-    } else {
+    } else if (update.type() == meta::UpdateType::Delete) {
       batch.AddDelete(update.vid());
+    } else {
+      THROW_CODE(StorageEngineError,
+                 "fulltext index wal has invalid update type: {}",
+                 static_cast<int>(update.type()));
     }
     if (++count == 1000) {
       ApplyUpdatesBatch(batch.ids, batch.ops, batch.field_counts, batch.fields,

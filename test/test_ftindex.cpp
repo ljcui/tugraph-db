@@ -94,6 +94,26 @@ size_t CountKeysWithPrefix(GraphDB* graph_db, rocksdb::ColumnFamilyHandle* cf,
   return count;
 }
 
+std::vector<meta::FullTextIndexUpdate> ReadFullTextWalUpdates(
+    GraphDB* graph_db, const std::shared_ptr<VertexFullTextIndex>& index) {
+  auto txn = graph_db->BeginTransaction();
+  rocksdb::ReadOptions ro;
+  std::string prefix(AsChars(index->index_id()), sizeof(index->index_id()));
+  std::vector<meta::FullTextIndexUpdate> updates;
+  std::unique_ptr<rocksdb::Iterator> iter(
+      txn->dbtxn()->GetIterator(ro, graph_db->graph_cf().wal));
+  for (iter->Seek(prefix); iter->Valid() && iter->key().starts_with(prefix);
+       iter->Next()) {
+    meta::FullTextIndexUpdate update;
+    auto val = iter->value();
+    EXPECT_TRUE(update.ParseFromArray(val.data(), val.size()));
+    updates.emplace_back(std::move(update));
+  }
+  iter.reset();
+  txn->Rollback();
+  return updates;
+}
+
 }  // namespace
 
 TEST(FTIndex, basic_v1) {
@@ -466,6 +486,89 @@ TEST(FTIndex, rollbackDoesNotBreakWalApply) {
   }
   EXPECT_EQ(ids, (std::set<int64_t>{1, 3}));
   txn->Commit();
+}
+
+TEST(FTIndex, createVertexWritesSingleAddWal) {
+  fs::remove_all(testdb);
+  GraphDBOptions options;
+  options.ft_apply_interval_ = 3600;
+  auto graphDB = GraphDB::Open(testdb, options);
+  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+
+  auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
+  ASSERT_TRUE(index != nullptr);
+
+  auto txn = graphDB->BeginTransaction();
+  txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)},
+                                 {"str", Value::String("written_once")}});
+  txn->Commit();
+
+  auto updates = ReadFullTextWalUpdates(graphDB.get(), index);
+  ASSERT_EQ(updates.size(), 1);
+  EXPECT_EQ(updates[0].type(), meta::UpdateType::Add);
+  ASSERT_EQ(updates[0].fields_size(), 1);
+  EXPECT_EQ(updates[0].fields(0), "str");
+  EXPECT_EQ(updates[0].values(0), "written_once");
+}
+
+TEST(FTIndex, createVertexAndRewriteInOneTransactionPreservesWalOrder) {
+  fs::remove_all(testdb);
+  GraphDBOptions options;
+  options.ft_apply_interval_ = 3600;
+  auto graphDB = GraphDB::Open(testdb, options);
+  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+
+  auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
+  ASSERT_TRUE(index != nullptr);
+
+  auto txn = graphDB->BeginTransaction();
+  auto vertex = txn->CreateVertex(
+      {"label1"},
+      {{"id", Value::Integer(1)}, {"str", Value::String("before_rewrite")}});
+  vertex.SetProperties({{"str", Value::String("after_rewrite")}});
+  txn->Commit();
+
+  auto updates = ReadFullTextWalUpdates(graphDB.get(), index);
+  ASSERT_EQ(updates.size(), 3);
+  EXPECT_EQ(updates[0].type(), meta::UpdateType::Add);
+  EXPECT_EQ(updates[1].type(), meta::UpdateType::Delete);
+  EXPECT_EQ(updates[2].type(), meta::UpdateType::Add);
+  ASSERT_EQ(updates[2].fields_size(), 1);
+  EXPECT_EQ(updates[2].fields(0), "str");
+  EXPECT_EQ(updates[2].values(0), "after_rewrite");
+}
+
+TEST(FTIndex, updatingIndexedVertexWritesDeleteThenAddWal) {
+  fs::remove_all(testdb);
+  GraphDBOptions options;
+  options.ft_apply_interval_ = 3600;
+  auto graphDB = GraphDB::Open(testdb, options);
+  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+
+  auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
+  ASSERT_TRUE(index != nullptr);
+
+  auto txn = graphDB->BeginTransaction();
+  txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)},
+                                 {"str", Value::String("before_update")}});
+  txn->Commit();
+  index->ApplyWAL();
+
+  txn = graphDB->BeginTransaction();
+  auto viter = txn->NewVertexIterator(
+      "label1",
+      std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
+  ASSERT_TRUE(viter->Valid());
+  viter->GetVertex().SetProperties({{"str", Value::String("after_update")}});
+  txn->Commit();
+
+  auto updates = ReadFullTextWalUpdates(graphDB.get(), index);
+  ASSERT_EQ(updates.size(), 2);
+  EXPECT_EQ(updates[0].type(), meta::UpdateType::Delete);
+  EXPECT_EQ(updates[1].type(), meta::UpdateType::Add);
+  ASSERT_EQ(updates[1].fields_size(), 1);
+  EXPECT_EQ(updates[1].fields(0), "str");
+  EXPECT_EQ(updates[1].values(0), "after_update");
 }
 
 TEST(FTIndex, outOfOrderCommitsApplyCleanly) {

@@ -427,14 +427,7 @@ std::unique_ptr<VertexIterator> Transaction::NewVertexIterator(
 void Transaction::AppendFullTextIndexWAL(
     std::shared_ptr<graphdb::VertexFullTextIndex> index,
     const meta::FullTextIndexUpdate& update) {
-  PendingFullTextWALKey key{index.get(), update.vid()};
-  auto it = pending_fulltext_wal_positions_.find(key);
-  if (it == pending_fulltext_wal_positions_.end()) {
-    pending_fulltext_wal_positions_.emplace(key, pending_fulltext_wals_.size());
-    pending_fulltext_wals_.push_back({std::move(index), update});
-    return;
-  }
-  pending_fulltext_wals_[it->second].update.CopyFrom(update);
+  pending_fulltext_wals_.push_back({std::move(index), update});
 }
 
 void Transaction::Commit() {
@@ -471,7 +464,6 @@ void Transaction::Commit() {
     auto s = txn_->Commit();
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
     pending_fulltext_wals_.clear();
-    pending_fulltext_wal_positions_.clear();
     pending_vector_wals_.clear();
   }
 }
@@ -480,7 +472,6 @@ void Transaction::Rollback() {
   auto s = txn_->Rollback();
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   pending_fulltext_wals_.clear();
-  pending_fulltext_wal_positions_.clear();
   pending_vector_wals_.clear();
 }
 
