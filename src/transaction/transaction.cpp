@@ -31,6 +31,7 @@
 #include "graphdb/graph_db.h"
 using namespace graphdb;
 using namespace boost::endian;
+using common::AsChars;
 
 namespace {
 
@@ -119,18 +120,18 @@ Vertex Transaction::CreateVertex(
     auto lid = db_->id_generator().GetOrCreateLid(label);
     lids.emplace(lid);
     buffer.clear();
-    buffer.append((const char*)&lid, sizeof(lid));
-    buffer.append((const char*)&vid, sizeof(vid));
+    buffer.append(AsChars(lid), sizeof(lid));
+    buffer.append(AsChars(vid), sizeof(vid));
     s = txn_->GetWriteBatch()->Put(db_->graph_cf().vertex_label_vid, buffer,
                                    {});
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   }
   buffer.clear();
   for (auto lid : lids) {
-    buffer.append((const char*)&lid, sizeof(lid));
+    buffer.append(AsChars(lid), sizeof(lid));
   }
   s = txn_->GetWriteBatch()->Put(db_->graph_cf().graph_topology,
-                                 rocksdb::Slice((const char*)&vid, sizeof(vid)),
+                                 rocksdb::Slice(AsChars(vid), sizeof(vid)),
                                  buffer);
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   std::unordered_map<uint32_t, const Value*> pid_values;
@@ -161,8 +162,8 @@ Vertex Transaction::CreateVertex(
   }
   for (const auto& [pid, val] : serialized_values) {
     buffer.clear();
-    buffer.append((const char*)&vid, sizeof(vid));
-    buffer.append((const char*)&pid, sizeof(pid));
+    buffer.append(AsChars(vid), sizeof(vid));
+    buffer.append(AsChars(pid), sizeof(pid));
     s = txn_->GetWriteBatch()->Put(db_->graph_cf().vertex_property, buffer,
                                    val);
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
@@ -240,24 +241,24 @@ Edge Transaction::CreateEdge(
   // out key
   key.append(start.GetIdView());
   key.append(1, 0);
-  key.append((const char*)&tid, sizeof(tid));
+  key.append(AsChars(tid), sizeof(tid));
   key.append(end.GetIdView());
-  key.append((const char*)&eid, sizeof(eid));
+  key.append(AsChars(eid), sizeof(eid));
   s = txn_->GetWriteBatch()->Put(db_->graph_cf().graph_topology, key, {});
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   // in key
   key.clear();
   key.append(end.GetIdView());
   key.append(1, 1);
-  key.append((const char*)&tid, sizeof(tid));
+  key.append(AsChars(tid), sizeof(tid));
   key.append(start.GetIdView());
-  key.append((const char*)&eid, sizeof(eid));
+  key.append(AsChars(eid), sizeof(eid));
   s = txn_->GetWriteBatch()->Put(db_->graph_cf().graph_topology, key, {});
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   // type
   key.clear();
-  key.append((const char*)&tid, sizeof(tid));
-  key.append((const char*)&eid, sizeof(eid));
+  key.append(AsChars(tid), sizeof(tid));
+  key.append(AsChars(eid), sizeof(eid));
   val.append(start.GetIdView());
   val.append(end.GetIdView());
   s = txn_->GetWriteBatch()->Put(db_->graph_cf().edge_type_eid, key, val);
@@ -266,8 +267,8 @@ Edge Transaction::CreateEdge(
   for (const auto& [name, value] : values) {
     uint32_t pid = db_->id_generator().GetOrCreatePid(name);
     key.clear();
-    key.append((const char*)&eid, sizeof(eid));
-    key.append((const char*)&pid, sizeof(pid));
+    key.append(AsChars(eid), sizeof(eid));
+    key.append(AsChars(pid), sizeof(pid));
     val = value.Serialize();
     s = txn_->GetWriteBatch()->Put(db_->graph_cf().edge_property, key, val);
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
@@ -279,7 +280,7 @@ Vertex Transaction::GetVertexById(int64_t vid) {
   rocksdb::ReadOptions ro;
   std::string val;
   auto s = txn_->Get(ro, db_->graph_cf().graph_topology,
-                     rocksdb::Slice((const char*)&vid, sizeof(vid)), &val);
+                     rocksdb::Slice(AsChars(vid), sizeof(vid)), &val);
   if (s.ok()) {
     return {this, vid};
   } else if (s.IsNotFound()) {
@@ -291,8 +292,8 @@ Vertex Transaction::GetVertexById(int64_t vid) {
 
 Edge Transaction::GetEdgeById(uint32_t etid, int64_t eid) {
   std::string key;
-  key.append((const char*)&etid, sizeof(etid));
-  key.append((const char*)&eid, sizeof(eid));
+  key.append(AsChars(etid), sizeof(etid));
+  key.append(AsChars(eid), sizeof(eid));
   rocksdb::ReadOptions ro;
   std::string val;
   auto s = txn_->Get(ro, db_->graph_cf().edge_type_eid, key, &val);
