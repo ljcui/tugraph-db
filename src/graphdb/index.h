@@ -44,12 +44,16 @@ namespace txn {
 class Transaction;
 }
 namespace graphdb {
-struct VertexPropertyIndex {
+struct VertexPropertyIndex
+    : public std::enable_shared_from_this<VertexPropertyIndex> {
  public:
-  VertexPropertyIndex(meta::VertexPropertyIndex meta,
+  VertexPropertyIndex(rocksdb::TransactionDB* db, GraphCF* graph_cf,
+                      meta::VertexPropertyIndex meta,
                       rocksdb::ColumnFamilyHandle* cf, uint32_t index_id,
                       uint32_t lid, std::vector<uint32_t> pids)
-      : meta_(std::move(meta)),
+      : db_(db),
+        graph_cf_(graph_cf),
+        meta_(std::move(meta)),
         cf_(cf),
         index_id_(index_id),
         lid_(lid),
@@ -62,6 +66,11 @@ struct VertexPropertyIndex {
                    const std::optional<std::vector<Value>>& old_values);
   void DeleteIndex(txn::Transaction* txn, int64_t vid,
                    const std::vector<Value>& values);
+  void ApplyCommittedBuildUpdate(
+      txn::Transaction* txn, const meta::PropertyIndexUpdate& update);
+  void Load(const rocksdb::Snapshot* snapshot, uint64_t snapshot_wal_id);
+  void ApplyWAL();
+  std::string NextWALKey();
   std::string IndexKey(const std::vector<Value>& values) const;
   std::string EntryKey(const std::vector<Value>& values, int64_t vid) const;
   std::optional<std::vector<Value>> LoadIndexedPropertyValues(
@@ -72,20 +81,42 @@ struct VertexPropertyIndex {
   bool TouchesAnyProperty(const std::unordered_set<uint32_t>& pids) const;
   bool AllPropertiesPresent(const std::unordered_set<uint32_t>& pids) const;
   bool is_unique() const { return meta_.is_unique(); }
+  bool IsReady() const { return meta_.state() == meta::IndexBuildState::READY; }
+  meta::IndexBuildState state() const { return meta_.state(); }
+  void SetState(meta::IndexBuildState state) { meta_.set_state(state); }
+  void SetBuildError(std::string msg) { meta_.set_build_error(std::move(msg)); }
+  const std::string& Name() const { return meta_.name(); }
+  bool IsDeleted() const { return deleted_.load(); }
+  void MarkDeleted() { deleted_.store(true); }
   meta::VertexPropertyIndex& meta() { return meta_; }
+  const meta::VertexPropertyIndex& meta() const { return meta_; }
   rocksdb::ColumnFamilyHandle* cf() { return cf_; }
   uint32_t lid() const { return lid_; }
   const std::vector<uint32_t>& pids() const { return pids_; }
   size_t PropertyCount() const { return pids_.size(); }
   uint32_t index_id() const { return index_id_; }
+  void ResetForBuild();
 
  private:
+  void UpdateIndexDirect(
+      txn::Transaction* txn, int64_t vid,
+      const std::optional<std::vector<Value>>& new_values,
+      const std::optional<std::vector<Value>>& old_values);
+  void AppendBuildUpdate(txn::Transaction* txn, meta::UpdateType type,
+                         int64_t vid, const std::vector<Value>& values);
+  void ApplyBuildUpdate(const meta::PropertyIndexUpdate& update);
+
+  rocksdb::TransactionDB* db_;
+  GraphCF* graph_cf_;
   meta::VertexPropertyIndex meta_;
   rocksdb::ColumnFamilyHandle* cf_;
   uint32_t index_id_;
   uint32_t lid_;
   std::vector<uint32_t> pids_;
   std::unordered_set<uint32_t> pid_set_;
+  std::atomic<uint64_t> next_wal_id_ = 1;
+  uint64_t apply_id_ = 0;
+  std::atomic<bool> deleted_{false};
 };
 
 class VertexFullTextIndex
@@ -117,11 +148,19 @@ class VertexFullTextIndex
     return pids_;
   }
   [[nodiscard]] const std::string& Name() const { return meta_.name(); }
+  meta::VertexFullTextIndex& meta() { return meta_; }
   const meta::VertexFullTextIndex& meta() const { return meta_; }
   uint32_t index_id() const { return index_id_; }
   [[nodiscard]] bool IsDeleted() const { return deleted_.load(); }
   void MarkDeleted() { deleted_.store(true); }
-  void Load();
+  [[nodiscard]] bool IsReady() const {
+    return meta_.state() == meta::IndexBuildState::READY;
+  }
+  [[nodiscard]] meta::IndexBuildState state() const { return meta_.state(); }
+  void SetState(meta::IndexBuildState state) { meta_.set_state(state); }
+  void SetBuildError(std::string msg) { meta_.set_build_error(std::move(msg)); }
+  void Load(const rocksdb::Snapshot* snapshot = nullptr,
+            uint64_t snapshot_wal_id = 0);
   std::string IndexKey(int64_t vid);
   std::string NextWALKey();
   bool IsIndexed(txn::Transaction* txn, int64_t vid);
@@ -260,13 +299,21 @@ class VertexVectorIndex
   int64_t NumElements();
   int64_t MemoryUsage();
   int64_t NumDeletedIds();
-  const meta::VertexVectorIndex& meta() { return meta_; }
+  meta::VertexVectorIndex& meta() { return meta_; }
+  const meta::VertexVectorIndex& meta() const { return meta_; }
   uint32_t lid() const { return lid_; }
   uint32_t pid() const { return pid_; }
   uint32_t index_id() const { return index_id_; }
+  bool IsReady() const { return meta_.state() == meta::IndexBuildState::READY; }
+  meta::IndexBuildState state() const { return meta_.state(); }
+  void SetState(meta::IndexBuildState state) { meta_.set_state(state); }
+  void SetBuildError(std::string msg) { meta_.set_build_error(std::move(msg)); }
+  bool IsDeleted() const { return deleted_.load(); }
+  void MarkDeleted() { deleted_.store(true); }
   void Start();
   void Stop();
-  void Load();
+  void Load(const rocksdb::Snapshot* snapshot = nullptr,
+            uint64_t snapshot_wal_id = 0);
   void DeleteIfPresent(txn::Transaction* txn, int64_t vid);
   std::string NextWALKey();
   std::string IndexKey(int64_t vid);
@@ -299,6 +346,7 @@ class VertexVectorIndex
   boost::asio::steady_timer timer_;
   std::unordered_set<int64_t> deleted_vector_ids_;
   std::unordered_map<int64_t, int64_t> vectorid_vid_;
+  std::atomic<bool> deleted_{false};
 };
 
 }  // namespace graphdb

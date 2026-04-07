@@ -15,7 +15,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
+#include <thread>
 
 #include "common/byte_utils.h"
 #include "common/value.h"
@@ -68,6 +70,27 @@ std::vector<int64_t> CollectVertexIds(
   }
   std::sort(vids.begin(), vids.end());
   return vids;
+}
+
+}  // namespace
+
+namespace {
+
+bool WaitUntilPropertyIndexReady(
+    GraphDB* graph_db, const std::string& index_name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (graph_db->meta_info().GetReadyVertexPropertyIndex(index_name)) {
+      return true;
+    }
+    auto index = graph_db->meta_info().GetVertexPropertyIndex(index_name);
+    if (index && index->state() == meta::IndexBuildState::FAILED) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return false;
 }
 
 }  // namespace
@@ -459,7 +482,9 @@ TEST(VertexPropertyIndex, nonUniqueCompositeIndexMaintainsEntries) {
 
   graphDB->AddVertexPropertyIndex("label1_id_str", false, "label1",
                                   {"id", "str"});
-  auto index = graphDB->meta_info().GetVertexPropertyIndex("label1_id_str");
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id_str"));
+  auto index =
+      graphDB->meta_info().GetReadyVertexPropertyIndex("label1_id_str");
   ASSERT_TRUE(index);
   EXPECT_FALSE(index->meta().is_unique());
   EXPECT_EQ(index->meta().properties_size(), 2);
@@ -549,6 +574,7 @@ TEST(VertexPropertyIndex, nonUniqueQueryAndRange) {
   txn->Commit();
 
   graphDB->AddVertexPropertyIndex("person_id", false, "person", {"id"});
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "person_id"));
 
   txn = graphDB->BeginTransaction();
   auto viter = txn->QueryVertexByPropertyIndex("person_id", Value::Integer(2));

@@ -82,12 +82,29 @@ class GraphDB {
   meta::GraphDBMetaInfo& db_meta() { return db_meta_; }
   const std::string& path() { return path_; }
   bool& drop_on_close() { return drop_on_close_; }
+  std::mutex& property_index_commit_mutex() {
+    return property_index_commit_mutex_;
+  }
   std::mutex& fulltext_index_commit_mutex() {
     return fulltext_index_commit_mutex_;
   }
   std::mutex& vector_index_commit_mutex() { return vector_index_commit_mutex_; }
 
  private:
+  void ResumeBackgroundIndexBuilds();
+  void PersistVertexPropertyIndexMeta(
+      const std::shared_ptr<VertexPropertyIndex>& index);
+  void PersistVertexFullTextIndexMeta(
+      const std::shared_ptr<VertexFullTextIndex>& index);
+  void PersistVertexVectorIndexMeta(
+      const std::shared_ptr<VertexVectorIndex>& index);
+  void ScheduleVertexPropertyIndexBuild(
+      const std::shared_ptr<VertexPropertyIndex>& index, bool reset_existing);
+  void ScheduleVertexFullTextIndexBuild(
+      const std::shared_ptr<VertexFullTextIndex>& index, bool reset_existing);
+  void ScheduleVertexVectorIndexBuild(
+      const std::shared_ptr<VertexVectorIndex>& index, bool reset_existing);
+
   std::string path_;
   rocksdb::TransactionDB* db_ = nullptr;
   std::vector<rocksdb::ColumnFamilyHandle*> cf_handles_;
@@ -100,6 +117,7 @@ class GraphDB {
   GraphDBOptions options_;
   bool drop_on_close_ = false;
   std::mutex index_ddl_mutex_;
+  std::mutex property_index_commit_mutex_;
   std::mutex fulltext_index_commit_mutex_;
   std::mutex vector_index_commit_mutex_;
 };

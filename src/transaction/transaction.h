@@ -77,13 +77,16 @@ class Transaction {
   std::unique_ptr<graphdb::VertexScoreIterator> QueryVertexByKnnSearch(
       const std::string& index_name, const std::vector<float>& query, int top_k,
       int ef_search);
+  void AppendPropertyIndexWAL(
+      std::shared_ptr<graphdb::VertexPropertyIndex> index,
+      const meta::PropertyIndexUpdate& update);
   void AppendFullTextIndexWAL(
       std::shared_ptr<graphdb::VertexFullTextIndex> index,
       const meta::FullTextIndexUpdate& update);
   std::unique_ptr<ResultIterator> Execute(void* ctx, const std::string& cypher);
   void AppendVectorIndexWAL(std::shared_ptr<graphdb::VertexVectorIndex> index,
-                            std::string payload) {
-    pending_vector_wals_.push_back({std::move(index), std::move(payload)});
+                            const meta::VectorIndexUpdate& update) {
+    pending_vector_wals_.push_back({std::move(index), update});
   }
   void Commit();
   void Rollback();
@@ -95,6 +98,11 @@ class Transaction {
   std::shared_ptr<bolt::BoltConnection>& conn() { return conn_; }
 
  private:
+  struct PendingPropertyWAL {
+    std::shared_ptr<graphdb::VertexPropertyIndex> index;
+    meta::PropertyIndexUpdate update;
+  };
+
   struct PendingFullTextWAL {
     std::shared_ptr<graphdb::VertexFullTextIndex> index;
     meta::FullTextIndexUpdate update;
@@ -102,12 +110,13 @@ class Transaction {
 
   struct PendingVectorWAL {
     std::shared_ptr<graphdb::VertexVectorIndex> index;
-    std::string payload;
+    meta::VectorIndexUpdate update;
   };
 
   rocksdb::Transaction* txn_;
   graphdb::GraphDB* db_;
   std::shared_ptr<bolt::BoltConnection> conn_;
+  std::vector<PendingPropertyWAL> pending_property_wals_;
   std::vector<PendingFullTextWAL> pending_fulltext_wals_;
   std::vector<PendingVectorWAL> pending_vector_wals_;
 };

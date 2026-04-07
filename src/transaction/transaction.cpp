@@ -41,8 +41,12 @@ bool IsRangeComparableValue(const Value& value) {
 
 std::shared_ptr<VertexPropertyIndex> ResolveVertexPropertyIndexOrThrow(
     txn::Transaction* txn, const std::string& index_name) {
-  auto index = txn->db()->meta_info().GetVertexPropertyIndex(index_name);
+  auto index = txn->db()->meta_info().GetReadyVertexPropertyIndex(index_name);
   if (!index) {
+    if (txn->db()->meta_info().GetVertexPropertyIndex(index_name)) {
+      THROW_CODE(IndexNotReady, "Vertex index [{}] is still building",
+                 index_name);
+    }
     THROW_CODE(VertexUniqueIndexNotFound, "No such vertex index [{}]",
                index_name);
   }
@@ -430,21 +434,55 @@ void Transaction::AppendFullTextIndexWAL(
   pending_fulltext_wals_.push_back({std::move(index), update});
 }
 
+void Transaction::AppendPropertyIndexWAL(
+    std::shared_ptr<graphdb::VertexPropertyIndex> index,
+    const meta::PropertyIndexUpdate& update) {
+  pending_property_wals_.push_back({std::move(index), update});
+}
+
 void Transaction::Commit() {
   {
+    std::unique_lock<std::mutex> property_commit_lock(
+        db_->property_index_commit_mutex(), std::defer_lock);
     std::unique_lock<std::mutex> fulltext_commit_lock(
         db_->fulltext_index_commit_mutex(), std::defer_lock);
     std::unique_lock<std::mutex> vector_commit_lock(
         db_->vector_index_commit_mutex(), std::defer_lock);
-    if (!pending_fulltext_wals_.empty() && !pending_vector_wals_.empty()) {
+    bool has_property_wals = !pending_property_wals_.empty();
+    bool has_fulltext_wals = !pending_fulltext_wals_.empty();
+    bool has_vector_wals = !pending_vector_wals_.empty();
+    if (has_property_wals && has_fulltext_wals && has_vector_wals) {
+      std::lock(property_commit_lock, fulltext_commit_lock, vector_commit_lock);
+    } else if (has_property_wals && has_fulltext_wals) {
+      std::lock(property_commit_lock, fulltext_commit_lock);
+    } else if (has_property_wals && has_vector_wals) {
+      std::lock(property_commit_lock, vector_commit_lock);
+    } else if (has_fulltext_wals && has_vector_wals) {
       std::lock(fulltext_commit_lock, vector_commit_lock);
-    } else if (!pending_fulltext_wals_.empty()) {
+    } else if (has_property_wals) {
+      property_commit_lock.lock();
+    } else if (has_fulltext_wals) {
       fulltext_commit_lock.lock();
-    } else if (!pending_vector_wals_.empty()) {
+    } else if (has_vector_wals) {
       vector_commit_lock.lock();
     }
-    if (!pending_fulltext_wals_.empty() || !pending_vector_wals_.empty()) {
+    if (has_property_wals || has_fulltext_wals || has_vector_wals) {
       auto* write_batch = txn_->GetWriteBatch();
+      for (const auto& wal : pending_property_wals_) {
+        if (wal.index->IsDeleted()) {
+          THROW_CODE(VertexUniqueIndexNotFound,
+                     "Vertex index [{}] was deleted during transaction",
+                     wal.index->Name());
+        }
+        if (wal.index->IsReady()) {
+          wal.index->ApplyCommittedBuildUpdate(this, wal.update);
+          continue;
+        }
+        auto s =
+            write_batch->Put(db_->graph_cf().wal, wal.index->NextWALKey(),
+                             wal.update.SerializeAsString());
+        if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+      }
       for (const auto& wal : pending_fulltext_wals_) {
         if (wal.index->IsDeleted()) {
           THROW_CODE(FullTextIndexNotFound,
@@ -456,13 +494,20 @@ void Transaction::Commit() {
         if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
       }
       for (const auto& wal : pending_vector_wals_) {
-        auto s = write_batch->Put(db_->graph_cf().wal, wal.index->NextWALKey(),
-                                  wal.payload);
+        if (wal.index->IsDeleted()) {
+          THROW_CODE(VectorIndexNotFound,
+                     "Vector index [{}] was deleted during transaction",
+                     wal.index->meta().name());
+        }
+        auto s =
+            write_batch->Put(db_->graph_cf().wal, wal.index->NextWALKey(),
+                             wal.update.SerializeAsString());
         if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
       }
     }
     auto s = txn_->Commit();
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    pending_property_wals_.clear();
     pending_fulltext_wals_.clear();
     pending_vector_wals_.clear();
   }
@@ -471,6 +516,7 @@ void Transaction::Commit() {
 void Transaction::Rollback() {
   auto s = txn_->Rollback();
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  pending_property_wals_.clear();
   pending_fulltext_wals_.clear();
   pending_vector_wals_.clear();
 }

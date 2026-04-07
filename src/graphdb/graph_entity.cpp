@@ -329,7 +329,7 @@ int Vertex::Delete() {
         if (!ft->MatchLabelIds(labelIds)) {
           continue;
         }
-        if (ft->IsIndexed(txn_, id_)) {
+        if (!ft->IsReady() || ft->IsIndexed(txn_, id_)) {
           meta::FullTextIndexUpdate del;
           del.set_type(meta::UpdateType::Delete);
           del.set_vid(id_);
@@ -554,7 +554,7 @@ void Vertex::DeleteLabels(const std::unordered_set<std::string> &labels) {
     if (ft->MatchLabelIds(remaining_lids)) {
       continue;
     }
-    if (ft->IsIndexed(txn_, id_)) {
+    if (!ft->IsReady() || ft->IsIndexed(txn_, id_)) {
       meta::FullTextIndexUpdate del;
       del.set_type(meta::UpdateType::Delete);
       del.set_vid(id_);
@@ -668,7 +668,7 @@ void Vertex::SetProperties(
     if (!index->MatchLabelIds(lids) || !index->MatchPropertyIds(pids)) {
       continue;
     }
-    if (index->IsIndexed(txn_, id_)) {
+    if (!index->IsReady() || index->IsIndexed(txn_, id_)) {
       meta::FullTextIndexUpdate del;
       del.set_type(meta::UpdateType::Delete);
       del.set_vid(id_);
@@ -770,7 +770,7 @@ void Vertex::RemoveAllProperty() {
     if (!ft->MatchLabelIds(lids)) {
       continue;
     }
-    if (ft->IsIndexed(txn_, id_)) {
+    if (!ft->IsReady() || ft->IsIndexed(txn_, id_)) {
       meta::FullTextIndexUpdate del;
       del.set_vid(id_);
       del.set_type(meta::UpdateType::Delete);
@@ -822,7 +822,7 @@ void Vertex::RemoveProperty(const std::string &name) {
     if (!ft->MatchLabelIds(lids) || !ft->MatchPropertyIds({pid})) {
       continue;
     }
-    if (ft->IsIndexed(txn_, id_)) {
+    if (!ft->IsReady() || ft->IsIndexed(txn_, id_)) {
       meta::FullTextIndexUpdate del;
       del.set_vid(id_);
       del.set_type(meta::UpdateType::Delete);

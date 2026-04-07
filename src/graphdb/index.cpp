@@ -295,6 +295,33 @@ Value DeserializeStoredPropertyValue(const std::string& value) {
   return decoded;
 }
 
+uint64_t LoadVisibleMaxWalId(rocksdb::TransactionDB* db, GraphCF* graph_cf,
+                             uint32_t index_id,
+                             const rocksdb::Snapshot* snapshot) {
+  std::string prefix(AsChars(index_id), sizeof(index_id));
+  std::string seek_key(prefix);
+  seek_key.append(sizeof(uint64_t), static_cast<char>(0xFF));
+  rocksdb::ReadOptions ro;
+  ro.snapshot = snapshot;
+  std::unique_ptr<rocksdb::Iterator> iter(db->NewIterator(ro, graph_cf->wal));
+  iter->SeekForPrev(seek_key);
+  if (!iter->Valid()) {
+    return 0;
+  }
+  auto key = iter->key();
+  if (!key.starts_with(prefix)) {
+    return 0;
+  }
+  key.remove_prefix(sizeof(index_id));
+  if (key.size() != sizeof(uint64_t)) {
+    THROW_CODE(StorageEngineError,
+               "index wal key has invalid size while loading max wal id, "
+               "expect {}, actual {}",
+               sizeof(uint64_t), key.size());
+  }
+  return big_to_native(ReadValue<uint64_t>(key.data()));
+}
+
 }  // namespace
 
 void VertexPropertyIndex::AddIndex(Transaction* txn, int64_t vid,
@@ -302,7 +329,7 @@ void VertexPropertyIndex::AddIndex(Transaction* txn, int64_t vid,
   UpdateIndex(txn, vid, values, std::nullopt);
 }
 
-void VertexPropertyIndex::UpdateIndex(
+void VertexPropertyIndex::UpdateIndexDirect(
     Transaction* txn, int64_t vid,
     const std::optional<std::vector<Value>>& new_values,
     const std::optional<std::vector<Value>>& old_values) {
@@ -363,6 +390,194 @@ void VertexPropertyIndex::UpdateIndex(
       if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
     }
   }
+}
+
+void VertexPropertyIndex::AppendBuildUpdate(txn::Transaction* txn,
+                                            meta::UpdateType type, int64_t vid,
+                                            const std::vector<Value>& values) {
+  meta::PropertyIndexUpdate update;
+  update.set_type(type);
+  update.set_vid(vid);
+  for (const auto& value : values) {
+    update.add_values(value.Serialize());
+  }
+  txn->AppendPropertyIndexWAL(shared_from_this(), update);
+}
+
+void VertexPropertyIndex::UpdateIndex(
+    Transaction* txn, int64_t vid,
+    const std::optional<std::vector<Value>>& new_values,
+    const std::optional<std::vector<Value>>& old_values) {
+  if (!new_values && !old_values) {
+    return;
+  }
+  if (IsReady()) {
+    UpdateIndexDirect(txn, vid, new_values, old_values);
+    return;
+  }
+  if (meta_.is_unique()) {
+    THROW_CODE(Unimplemented,
+               "online build for unique property index [{}] is not supported",
+               meta_.name());
+  }
+  std::string new_key;
+  std::string old_key;
+  if (new_values) {
+    new_key = EntryKey(*new_values, vid);
+  }
+  if (old_values) {
+    old_key = EntryKey(*old_values, vid);
+  }
+  if (old_values && (!new_values || old_key != new_key)) {
+    AppendBuildUpdate(txn, meta::UpdateType::Delete, vid, *old_values);
+  }
+  if (new_values && (!old_values || old_key != new_key)) {
+    AppendBuildUpdate(txn, meta::UpdateType::Add, vid, *new_values);
+  }
+}
+
+void VertexPropertyIndex::ApplyBuildUpdate(
+    const meta::PropertyIndexUpdate& update) {
+  if (meta_.is_unique()) {
+    THROW_CODE(Unimplemented,
+               "online build for unique property index [{}] is not supported",
+               meta_.name());
+  }
+  std::vector<Value> values;
+  values.reserve(update.values_size());
+  for (const auto& item : update.values()) {
+    values.push_back(DeserializeStoredPropertyValue(item));
+  }
+  rocksdb::WriteOptions wo;
+  rocksdb::Status s;
+  auto entry_key = EntryKey(values, update.vid());
+  if (update.type() == meta::UpdateType::Add) {
+    s = db_->Put(wo, cf_, entry_key, {});
+  } else if (update.type() == meta::UpdateType::Delete) {
+    s = db_->Delete(wo, cf_, entry_key);
+  } else {
+    THROW_CODE(StorageEngineError,
+               "property index wal has invalid update type: {}",
+               static_cast<int>(update.type()));
+  }
+  if (!s.ok()) {
+    THROW_CODE(StorageEngineError, s.ToString());
+  }
+}
+
+void VertexPropertyIndex::ApplyCommittedBuildUpdate(
+    txn::Transaction* txn, const meta::PropertyIndexUpdate& update) {
+  std::vector<Value> values;
+  values.reserve(update.values_size());
+  for (const auto& item : update.values()) {
+    values.push_back(DeserializeStoredPropertyValue(item));
+  }
+  if (update.type() == meta::UpdateType::Add) {
+    UpdateIndexDirect(txn, update.vid(), values, std::nullopt);
+  } else if (update.type() == meta::UpdateType::Delete) {
+    UpdateIndexDirect(txn, update.vid(), std::nullopt, values);
+  } else {
+    THROW_CODE(StorageEngineError,
+               "property index wal has invalid update type: {}",
+               static_cast<int>(update.type()));
+  }
+}
+
+void VertexPropertyIndex::Load(const rocksdb::Snapshot* snapshot,
+                               uint64_t snapshot_wal_id) {
+  rocksdb::ReadOptions ro;
+  ro.snapshot = snapshot;
+  std::unique_ptr<rocksdb::Iterator> iter(
+      db_->NewIterator(ro, graph_cf_->vertex_label_vid));
+  rocksdb::Slice prefix(AsChars(lid_), sizeof(lid_));
+  for (iter->Seek(prefix); iter->Valid() && iter->key().starts_with(prefix);
+       iter->Next()) {
+    auto key = iter->key();
+    key.remove_prefix(sizeof(uint32_t));
+    int64_t vid = ReadValue<int64_t>(key.data());
+    std::vector<Value> values;
+    values.reserve(pids_.size());
+    bool complete = true;
+    for (auto pid : pids_) {
+      std::string property_key(AsChars(vid), sizeof(vid));
+      property_key.append(AsChars(pid), sizeof(pid));
+      std::string property_val;
+      auto s = db_->Get(ro, graph_cf_->vertex_property, property_key,
+                        &property_val);
+      if (s.IsNotFound()) {
+        complete = false;
+        break;
+      }
+      if (!s.ok()) {
+        THROW_CODE(StorageEngineError, s.ToString());
+      }
+      values.push_back(DeserializeStoredPropertyValue(property_val));
+    }
+    if (!complete) {
+      continue;
+    }
+    meta::PropertyIndexUpdate add;
+    add.set_type(meta::UpdateType::Add);
+    add.set_vid(vid);
+    for (const auto& value : values) {
+      add.add_values(value.Serialize());
+    }
+    ApplyBuildUpdate(add);
+  }
+  apply_id_ = native_to_big(snapshot_wal_id);
+  meta_.set_build_start_wal_id(1);
+  meta_.set_applied_wal_id(snapshot_wal_id);
+}
+
+void VertexPropertyIndex::ApplyWAL() {
+  std::string prefix(AsChars(index_id_), sizeof(index_id_));
+  std::string start_key(prefix);
+  uint64_t next = big_to_native(apply_id_) + 1;
+  native_to_big_inplace(next);
+  start_key.append(AsChars(next), sizeof(next));
+  uint64_t consumed_wal_id = 0;
+  rocksdb::WriteBatch delete_batch;
+  rocksdb::ReadOptions ro;
+  std::unique_ptr<rocksdb::Iterator> iter(db_->NewIterator(ro, graph_cf_->wal));
+  for (iter->Seek(start_key); iter->Valid() && iter->key().starts_with(prefix);
+       iter->Next()) {
+    auto key = iter->key();
+    delete_batch.Delete(graph_cf_->wal, key.ToString());
+
+    key.remove_prefix(sizeof(index_id_));
+    if (key.size() != sizeof(apply_id_)) {
+      THROW_CODE(StorageEngineError,
+                 "property index wal key has invalid size, expect {}, actual {}",
+                 sizeof(apply_id_), key.size());
+    }
+    consumed_wal_id = ReadValue<uint64_t>(key.data());
+    meta::PropertyIndexUpdate update;
+    auto val = iter->value();
+    if (!update.ParseFromArray(val.data(), val.size())) {
+      THROW_CODE(StorageEngineError,
+                 "failed to parse property index wal payload");
+    }
+    ApplyBuildUpdate(update);
+  }
+  if (consumed_wal_id != 0) {
+    rocksdb::WriteOptions wo;
+    rocksdb::TransactionDBWriteOptimizations two;
+    two.skip_concurrency_control = true;
+    two.skip_duplicate_key_check = true;
+    auto s = db_->Write(wo, two, &delete_batch);
+    if (!s.ok()) {
+      THROW_CODE(StorageEngineError, s.ToString());
+    }
+    apply_id_ = consumed_wal_id;
+    meta_.set_applied_wal_id(big_to_native(consumed_wal_id));
+  }
+}
+
+std::string VertexPropertyIndex::NextWALKey() {
+  std::string ret(AsChars(index_id_), sizeof(index_id_));
+  uint64_t wal_id = native_to_big(next_wal_id_++);
+  ret.append(AsChars(wal_id), sizeof(wal_id));
+  return ret;
 }
 
 std::string VertexPropertyIndex::IndexKey(
@@ -437,6 +652,14 @@ bool VertexPropertyIndex::AllPropertiesPresent(
 void VertexPropertyIndex::DeleteIndex(Transaction* txn, int64_t vid,
                                       const std::vector<Value>& values) {
   UpdateIndex(txn, vid, std::nullopt, values);
+}
+
+void VertexPropertyIndex::ResetForBuild() {
+  deleted_.store(false);
+  next_wal_id_ = LoadVisibleMaxWalId(db_, graph_cf_, index_id_, nullptr) + 1;
+  apply_id_ = 0;
+  meta_.set_applied_wal_id(0);
+  meta_.clear_build_error();
 }
 
 void VertexFullTextIndex::StartTimer() {
@@ -567,11 +790,16 @@ VertexFullTextIndex::VertexFullTextIndex(
   instance_ = std::make_unique<::rust::Box<::FTIndex>>(
       new_ftindex(meta_.path(), fields, writer_threads, writer_memory_budget));
   ft_index_ = instance_->operator->();
-  auto payload = ft_get_payload(*ft_index_);
-  if (!payload.empty()) {
-    apply_id_ =
-        native_to_big(static_cast<uint64_t>(std::stoull(payload.c_str())));
+  if (meta_.state() == meta::IndexBuildState::READY) {
+    auto payload = ft_get_payload(*ft_index_);
+    if (!payload.empty()) {
+      apply_id_ =
+          native_to_big(static_cast<uint64_t>(std::stoull(payload.c_str())));
+    }
+  } else {
+    apply_id_ = native_to_big(meta_.applied_wal_id());
   }
+  meta_.set_applied_wal_id(big_to_native(apply_id_));
 
   std::string prefix(AsChars(index_id_), sizeof(index_id_));
   prefix.append(8, 0xFF);
@@ -600,6 +828,12 @@ void VertexFullTextIndex::AddIndex(txn::Transaction* txn, int64_t vid,
   auto s =
       txn->dbtxn()->GetWriteBatch()->Put(graph_cf_->index, IndexKey(vid), {});
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  if (!IsReady()) {
+    meta::FullTextIndexUpdate del;
+    del.set_type(meta::UpdateType::Delete);
+    del.set_vid(vid);
+    txn->AppendFullTextIndexWAL(shared_from_this(), del);
+  }
   txn->AppendFullTextIndexWAL(shared_from_this(), wal);
 }
 
@@ -637,12 +871,14 @@ std::string VertexFullTextIndex::NextWALKey() {
   return ret;
 }
 
-void VertexFullTextIndex::Load() {
+void VertexFullTextIndex::Load(const rocksdb::Snapshot* snapshot,
+                               uint64_t snapshot_wal_id) {
   int count = 0;
   FTUpdateBatch batch;
   std::unordered_set<int64_t> loaded_vids;
   for (auto lid : lids_) {
     rocksdb::ReadOptions ro;
+    ro.snapshot = snapshot;
     std::unique_ptr<rocksdb::Iterator> iter(
         db_->NewIterator(ro, graph_cf_->vertex_label_vid));
     rocksdb::Slice prefix(AsChars(lid), sizeof(lid));
@@ -684,7 +920,7 @@ void VertexFullTextIndex::Load() {
         if (count == 10000) {
           ApplyUpdatesBatch(batch.ids, batch.ops, batch.field_counts,
                             batch.fields, batch.value_counts, batch.values);
-          Commit("0");
+          Commit(std::to_string(snapshot_wal_id));
           count = 0;
           batch.Clear();
         }
@@ -694,8 +930,11 @@ void VertexFullTextIndex::Load() {
   if (count > 0) {
     ApplyUpdatesBatch(batch.ids, batch.ops, batch.field_counts, batch.fields,
                       batch.value_counts, batch.values);
-    Commit("0");
+    Commit(std::to_string(snapshot_wal_id));
   }
+  apply_id_ = native_to_big(snapshot_wal_id);
+  meta_.set_build_start_wal_id(1);
+  meta_.set_applied_wal_id(snapshot_wal_id);
 }
 
 void VertexFullTextIndex::AddVertex(int64_t id, std::vector<std::string> fields,
@@ -778,8 +1017,12 @@ void VertexFullTextIndex::ApplyWAL() {
     if (update.type() == meta::UpdateType::Add) {
       batch.AddDocument(update.vid(), update.mutable_fields(),
                         update.mutable_values());
+      auto s = delete_batch.Put(graph_cf_->index, IndexKey(update.vid()), {});
+      if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
     } else if (update.type() == meta::UpdateType::Delete) {
       batch.AddDelete(update.vid());
+      auto s = delete_batch.Delete(graph_cf_->index, IndexKey(update.vid()));
+      if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
     } else {
       THROW_CODE(StorageEngineError,
                  "fulltext index wal has invalid update type: {}",
@@ -817,6 +1060,7 @@ void VertexFullTextIndex::ApplyWAL() {
   }
   if (consumed_wal_id != 0) {
     apply_id_ = consumed_wal_id;
+    meta_.set_applied_wal_id(big_to_native(consumed_wal_id));
   }
 }
 
@@ -848,7 +1092,7 @@ VertexVectorIndex::VertexVectorIndex(rocksdb::TransactionDB* db,
       meta_.dimensions(), meta_.distance_type(), meta_.hnsw_m(),
       meta_.hnsw_ef_construction());
 
-  {
+  if (meta_.state() == meta::IndexBuildState::READY) {
     std::ifstream metafile(FaissHnswMetaPath(meta_), std::ios::in);
     if (metafile) {
       LOG_INFO("Begin load vector index {} from data file", meta_.name());
@@ -863,9 +1107,12 @@ VertexVectorIndex::VertexVectorIndex(rocksdb::TransactionDB* db,
       LOG_INFO("End load vector index {} from data file, num:{}", meta_.name(),
                hnsw_index_->GetNumElements());
     }
-    LOG_INFO("vector index {}, apply_id:{}", meta_.name(),
-             big_to_native(apply_id_));
+  } else {
+    apply_id_ = native_to_big(meta_.applied_wal_id());
   }
+  LOG_INFO("vector index {}, apply_id:{}", meta_.name(),
+           big_to_native(apply_id_));
+  meta_.set_applied_wal_id(big_to_native(apply_id_));
   {
     std::string prefix(AsChars(index_id_), sizeof(index_id_));
     prefix.append(8, 0xFF);
@@ -891,7 +1138,7 @@ VertexVectorIndex::VertexVectorIndex(rocksdb::TransactionDB* db,
     LOG_INFO("vector index {}, next_wal_id: {}", meta_.name(),
              next_wal_id_.load());
   }
-  {
+  if (meta_.state() == meta::IndexBuildState::READY) {
     spdlog::stopwatch sw;
     int64_t max_vector_id = -1;
     std::string prefix(AsChars(index_id_), sizeof(index_id_));
@@ -1035,6 +1282,7 @@ void VertexVectorIndex::ResetForClear() {
     apply_id_ = 0;
     deleted_vector_ids_.clear();
     vectorid_vid_.clear();
+    deleted_.store(false);
   }
   {
     std::lock_guard<std::mutex> lock(timer_mutex_);
@@ -1042,6 +1290,8 @@ void VertexVectorIndex::ResetForClear() {
     started_ = false;
     stopped_ = false;
   }
+  meta_.set_applied_wal_id(0);
+  meta_.clear_build_error();
 }
 
 int64_t VertexVectorIndex::NumElements() {
@@ -1084,6 +1334,13 @@ std::vector<std::pair<int64_t, float>> VertexVectorIndex::KnnSearch(
 }
 
 void VertexVectorIndex::DeleteIfPresent(txn::Transaction* txn, int64_t vid) {
+  if (!IsReady()) {
+    meta::VectorIndexUpdate wal;
+    wal.set_type(meta::UpdateType::Delete);
+    wal.set_vid(vid);
+    txn->AppendVectorIndexWAL(shared_from_this(), wal);
+    return;
+  }
   std::string index_key = IndexKey(vid);
   std::string val;
   auto s = txn->dbtxn()->Get({}, graph_cf_->index, index_key, &val);
@@ -1103,7 +1360,7 @@ void VertexVectorIndex::DeleteIfPresent(txn::Transaction* txn, int64_t vid) {
     meta::VectorIndexUpdate wal;
     wal.set_type(meta::UpdateType::Delete);
     wal.set_vector_id(vector_id);
-    txn->AppendVectorIndexWAL(shared_from_this(), wal.SerializeAsString());
+    txn->AppendVectorIndexWAL(shared_from_this(), wal);
   } else if (!s.IsNotFound()) {
     THROW_CODE(StorageEngineError, s.ToString());
   }
@@ -1161,8 +1418,37 @@ void VertexVectorIndex::ApplyWAL() {
                  "failed to parse vector index wal payload");
     }
     if (update.type() == meta::UpdateType::Delete) {
-      std::unique_lock write(mutex_);
-      deleted_vector_ids_.emplace(update.vector_id());
+      if (update.vector_id() != 0) {
+        std::unique_lock write(mutex_);
+        deleted_vector_ids_.emplace(update.vector_id());
+      } else {
+        std::string index_key = IndexKey(update.vid());
+        std::string mapping;
+        auto s = db_->Get({}, graph_cf_->index, index_key, &mapping);
+        if (s.ok()) {
+          if (mapping.size() != sizeof(int64_t)) {
+            THROW_CODE(VectorIndexException,
+                       "vector index entry has invalid vector id size, expect "
+                       "{}, actual {}",
+                       sizeof(int64_t), mapping.size());
+          }
+          auto vector_id = ReadValue<int64_t>(mapping.data());
+          rocksdb::WriteBatch batch;
+          batch.Delete(graph_cf_->index, index_key);
+          batch.Put(graph_cf_->index, DeleteMarkKey(vector_id), {});
+          rocksdb::TransactionDBWriteOptimizations two;
+          two.skip_concurrency_control = true;
+          two.skip_duplicate_key_check = true;
+          auto ws = db_->Write({}, two, &batch);
+          if (!ws.ok()) {
+            THROW_CODE(StorageEngineError, ws.ToString());
+          }
+          std::unique_lock write(mutex_);
+          deleted_vector_ids_.emplace(vector_id);
+        } else if (!s.IsNotFound()) {
+          THROW_CODE(StorageEngineError, s.ToString());
+        }
+      }
       continue;
     }
     if (update.type() != meta::UpdateType::Add) {
@@ -1174,11 +1460,46 @@ void VertexVectorIndex::ApplyWAL() {
     for (int i = 0; i < update.vector_size(); i++) {
       embedding[i] = update.vector(i);
     }
+    int64_t vector_id = update.vector_id();
+    if (vector_id == 0) {
+      std::string index_key = IndexKey(update.vid());
+      std::string mapping;
+      int64_t old_vector_id = -1;
+      auto s = db_->Get({}, graph_cf_->index, index_key, &mapping);
+      if (s.ok()) {
+        if (mapping.size() != sizeof(int64_t)) {
+          THROW_CODE(VectorIndexException,
+                     "vector index entry has invalid vector id size, expect "
+                     "{}, actual {}",
+                     sizeof(int64_t), mapping.size());
+        }
+        old_vector_id = ReadValue<int64_t>(mapping.data());
+      } else if (!s.IsNotFound()) {
+        THROW_CODE(StorageEngineError, s.ToString());
+      }
+      vector_id = next_vector_id_++;
+      rocksdb::WriteBatch batch;
+      batch.Put(graph_cf_->index, index_key,
+                rocksdb::Slice(AsChars(vector_id), sizeof(vector_id)));
+      if (old_vector_id != -1) {
+        batch.Put(graph_cf_->index, DeleteMarkKey(old_vector_id), {});
+      }
+      rocksdb::TransactionDBWriteOptimizations two;
+      two.skip_concurrency_control = true;
+      two.skip_duplicate_key_check = true;
+      auto ws = db_->Write({}, two, &batch);
+      if (!ws.ok()) {
+        THROW_CODE(StorageEngineError, ws.ToString());
+      }
+      if (old_vector_id != -1) {
+        std::unique_lock write(mutex_);
+        deleted_vector_ids_.emplace(old_vector_id);
+      }
+    }
     {
       std::unique_lock write(mutex_);
-      const int64_t vector_id = update.vector_id();
       hnsw_index_->Add(embedding.get(), 1, &vector_id);
-      vectorid_vid_.emplace(update.vector_id(), update.vid());
+      vectorid_vid_.emplace(vector_id, update.vid());
     }
     if (hnsw_index_->GetNumElements() % FLAGS_vt_serialize_interval == 0) {
       LOG_INFO("Vector Index {} begin serialization", meta_.name());
@@ -1222,24 +1543,30 @@ void VertexVectorIndex::ApplyWAL() {
   }
   if (consumed_wal_id != 0) {
     apply_id_ = consumed_wal_id;
+    meta_.set_applied_wal_id(big_to_native(consumed_wal_id));
   }
 }
 
 void VertexVectorIndex::AddIndex(txn::Transaction* txn, int64_t vid,
                                  meta::VectorIndexUpdate& wal) {
-  // vid -> vector id
+  wal.set_vid(vid);
+  if (!IsReady()) {
+    txn->AppendVectorIndexWAL(shared_from_this(), wal);
+    return;
+  }
   auto vector_id = next_vector_id_++;
   auto s = txn->dbtxn()->GetWriteBatch()->Put(
       graph_cf_->index, IndexKey(vid),
       rocksdb::Slice(AsChars(vector_id), sizeof(vector_id)));
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
-  wal.set_vid(vid);
   wal.set_vector_id(vector_id);
-  txn->AppendVectorIndexWAL(shared_from_this(), wal.SerializeAsString());
+  txn->AppendVectorIndexWAL(shared_from_this(), wal);
 }
 
-void VertexVectorIndex::Load() {
+void VertexVectorIndex::Load(const rocksdb::Snapshot* snapshot,
+                             uint64_t snapshot_wal_id) {
   rocksdb::ReadOptions ro;
+  ro.snapshot = snapshot;
   std::unique_ptr<rocksdb::Iterator> iter(
       db_->NewIterator(ro, graph_cf_->vertex_label_vid));
   SPDLOG_INFO("Begin to load vector index: {}", meta_.name());
@@ -1294,11 +1621,14 @@ void VertexVectorIndex::Load() {
   SPDLOG_INFO("End to load vector index: {}, index num: {}", meta_.name(),
               count);
   if (hnsw_index_->GetNumElements() == 0) {
+    apply_id_ = native_to_big(snapshot_wal_id);
+    meta_.set_build_start_wal_id(1);
+    meta_.set_applied_wal_id(snapshot_wal_id);
     return;
   }
   LOG_INFO("Vector Index {} begin serialization", meta_.name());
   hnsw_index_->WriteToFile(FaissHnswIndexPath(meta_));
-  nlohmann::json meta_info{{"apply_id", 0}};
+  nlohmann::json meta_info{{"apply_id", snapshot_wal_id}};
   std::string path = FaissHnswMetaPath(meta_);
   std::ofstream metafile(path, std::ios::out);
   metafile << meta_info.dump();
@@ -1307,6 +1637,9 @@ void VertexVectorIndex::Load() {
   LOG_INFO("write file: {}", path);
   SPDLOG_INFO("Vector Index {} Serialize, num:{}", meta_.name(),
               hnsw_index_->GetNumElements());
+  apply_id_ = native_to_big(snapshot_wal_id);
+  meta_.set_build_start_wal_id(1);
+  meta_.set_applied_wal_id(snapshot_wal_id);
 }
 
 }  // namespace graphdb

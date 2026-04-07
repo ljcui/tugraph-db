@@ -42,16 +42,19 @@ constexpr uint64_t kDefaultFTWriterMemoryBudget = 50 * 1000 * 1000;
 
 namespace {
 
-bool WaitUntilBusy(
-    GraphDB* graph_db, const std::unordered_set<uint32_t>& lids,
-    const std::unordered_set<uint32_t>& pids,
+bool WaitUntilFullTextIndexReady(
+    GraphDB* graph_db, const std::string& index_name,
     std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
   auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
-    if (graph_db->busy_index().Busy(lids, pids)) {
+    if (graph_db->meta_info().GetReadyVertexFullTextIndex(index_name)) {
       return true;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    auto index = graph_db->meta_info().GetVertexFullTextIndex(index_name);
+    if (index && index->state() == meta::IndexBuildState::FAILED) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   return false;
 }
@@ -64,12 +67,24 @@ bool WaitUntilQueryCount(
   while (true) {
     auto txn = graph_db->BeginTransaction();
     size_t actual_count = 0;
-    for (auto result = txn->QueryVertexByFTIndex(index_name, query, 10);
-         result->Valid(); result->Next()) {
-      actual_count++;
+    bool query_succeeded = false;
+    try {
+      for (auto result = txn->QueryVertexByFTIndex(index_name, query, 10);
+           result->Valid(); result->Next()) {
+        actual_count++;
+      }
+      txn->Commit();
+      query_succeeded = true;
+    } catch (LgraphException& e) {
+      txn->Rollback();
+      if (e.code() != ErrorCode::IndexNotReady) {
+        throw;
+      }
+    } catch (...) {
+      txn->Rollback();
+      throw;
     }
-    txn->Commit();
-    if (actual_count == expected_count) {
+    if (query_succeeded && actual_count == expected_count) {
       return true;
     }
     if (std::chrono::steady_clock::now() >= deadline) {
@@ -77,6 +92,18 @@ bool WaitUntilQueryCount(
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
+}
+
+bool HasFullTextMarker(GraphDB* graph_db,
+                       const std::shared_ptr<VertexFullTextIndex>& index,
+                       int64_t vid) {
+  auto txn = graph_db->BeginTransaction();
+  std::string val;
+  auto s = txn->dbtxn()->Get({}, graph_db->graph_cf().index,
+                             index->IndexKey(vid), &val);
+  txn->Rollback();
+  EXPECT_TRUE(s.ok() || s.IsNotFound());
+  return s.ok();
 }
 
 size_t CountKeysWithPrefix(GraphDB* graph_db, rocksdb::ColumnFamilyHandle* cf,
@@ -290,6 +317,7 @@ TEST(FTIndex, indexVertex) {
   fs::remove_all(testdb);
   auto graphDB = GraphDB::Open(testdb, {});
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1", "label2"},
                     {{"id", Value::Integer(1)},
@@ -338,6 +366,7 @@ TEST(FTIndex, committedWalIsAppliedByPeriodicTimer) {
   options.ft_apply_interval_ = 1;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1"},
@@ -368,6 +397,7 @@ TEST(FTIndex, corruptedWalIsRejected) {
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
   ASSERT_TRUE(index != nullptr);
@@ -387,6 +417,7 @@ TEST(FTIndex, periodicTimerSurvivesWalApplyFailure) {
   options.ft_apply_interval_ = 1;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
   ASSERT_TRUE(index != nullptr);
@@ -421,6 +452,7 @@ TEST(FTIndex, deleteIndexRejectsPendingTransactionCommit) {
   fs::remove_all(testdb);
   auto graphDB = GraphDB::Open(testdb, {});
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
   ASSERT_TRUE(index != nullptr);
@@ -455,6 +487,7 @@ TEST(FTIndex, rollbackDoesNotBreakWalApply) {
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1"},
@@ -494,6 +527,7 @@ TEST(FTIndex, createVertexWritesSingleAddWal) {
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
   ASSERT_TRUE(index != nullptr);
@@ -517,6 +551,7 @@ TEST(FTIndex, createVertexAndRewriteInOneTransactionPreservesWalOrder) {
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
   ASSERT_TRUE(index != nullptr);
@@ -544,6 +579,7 @@ TEST(FTIndex, updatingIndexedVertexWritesDeleteThenAddWal) {
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
   ASSERT_TRUE(index != nullptr);
@@ -577,6 +613,7 @@ TEST(FTIndex, outOfOrderCommitsApplyCleanly) {
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   auto txn1 = graphDB->BeginTransaction();
   txn1->CreateVertex({"label1"},
@@ -623,6 +660,7 @@ TEST(FTIndex, buildDeduplicatesVerticesWithMultipleMatchedLabels) {
   txn->Commit();
 
   graphDB->AddVertexFullTextIndex("ft_index", {"label1", "label2"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   txn = graphDB->BeginTransaction();
   int count = 0;
@@ -642,6 +680,7 @@ TEST(FTIndex, deleteVertex) {
   fs::remove_all(testdb);
   auto graphDB = GraphDB::Open(testdb, {});
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1", "label2"},
                     {{"id", Value::Integer(1)},
@@ -726,7 +765,7 @@ TEST(FTIndex, deleteVertex) {
   txn->Commit();
 }
 
-TEST(FTIndex, buildBlocksWrites) {
+TEST(FTIndex, buildDoesNotBlockWrites) {
   fs::remove_all(testdb);
   auto graphDB = GraphDB::Open(testdb, {});
 
@@ -738,48 +777,16 @@ TEST(FTIndex, buildBlocksWrites) {
   }
   txn->Commit();
 
-  auto lid = graphDB->id_generator().GetOrCreateLid("label1");
-  auto pid = graphDB->id_generator().GetOrCreatePid("str");
-  std::exception_ptr build_error;
-  std::thread builder([&]() {
-    try {
-      graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
-    } catch (...) {
-      build_error = std::current_exception();
-    }
-  });
+  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
 
-  ASSERT_TRUE(WaitUntilBusy(graphDB.get(), {lid}, {pid}));
+  auto write_txn = graphDB->BeginTransaction();
+  write_txn->CreateVertex({"label1"},
+                          {{"id", Value::Integer(30000)},
+                           {"str", Value::String("written_during_build")}});
+  write_txn->Commit();
 
-  bool blocked = false;
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline && !blocked) {
-    auto write_txn = graphDB->BeginTransaction();
-    try {
-      write_txn->CreateVertex({"label1"},
-                              {{"id", Value::Integer(30000)},
-                               {"str", Value::String("should_be_blocked")}});
-      write_txn->Rollback();
-    } catch (LgraphException& e) {
-      write_txn->Rollback();
-      if (e.code() == ErrorCode::IndexBusy) {
-        blocked = true;
-        break;
-      }
-      FAIL() << "Unexpected exception message: " << e.what();
-    }
-  }
-
-  builder.join();
-  if (build_error) {
-    try {
-      std::rethrow_exception(build_error);
-    } catch (const std::exception& e) {
-      FAIL() << e.what();
-    }
-  }
-
-  EXPECT_TRUE(blocked);
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index",
+                                          std::chrono::seconds(15)));
 
   txn = graphDB->BeginTransaction();
   int count = 0;
@@ -790,6 +797,16 @@ TEST(FTIndex, buildBlocksWrites) {
     count++;
   }
   EXPECT_EQ(count, 1);
+
+  count = 0;
+  for (auto viter =
+           txn->QueryVertexByFTIndex("ft_index", "written_during_build", 10);
+       viter->Valid(); viter->Next()) {
+    EXPECT_EQ(viter->GetVertexScore().vertex.GetProperty("id"),
+              Value::Integer(30000));
+    count++;
+  }
+  EXPECT_EQ(count, 1);
   txn->Commit();
 }
 
@@ -797,6 +814,7 @@ TEST(FTIndex, updateVertex) {
   fs::remove_all(testdb);
   auto graphDB = GraphDB::Open(testdb, {});
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1", "label2"},
                     {{"id", Value::Integer(1)},
@@ -862,6 +880,7 @@ TEST(FTIndex, repeatedUpdatesInSingleTransactionApplyLatestDocument) {
   options.ft_apply_interval_ = 1;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)},
@@ -895,6 +914,7 @@ TEST(FTIndex, deleteOneMatchedLabelKeepsDocumentIndexed) {
   fs::remove_all(testdb);
   auto graphDB = GraphDB::Open(testdb, {});
   graphDB->AddVertexFullTextIndex("ft_index", {"label1", "label2"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1", "label2"},
@@ -954,6 +974,7 @@ TEST(FTIndex, reopenRecoversPendingWalAndContinuesFromPayload) {
   {
     auto graphDB = GraphDB::Open(testdb, options);
     graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+    ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
     auto txn = graphDB->BeginTransaction();
     txn->CreateVertex({"label1"},
@@ -1055,6 +1076,7 @@ TEST(FTIndex, createIndexClearsStaleArtifactsFromPreviousFailedBuild) {
   txn->Commit();
 
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
   txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)},
@@ -1095,4 +1117,99 @@ TEST(FTIndex, createIndexClearsStaleArtifactsFromPreviousFailedBuild) {
   }
   EXPECT_EQ(fresh_count, 1);
   txn->Commit();
+}
+
+TEST(FTIndex, applyWalMaintainsIndexMarkers) {
+  fs::remove_all(testdb);
+  GraphDBOptions options;
+  options.ft_apply_interval_ = 3600;
+  auto graphDB = GraphDB::Open(testdb, options);
+  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
+
+  auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
+  ASSERT_TRUE(index != nullptr);
+
+  auto txn = graphDB->BeginTransaction();
+  auto vertex = txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)}});
+  int64_t vid = vertex.GetId();
+  txn->Commit();
+  ASSERT_FALSE(HasFullTextMarker(graphDB.get(), index, vid));
+
+  meta::FullTextIndexUpdate add;
+  add.set_type(meta::UpdateType::Add);
+  add.set_vid(vid);
+  add.add_fields("str");
+  add.add_values("manual_token");
+
+  txn = graphDB->BeginTransaction();
+  auto s = txn->dbtxn()->GetWriteBatch()->Put(
+      graphDB->graph_cf().wal, index->NextWALKey(), add.SerializeAsString());
+  ASSERT_TRUE(s.ok());
+  txn->Commit();
+
+  index->ApplyWAL();
+  EXPECT_TRUE(HasFullTextMarker(graphDB.get(), index, vid));
+  EXPECT_TRUE(
+      WaitUntilQueryCount(graphDB.get(), "ft_index", "manual_token", 1));
+
+  meta::FullTextIndexUpdate del;
+  del.set_type(meta::UpdateType::Delete);
+  del.set_vid(vid);
+
+  txn = graphDB->BeginTransaction();
+  s = txn->dbtxn()->GetWriteBatch()->Put(
+      graphDB->graph_cf().wal, index->NextWALKey(), del.SerializeAsString());
+  ASSERT_TRUE(s.ok());
+  txn->Commit();
+
+  index->ApplyWAL();
+  EXPECT_FALSE(HasFullTextMarker(graphDB.get(), index, vid));
+  EXPECT_TRUE(
+      WaitUntilQueryCount(graphDB.get(), "ft_index", "manual_token", 0));
+}
+
+TEST(FTIndex, buildingSetPropertiesWritesDeleteWalWithoutMarker) {
+  fs::remove_all(testdb);
+  GraphDBOptions options;
+  options.ft_apply_interval_ = 3600;
+  auto graphDB = GraphDB::Open(testdb, options);
+  graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
+  ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
+
+  auto index = graphDB->meta_info().GetVertexFullTextIndex("ft_index");
+  ASSERT_TRUE(index != nullptr);
+
+  auto txn = graphDB->BeginTransaction();
+  auto vertex = txn->CreateVertex(
+      {"label1"},
+      {{"id", Value::Integer(1)}, {"str", Value::String("before_update")}});
+  int64_t vid = vertex.GetId();
+  txn->Commit();
+
+  index->ApplyWAL();
+  ASSERT_TRUE(HasFullTextMarker(graphDB.get(), index, vid));
+
+  txn = graphDB->BeginTransaction();
+  auto s = txn->dbtxn()->GetWriteBatch()->Delete(graphDB->graph_cf().index,
+                                                 index->IndexKey(vid));
+  ASSERT_TRUE(s.ok());
+  txn->Commit();
+  ASSERT_FALSE(HasFullTextMarker(graphDB.get(), index, vid));
+
+  index->SetState(meta::IndexBuildState::BUILDING);
+
+  txn = graphDB->BeginTransaction();
+  auto viter = txn->NewVertexIterator(
+      "label1",
+      std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
+  ASSERT_TRUE(viter->Valid());
+  viter->GetVertex().SetProperties({{"str", Value::Integer(10)}});
+  txn->Commit();
+
+  auto updates = ReadFullTextWalUpdates(graphDB.get(), index);
+  ASSERT_EQ(updates.size(), 1);
+  EXPECT_EQ(updates[0].type(), meta::UpdateType::Delete);
+  EXPECT_EQ(updates[0].fields_size(), 0);
+  EXPECT_EQ(updates[0].values_size(), 0);
 }

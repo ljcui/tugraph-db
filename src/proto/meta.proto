@@ -23,6 +23,10 @@ message VertexPropertyIndex {
     repeated string properties   = 5;
     repeated uint32 property_ids = 6;
     uint32 index_id    = 7;
+    IndexBuildState state = 8;
+    uint64 build_start_wal_id = 9;
+    uint64 applied_wal_id = 10;
+    string build_error = 11;
 }
 
 message VertexFullTextIndex {
@@ -33,6 +37,10 @@ message VertexFullTextIndex {
     repeated uint32 label_ids    = 5;
     repeated uint32 property_ids = 6;
     uint32 index_id              = 7;
+    IndexBuildState state        = 8;
+    uint64 build_start_wal_id    = 9;
+    uint64 applied_wal_id        = 10;
+    string build_error           = 11;
 }
 
 enum VectorDistanceType {
@@ -44,6 +52,13 @@ enum VectorDistanceType {
 enum VectorIndexType {
     HNSW = 0;       // Hierarchical navigable small world
     IVF_FLAT = 1;   // InVerted File Flat
+}
+
+enum IndexBuildState {
+    BUILDING = 0;
+    CATCHING_UP = 1;
+    READY = 2;
+    FAILED = 3;
 }
 
 message VertexVectorIndex {
@@ -59,6 +74,10 @@ message VertexVectorIndex {
     uint32 hnsw_ef_construction = 10;
     uint32 index_id             = 11;
     string path                 = 12;
+    IndexBuildState state       = 13;
+    uint64 build_start_wal_id   = 14;
+    uint64 applied_wal_id       = 15;
+    string build_error          = 16;
 }
 
 message GraphDBMetaInfo {
@@ -83,4 +102,10 @@ message VectorIndexUpdate {
     int64 vid              = 2;
     int64 vector_id        = 3;
     repeated float vector  = 4;
+}
+
+message PropertyIndexUpdate {
+    UpdateType type         = 1;
+    int64 vid               = 2;
+    repeated bytes values   = 3;
 }

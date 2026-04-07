@@ -35,6 +35,12 @@ struct MetaInfo {
             size_t ft_writer_threads, size_t ft_writer_memory_budget,
             size_t vt_commit_interval);
   IdGenerator& id_generator() { return id_generator_; }
+  std::shared_ptr<VertexPropertyIndex> GetReadyVertexPropertyIndex(uint32_t lid,
+                                                                   uint32_t pid);
+  std::shared_ptr<VertexPropertyIndex> GetReadyVertexPropertyIndex(
+      uint32_t lid, const std::vector<uint32_t>& pids);
+  std::shared_ptr<VertexPropertyIndex> GetReadyVertexPropertyIndex(
+      const std::string& index_name);
   std::shared_ptr<VertexPropertyIndex> GetVertexPropertyIndex(uint32_t lid,
                                                               uint32_t pid);
   std::shared_ptr<VertexPropertyIndex> GetVertexPropertyIndex(
@@ -44,37 +50,61 @@ struct MetaInfo {
   std::shared_ptr<VertexPropertyIndex> GetVertexPropertyIndex(
       const std::string& index_name);
   std::vector<std::shared_ptr<VertexPropertyIndex>> GetVertexPropertyIndexes();
+  std::vector<std::shared_ptr<VertexPropertyIndex>>
+  GetBuildingVertexPropertyIndexes();
   bool AddVertexPropertyIndex(std::shared_ptr<VertexPropertyIndex> vpi);
+  void PublishVertexPropertyIndex(const std::string& index_name);
   void DeleteVertexPropertyIndex(const std::string& index_name);
 
   // fulltext index
+  std::vector<std::shared_ptr<VertexFullTextIndex>> GetReadyVertexFullTextIndexes();
+  std::shared_ptr<VertexFullTextIndex> GetReadyVertexFullTextIndex(
+      const std::string& name);
   std::vector<std::shared_ptr<VertexFullTextIndex>> GetVertexFullTextIndexes();
   std::shared_ptr<VertexFullTextIndex> GetVertexFullTextIndex(
       const std::string& name);
+  std::vector<std::shared_ptr<VertexFullTextIndex>>
+  GetBuildingVertexFullTextIndexes();
   void DeleteVertexFullTextIndex(const std::string& name);
   bool AddVertexFullTextIndex(std::shared_ptr<VertexFullTextIndex> ft);
+  void PublishVertexFullTextIndex(const std::string& name);
   void ClearVertexFullTextIndexes();
 
   // vector index
+  std::shared_ptr<VertexVectorIndex> GetReadyVertexVectorIndex(uint32_t lid,
+                                                               uint32_t pid);
+  std::shared_ptr<VertexVectorIndex> GetReadyVertexVectorIndex(
+      const std::string& index_name);
   std::shared_ptr<VertexVectorIndex> GetVertexVectorIndex(uint32_t lid,
                                                           uint32_t pid);
   void AddVertexVectorIndex(std::shared_ptr<VertexVectorIndex> vvi);
   std::vector<std::shared_ptr<VertexVectorIndex>> GetVertexVectorIndexes();
+  std::vector<std::shared_ptr<VertexVectorIndex>>
+  GetBuildingVertexVectorIndexes();
   std::shared_ptr<VertexVectorIndex> GetVertexVectorIndex(
       const std::string& index_name);
+  void PublishVertexVectorIndex(const std::string& name);
   void DeleteVertexVectorIndex(const std::string& name);
   void ClearVertexVectorIndexes();
 
  private:
   mutable std::shared_mutex mutex_;
   std::unordered_map<std::string, std::shared_ptr<VertexPropertyIndex>>
-      vertex_property_indexes_by_name_;
+      ready_vertex_property_indexes_by_name_;
   std::unordered_map<std::string, std::shared_ptr<VertexPropertyIndex>>
-      vertex_property_indexes_by_schema_;
+      ready_vertex_property_indexes_by_schema_;
+  std::unordered_map<std::string, std::shared_ptr<VertexPropertyIndex>>
+      building_vertex_property_indexes_by_name_;
+  std::unordered_map<std::string, std::shared_ptr<VertexPropertyIndex>>
+      building_vertex_property_indexes_by_schema_;
   std::unordered_map<uint64_t, std::shared_ptr<VertexVectorIndex>>
-      vertex_vector_indexes;
+      ready_vertex_vector_indexes_;
+  std::unordered_map<uint64_t, std::shared_ptr<VertexVectorIndex>>
+      building_vertex_vector_indexes_;
   std::unordered_map<std::string, std::shared_ptr<VertexFullTextIndex>>
-      vertex_ft_indexes;
+      ready_vertex_ft_indexes_;
+  std::unordered_map<std::string, std::shared_ptr<VertexFullTextIndex>>
+      building_vertex_ft_indexes_;
   IdGenerator id_generator_;
 };
 }  // namespace graphdb

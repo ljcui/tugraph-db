@@ -36,6 +36,7 @@
   X(NoSuchGraph, "No such graph.")                                           \
   X(GraphAlreadyExists, "The graph already exists.")                         \
   X(IndexBusy, "Index is building.")                                         \
+  X(IndexNotReady, "Index is still building.")                               \
   X(CypherException, "Cypher exception.")                                    \
   X(ParserException, "Parser exception.")                                    \
   X(InputError, "Input error.")                                              \

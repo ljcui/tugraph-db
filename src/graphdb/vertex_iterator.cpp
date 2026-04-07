@@ -350,10 +350,15 @@ GetVertexByFullTextIndex::GetVertexByFullTextIndex(
     Transaction *txn, const std::string &ft_index_name,
     const std::string &query, size_t top_n)
     : VertexScoreIterator(txn) {
-  auto ft = txn->db()->meta_info().GetVertexFullTextIndex(ft_index_name);
-  if (!ft)
+  auto ft = txn->db()->meta_info().GetReadyVertexFullTextIndex(ft_index_name);
+  if (!ft) {
+    if (txn->db()->meta_info().GetVertexFullTextIndex(ft_index_name)) {
+      THROW_CODE(IndexNotReady, "Fulltext index [{}] is still building",
+                 ft_index_name);
+    }
     THROW_CODE(FullTextIndexNotFound, "No such fulltext index: {}",
                ft_index_name);
+  }
   result_ = ft->Query(query, top_n);
   if (!result_.empty()) {
     ve_ = std::make_unique<VertexScore>(Vertex(txn_, result_[iter_index_].id),
@@ -378,8 +383,12 @@ GetVertexByKnnSearch::GetVertexByKnnSearch(txn::Transaction *txn,
                                            const std::vector<float> &query,
                                            int top_k, int ef_search)
     : VertexScoreIterator(txn) {
-  auto index = txn->db()->meta_info().GetVertexVectorIndex(vector_index);
+  auto index = txn->db()->meta_info().GetReadyVertexVectorIndex(vector_index);
   if (!index) {
+    if (txn->db()->meta_info().GetVertexVectorIndex(vector_index)) {
+      THROW_CODE(IndexNotReady, "Vector index [{}] is still building",
+                 vector_index);
+    }
     THROW_CODE(VectorIndexException, "No such vector index:{}", vector_index);
   }
   result_ = index->KnnSearch(query.data(), top_k, ef_search);

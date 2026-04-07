@@ -44,16 +44,19 @@ struct ScopedSerializeInterval {
   uint64_t previous_;
 };
 
-bool WaitUntilBusy(
-    GraphDB* graph_db, const std::unordered_set<uint32_t>& lids,
-    const std::unordered_set<uint32_t>& pids,
+bool WaitUntilVectorIndexReady(
+    GraphDB* graph_db, const std::string& index_name,
     std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
   auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
-    if (graph_db->busy_index().Busy(lids, pids)) {
+    if (graph_db->meta_info().GetReadyVertexVectorIndex(index_name)) {
       return true;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    auto index = graph_db->meta_info().GetVertexVectorIndex(index_name);
+    if (index && index->state() == meta::IndexBuildState::FAILED) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   return false;
 }
@@ -80,6 +83,7 @@ TEST(VectorIndex, build) {
   txn->Commit();
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
   txn = graphDB->BeginTransaction();
   int count = 0;
   for (auto viter = txn->QueryVertexByKnnSearch(index_name,
@@ -100,6 +104,7 @@ TEST_P(VectorIndexParamTest, dim) {
   int dim = GetParam();
   graphDB->AddVertexVectorIndex(index_name, "person", "embedding", dim, "l2",
                                 16, 100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
   auto txn = graphDB->BeginTransaction();
   std::random_device rd;
   std::mt19937 gen(rd());
@@ -114,6 +119,9 @@ TEST_P(VectorIndexParamTest, dim) {
                                    {"embedding", Value::Array(embedding)}});
   }
   txn->Commit();
+  for (const auto& index : graphDB->meta_info().GetVertexVectorIndexes()) {
+    index->ApplyWAL();
+  }
   std::vector<float> query;
   query.reserve(dim);
   for (auto j = 0; j < dim; j++) {
@@ -180,6 +188,7 @@ TEST(VectorIndex, del) {
   std::string index_name = "vector_index";
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1"},
                     {{"id", Value::Integer(1)},
@@ -240,6 +249,7 @@ TEST(VectorIndex, restart) {
     auto graphDB = GraphDB::Open(testdb, {});
     graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2",
                                   16, 100);
+    ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
     auto txn = graphDB->BeginTransaction();
     txn->CreateVertex(
         {"label1"}, {{"id", Value::Integer(1)},
@@ -281,6 +291,7 @@ TEST(VectorIndex, serialize) {
     auto graphDB = GraphDB::Open(testdb, {});
     graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2",
                                   16, 100);
+    ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
     auto txn = graphDB->BeginTransaction();
     txn->CreateVertex(
         {"label1"}, {{"id", Value::Integer(1)},
@@ -326,6 +337,7 @@ TEST(VectorIndex, corruptedWalIsRejected) {
   std::string index_name = "vector_index";
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
 
   auto index = graphDB->meta_info().GetVertexVectorIndex(index_name);
   ASSERT_TRUE(index != nullptr);
@@ -350,6 +362,7 @@ TEST(VectorIndex, checkpointMetaWriteFailureIsReported) {
     auto graphDB = GraphDB::Open(testdb, options);
     graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2",
                                   16, 100);
+    ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
 
     auto txn = graphDB->BeginTransaction();
     txn->CreateVertex(
@@ -389,6 +402,7 @@ TEST(VectorIndex, rollbackDoesNotBreakWalApply) {
   std::string index_name = "vector_index";
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
 
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1"},
@@ -429,6 +443,7 @@ TEST(VectorIndex, outOfOrderCommitsApplyCleanly) {
   std::string index_name = "vector_index";
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
 
   auto txn1 = graphDB->BeginTransaction();
   txn1->CreateVertex({"label1"},
@@ -467,6 +482,7 @@ TEST(VectorIndex, deleteLabelsUpdatesMembershipCorrectly) {
   std::string index_name = "vector_index";
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
 
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1", "label2"},
@@ -532,7 +548,7 @@ TEST(VectorIndex, deleteLabelsUpdatesMembershipCorrectly) {
   txn->Commit();
 }
 
-TEST(VectorIndex, buildBlocksWrites) {
+TEST(VectorIndex, buildDoesNotBlockWrites) {
   fs::remove_all(testdb);
   auto graphDB = GraphDB::Open(testdb, {});
   std::string index_name = "vector_index";
@@ -546,59 +562,32 @@ TEST(VectorIndex, buildBlocksWrites) {
   }
   txn->Commit();
 
-  auto lid = graphDB->id_generator().GetOrCreateLid("label1");
-  auto pid = graphDB->id_generator().GetOrCreatePid("embedding");
-  std::exception_ptr build_error;
-  std::thread builder([&]() {
-    try {
-      graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 8, "l2",
-                                    16, 100);
-    } catch (...) {
-      build_error = std::current_exception();
-    }
-  });
+  graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 8, "l2", 16,
+                                100);
 
-  ASSERT_TRUE(WaitUntilBusy(graphDB.get(), {lid}, {pid}));
+  auto write_txn = graphDB->BeginTransaction();
+  write_txn->CreateVertex(
+      {"label1"},
+      {{"id", Value::Integer(20000)},
+       {"embedding",
+        Value::DoubleArray({42.0, 42.0, 42.0, 42.0, 42.0, 42.0, 42.0, 42.0})}});
+  write_txn->Commit();
 
-  bool blocked = false;
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline && !blocked) {
-    auto write_txn = graphDB->BeginTransaction();
-    try {
-      write_txn->CreateVertex(
-          {"label1"},
-          {{"id", Value::Integer(20000)},
-           {"embedding",
-            Value::DoubleArray({1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0})}});
-      write_txn->Rollback();
-    } catch (LgraphException& e) {
-      write_txn->Rollback();
-      if (e.code() == ErrorCode::IndexBusy) {
-        blocked = true;
-        break;
-      }
-      FAIL() << "Unexpected exception message: " << e.what();
-    }
-  }
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name,
+                                        std::chrono::seconds(15)));
 
-  builder.join();
-  if (build_error) {
-    try {
-      std::rethrow_exception(build_error);
-    } catch (const std::exception& e) {
-      FAIL() << e.what();
-    }
-  }
-
-  EXPECT_TRUE(blocked);
+  auto index = graphDB->meta_info().GetReadyVertexVectorIndex(index_name);
+  ASSERT_TRUE(index != nullptr);
+  index->ApplyWAL();
+  EXPECT_EQ(index->NumElements(), 10001);
 
   txn = graphDB->BeginTransaction();
-  int count = 0;
-  for (auto viter = txn->QueryVertexByKnnSearch(
-           index_name, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}, 10, 100);
-       viter->Valid(); viter->Next()) {
-    count++;
-  }
-  EXPECT_EQ(count, 10);
+  auto viter = txn->NewVertexIterator(
+      "label1",
+      std::unordered_map<std::string, Value>{{"id", Value::Integer(20000)}});
+  ASSERT_TRUE(viter->Valid());
+  EXPECT_EQ(
+      viter->GetVertex().GetProperty("embedding"),
+      Value::DoubleArray({42.0, 42.0, 42.0, 42.0, 42.0, 42.0, 42.0, 42.0}));
   txn->Commit();
 }
