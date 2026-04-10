@@ -286,7 +286,7 @@ TEST(VectorIndex, restart) {
 TEST(VectorIndex, serialize) {
   fs::remove_all(testdb);
   std::string index_name = "vector_index";
-  FLAGS_vt_serialize_interval = 3;
+  ScopedSerializeInterval scoped_interval(3);
   {
     auto graphDB = GraphDB::Open(testdb, {});
     graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2",
