@@ -338,9 +338,8 @@ void MetaInfo::AddVertexVectorIndex(std::shared_ptr<VertexVectorIndex> vvi) {
       building_vertex_vector_indexes_.count(index_key)) {
     return;
   }
-  auto* indexes =
-      vvi->IsReady() ? &ready_vertex_vector_indexes_
-                     : &building_vertex_vector_indexes_;
+  auto* indexes = vvi->IsReady() ? &ready_vertex_vector_indexes_
+                                 : &building_vertex_vector_indexes_;
   indexes->emplace(index_key, std::move(vvi));
 }
 
@@ -478,9 +477,8 @@ void MetaInfo::Init(rocksdb::TransactionDB* db,
         pids.push_back(native_to_big(pid));
       }
       uint32_t index_id = native_to_big(meta.index_id());
-      auto vi = std::make_shared<VertexPropertyIndex>(db, graph_cf, meta,
-                                                      graph_cf->index, index_id,
-                                                      lid, std::move(pids));
+      auto vi = std::make_shared<VertexPropertyIndex>(
+          db, graph_cf, meta, graph_cf->index, index_id, lid, std::move(pids));
       AddVertexPropertyIndex(std::move(vi));
       continue;
     }

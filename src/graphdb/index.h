@@ -66,8 +66,8 @@ struct VertexPropertyIndex
                    const std::optional<std::vector<Value>>& old_values);
   void DeleteIndex(txn::Transaction* txn, int64_t vid,
                    const std::vector<Value>& values);
-  void ApplyCommittedBuildUpdate(
-      txn::Transaction* txn, const meta::PropertyIndexUpdate& update);
+  void ApplyCommittedBuildUpdate(txn::Transaction* txn,
+                                 const meta::PropertyIndexUpdate& update);
   void Load(const rocksdb::Snapshot* snapshot, uint64_t snapshot_wal_id);
   void ApplyWAL();
   std::string NextWALKey();
@@ -98,10 +98,9 @@ struct VertexPropertyIndex
   void ResetForBuild();
 
  private:
-  void UpdateIndexDirect(
-      txn::Transaction* txn, int64_t vid,
-      const std::optional<std::vector<Value>>& new_values,
-      const std::optional<std::vector<Value>>& old_values);
+  void UpdateIndexDirect(txn::Transaction* txn, int64_t vid,
+                         const std::optional<std::vector<Value>>& new_values,
+                         const std::optional<std::vector<Value>>& old_values);
   void AppendBuildUpdate(txn::Transaction* txn, meta::UpdateType type,
                          int64_t vid, const std::vector<Value>& values);
   void ApplyBuildUpdate(const meta::PropertyIndexUpdate& update);
@@ -161,9 +160,7 @@ class VertexFullTextIndex
   void SetBuildError(std::string msg) { meta_.set_build_error(std::move(msg)); }
   void Load(const rocksdb::Snapshot* snapshot = nullptr,
             uint64_t snapshot_wal_id = 0);
-  std::string IndexKey(int64_t vid);
   std::string NextWALKey();
-  bool IsIndexed(txn::Transaction* txn, int64_t vid);
   void AddIndex(txn::Transaction* txn, int64_t vid,
                 const meta::FullTextIndexUpdate& wal);
   void DeleteIndex(txn::Transaction* txn, int64_t vid,

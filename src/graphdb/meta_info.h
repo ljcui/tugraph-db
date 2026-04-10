@@ -35,8 +35,8 @@ struct MetaInfo {
             size_t ft_writer_threads, size_t ft_writer_memory_budget,
             size_t vt_commit_interval);
   IdGenerator& id_generator() { return id_generator_; }
-  std::shared_ptr<VertexPropertyIndex> GetReadyVertexPropertyIndex(uint32_t lid,
-                                                                   uint32_t pid);
+  std::shared_ptr<VertexPropertyIndex> GetReadyVertexPropertyIndex(
+      uint32_t lid, uint32_t pid);
   std::shared_ptr<VertexPropertyIndex> GetReadyVertexPropertyIndex(
       uint32_t lid, const std::vector<uint32_t>& pids);
   std::shared_ptr<VertexPropertyIndex> GetReadyVertexPropertyIndex(
@@ -57,7 +57,8 @@ struct MetaInfo {
   void DeleteVertexPropertyIndex(const std::string& index_name);
 
   // fulltext index
-  std::vector<std::shared_ptr<VertexFullTextIndex>> GetReadyVertexFullTextIndexes();
+  std::vector<std::shared_ptr<VertexFullTextIndex>>
+  GetReadyVertexFullTextIndexes();
   std::shared_ptr<VertexFullTextIndex> GetReadyVertexFullTextIndex(
       const std::string& name);
   std::vector<std::shared_ptr<VertexFullTextIndex>> GetVertexFullTextIndexes();

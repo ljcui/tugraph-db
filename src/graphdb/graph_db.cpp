@@ -307,28 +307,28 @@ std::unique_ptr<txn::Transaction> GraphDB::BeginTransaction() {
 
 void GraphDB::PersistVertexPropertyIndexMeta(
     const std::shared_ptr<VertexPropertyIndex>& index) {
-  auto s = db_->Put({}, graph_cf_.meta_info,
-                    BuildMetaKey(MetaDataType::VertexPropertyIndex,
-                                 index->meta().name()),
-                    index->meta().SerializeAsString());
+  auto s = db_->Put(
+      {}, graph_cf_.meta_info,
+      BuildMetaKey(MetaDataType::VertexPropertyIndex, index->meta().name()),
+      index->meta().SerializeAsString());
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
 }
 
 void GraphDB::PersistVertexFullTextIndexMeta(
     const std::shared_ptr<VertexFullTextIndex>& index) {
-  auto s = db_->Put({}, graph_cf_.meta_info,
-                    BuildMetaKey(MetaDataType::VertexFullTextIndex,
-                                 index->meta().name()),
-                    index->meta().SerializeAsString());
+  auto s = db_->Put(
+      {}, graph_cf_.meta_info,
+      BuildMetaKey(MetaDataType::VertexFullTextIndex, index->meta().name()),
+      index->meta().SerializeAsString());
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
 }
 
 void GraphDB::PersistVertexVectorIndexMeta(
     const std::shared_ptr<VertexVectorIndex>& index) {
-  auto s = db_->Put({}, graph_cf_.meta_info,
-                    BuildMetaKey(MetaDataType::VertexVectorIndex,
-                                 index->meta().name()),
-                    index->meta().SerializeAsString());
+  auto s = db_->Put(
+      {}, graph_cf_.meta_info,
+      BuildMetaKey(MetaDataType::VertexVectorIndex, index->meta().name()),
+      index->meta().SerializeAsString());
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
 }
 
@@ -582,8 +582,8 @@ void GraphDB::ScheduleVertexVectorIndexBuild(
 
 void GraphDB::ClearData() {
   std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
-  std::unique_lock<std::mutex> property_commit_lock(property_index_commit_mutex_,
-                                                    std::defer_lock);
+  std::unique_lock<std::mutex> property_commit_lock(
+      property_index_commit_mutex_, std::defer_lock);
   std::unique_lock<std::mutex> fulltext_commit_lock(
       fulltext_index_commit_mutex_, std::defer_lock);
   std::unique_lock<std::mutex> vector_commit_lock(vector_index_commit_mutex_,
@@ -684,9 +684,8 @@ void GraphDB::AddVertexPropertyIndex(
     meta_val.add_property_ids(big_to_native(pids[i]));
   }
 
-  auto vpi = std::make_shared<VertexPropertyIndex>(db_, &graph_cf_, meta_val,
-                                                   graph_cf_.index, index_id,
-                                                   lid, pids);
+  auto vpi = std::make_shared<VertexPropertyIndex>(
+      db_, &graph_cf_, meta_val, graph_cf_.index, index_id, lid, pids);
 
   if (unique) {
     auto busy_guard = busy_index_.Hold({lid}, std::move(pid_set));

@@ -94,18 +94,6 @@ bool WaitUntilQueryCount(
   }
 }
 
-bool HasFullTextMarker(GraphDB* graph_db,
-                       const std::shared_ptr<VertexFullTextIndex>& index,
-                       int64_t vid) {
-  auto txn = graph_db->BeginTransaction();
-  std::string val;
-  auto s = txn->dbtxn()->Get({}, graph_db->graph_cf().index,
-                             index->IndexKey(vid), &val);
-  txn->Rollback();
-  EXPECT_TRUE(s.ok() || s.IsNotFound());
-  return s.ok();
-}
-
 size_t CountKeysWithPrefix(GraphDB* graph_db, rocksdb::ColumnFamilyHandle* cf,
                            const std::string& prefix) {
   auto txn = graph_db->BeginTransaction();
@@ -1089,7 +1077,7 @@ TEST(FTIndex, createIndexClearsStaleArtifactsFromPreviousFailedBuild) {
 
   std::string prefix(AsChars(index->index_id()), sizeof(index->index_id()));
   EXPECT_EQ(
-      CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().index, prefix), 1);
+      CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().index, prefix), 0);
 
   txn = graphDB->BeginTransaction();
   int stale_dir_count = 0;
@@ -1119,7 +1107,7 @@ TEST(FTIndex, createIndexClearsStaleArtifactsFromPreviousFailedBuild) {
   txn->Commit();
 }
 
-TEST(FTIndex, applyWalMaintainsIndexMarkers) {
+TEST(FTIndex, applyWalDoesNotWriteIndexMarkers) {
   fs::remove_all(testdb);
   GraphDBOptions options;
   options.ft_apply_interval_ = 3600;
@@ -1134,7 +1122,9 @@ TEST(FTIndex, applyWalMaintainsIndexMarkers) {
   auto vertex = txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)}});
   int64_t vid = vertex.GetId();
   txn->Commit();
-  ASSERT_FALSE(HasFullTextMarker(graphDB.get(), index, vid));
+  std::string prefix(AsChars(index->index_id()), sizeof(index->index_id()));
+  EXPECT_EQ(
+      CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().index, prefix), 0);
 
   meta::FullTextIndexUpdate add;
   add.set_type(meta::UpdateType::Add);
@@ -1149,7 +1139,8 @@ TEST(FTIndex, applyWalMaintainsIndexMarkers) {
   txn->Commit();
 
   index->ApplyWAL();
-  EXPECT_TRUE(HasFullTextMarker(graphDB.get(), index, vid));
+  EXPECT_EQ(
+      CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().index, prefix), 0);
   EXPECT_TRUE(
       WaitUntilQueryCount(graphDB.get(), "ft_index", "manual_token", 1));
 
@@ -1164,12 +1155,13 @@ TEST(FTIndex, applyWalMaintainsIndexMarkers) {
   txn->Commit();
 
   index->ApplyWAL();
-  EXPECT_FALSE(HasFullTextMarker(graphDB.get(), index, vid));
+  EXPECT_EQ(
+      CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().index, prefix), 0);
   EXPECT_TRUE(
       WaitUntilQueryCount(graphDB.get(), "ft_index", "manual_token", 0));
 }
 
-TEST(FTIndex, buildingSetPropertiesWritesDeleteWalWithoutMarker) {
+TEST(FTIndex, buildingSetPropertiesWritesDeleteWalFromPreviousProperties) {
   fs::remove_all(testdb);
   GraphDBOptions options;
   options.ft_apply_interval_ = 3600;
@@ -1181,21 +1173,11 @@ TEST(FTIndex, buildingSetPropertiesWritesDeleteWalWithoutMarker) {
   ASSERT_TRUE(index != nullptr);
 
   auto txn = graphDB->BeginTransaction();
-  auto vertex = txn->CreateVertex(
-      {"label1"},
-      {{"id", Value::Integer(1)}, {"str", Value::String("before_update")}});
-  int64_t vid = vertex.GetId();
+  txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)},
+                                 {"str", Value::String("before_update")}});
   txn->Commit();
 
   index->ApplyWAL();
-  ASSERT_TRUE(HasFullTextMarker(graphDB.get(), index, vid));
-
-  txn = graphDB->BeginTransaction();
-  auto s = txn->dbtxn()->GetWriteBatch()->Delete(graphDB->graph_cf().index,
-                                                 index->IndexKey(vid));
-  ASSERT_TRUE(s.ok());
-  txn->Commit();
-  ASSERT_FALSE(HasFullTextMarker(graphDB.get(), index, vid));
 
   index->SetState(meta::IndexBuildState::BUILDING);
 

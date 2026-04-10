@@ -502,8 +502,8 @@ void VertexPropertyIndex::Load(const rocksdb::Snapshot* snapshot,
       std::string property_key(AsChars(vid), sizeof(vid));
       property_key.append(AsChars(pid), sizeof(pid));
       std::string property_val;
-      auto s = db_->Get(ro, graph_cf_->vertex_property, property_key,
-                        &property_val);
+      auto s =
+          db_->Get(ro, graph_cf_->vertex_property, property_key, &property_val);
       if (s.IsNotFound()) {
         complete = false;
         break;
@@ -546,9 +546,10 @@ void VertexPropertyIndex::ApplyWAL() {
 
     key.remove_prefix(sizeof(index_id_));
     if (key.size() != sizeof(apply_id_)) {
-      THROW_CODE(StorageEngineError,
-                 "property index wal key has invalid size, expect {}, actual {}",
-                 sizeof(apply_id_), key.size());
+      THROW_CODE(
+          StorageEngineError,
+          "property index wal key has invalid size, expect {}, actual {}",
+          sizeof(apply_id_), key.size());
     }
     consumed_wal_id = ReadValue<uint64_t>(key.data());
     meta::PropertyIndexUpdate update;
@@ -825,43 +826,14 @@ VertexFullTextIndex::VertexFullTextIndex(
 
 void VertexFullTextIndex::AddIndex(txn::Transaction* txn, int64_t vid,
                                    const meta::FullTextIndexUpdate& wal) {
-  auto s =
-      txn->dbtxn()->GetWriteBatch()->Put(graph_cf_->index, IndexKey(vid), {});
-  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
-  if (!IsReady()) {
-    meta::FullTextIndexUpdate del;
-    del.set_type(meta::UpdateType::Delete);
-    del.set_vid(vid);
-    txn->AppendFullTextIndexWAL(shared_from_this(), del);
-  }
+  (void)vid;
   txn->AppendFullTextIndexWAL(shared_from_this(), wal);
 }
 
 void VertexFullTextIndex::DeleteIndex(txn::Transaction* txn, int64_t vid,
                                       const meta::FullTextIndexUpdate& wal) {
-  auto s =
-      txn->dbtxn()->GetWriteBatch()->Delete(graph_cf_->index, IndexKey(vid));
-  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  (void)vid;
   txn->AppendFullTextIndexWAL(shared_from_this(), wal);
-}
-
-bool VertexFullTextIndex::IsIndexed(Transaction* txn, int64_t vid) {
-  std::string index_key = IndexKey(vid);
-  std::string val;
-  auto s = txn->dbtxn()->Get({}, graph_cf_->index, index_key, &val);
-  if (s.ok()) {
-    return true;
-  } else if (s.IsNotFound()) {
-    return false;
-  } else {
-    THROW_CODE(StorageEngineError, s.ToString());
-  }
-}
-
-std::string VertexFullTextIndex::IndexKey(int64_t vid) {
-  std::string ret(AsChars(index_id_), sizeof(index_id_));
-  ret.append(AsChars(vid), sizeof(vid));
-  return ret;
 }
 
 std::string VertexFullTextIndex::NextWALKey() {
@@ -913,8 +885,6 @@ void VertexFullTextIndex::Load(const rocksdb::Snapshot* snapshot,
         if (!loaded_vids.emplace(id).second) {
           continue;
         }
-        auto s = db_->Put({}, graph_cf_->index, IndexKey(id), {});
-        if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
         batch.AddDocument(id, &fields, &values);
         count++;
         if (count == 10000) {
@@ -990,14 +960,14 @@ void VertexFullTextIndex::ApplyWAL() {
   int count = 0;
   uint64_t consumed_wal_id = 0;
   FTUpdateBatch batch;
-  rocksdb::WriteBatch delete_batch;
+  rocksdb::WriteBatch write_batch;
   rocksdb::ReadOptions ro;
   rocksdb::WriteOptions wo;
   std::unique_ptr<rocksdb::Iterator> iter(db_->NewIterator(ro, graph_cf_->wal));
   for (iter->Seek(start_key); iter->Valid() && iter->key().starts_with(prefix);
        iter->Next()) {
     auto key = iter->key();
-    delete_batch.Delete(graph_cf_->wal, key.ToString());
+    write_batch.Delete(graph_cf_->wal, key.ToString());
 
     key.remove_prefix(sizeof(index_id_));
     if (key.size() != sizeof(apply_id_)) {
@@ -1017,12 +987,8 @@ void VertexFullTextIndex::ApplyWAL() {
     if (update.type() == meta::UpdateType::Add) {
       batch.AddDocument(update.vid(), update.mutable_fields(),
                         update.mutable_values());
-      auto s = delete_batch.Put(graph_cf_->index, IndexKey(update.vid()), {});
-      if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
     } else if (update.type() == meta::UpdateType::Delete) {
       batch.AddDelete(update.vid());
-      auto s = delete_batch.Delete(graph_cf_->index, IndexKey(update.vid()));
-      if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
     } else {
       THROW_CODE(StorageEngineError,
                  "fulltext index wal has invalid update type: {}",
@@ -1038,9 +1004,9 @@ void VertexFullTextIndex::ApplyWAL() {
       rocksdb::TransactionDBWriteOptimizations two;
       two.skip_concurrency_control = true;
       two.skip_duplicate_key_check = true;
-      auto s = db_->Write(wo, two, &delete_batch);
+      auto s = db_->Write(wo, two, &write_batch);
       if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
-      delete_batch.Clear();
+      write_batch.Clear();
       batch.Clear();
     }
   }
@@ -1054,9 +1020,9 @@ void VertexFullTextIndex::ApplyWAL() {
     rocksdb::TransactionDBWriteOptimizations two;
     two.skip_concurrency_control = true;
     two.skip_duplicate_key_check = true;
-    auto s = db_->Write(wo, two, &delete_batch);
+    auto s = db_->Write(wo, two, &write_batch);
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
-    delete_batch.Clear();
+    write_batch.Clear();
   }
   if (consumed_wal_id != 0) {
     apply_id_ = consumed_wal_id;

@@ -151,9 +151,7 @@ file(
 add_custom_command(
   OUTPUT "${FTINDEX_LIB}" "${FTINDEX_HEADER}"
   COMMAND cargo build --release
-  COMMAND
-    "${CMAKE_COMMAND}" -E copy_if_different "${FTINDEX_GENERATED_HEADER}"
-    "${FTINDEX_HEADER}"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${FTINDEX_GENERATED_HEADER}" "${FTINDEX_HEADER}"
   WORKING_DIRECTORY "${FTINDEX_DIR}"
   DEPENDS ${FTINDEX_MANIFEST_FILES} ${FTINDEX_SOURCE_FILES}
   COMMENT "Building ftindex static library and syncing bridge header"

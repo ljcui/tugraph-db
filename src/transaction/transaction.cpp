@@ -478,9 +478,8 @@ void Transaction::Commit() {
           wal.index->ApplyCommittedBuildUpdate(this, wal.update);
           continue;
         }
-        auto s =
-            write_batch->Put(db_->graph_cf().wal, wal.index->NextWALKey(),
-                             wal.update.SerializeAsString());
+        auto s = write_batch->Put(db_->graph_cf().wal, wal.index->NextWALKey(),
+                                  wal.update.SerializeAsString());
         if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
       }
       for (const auto& wal : pending_fulltext_wals_) {
@@ -499,9 +498,8 @@ void Transaction::Commit() {
                      "Vector index [{}] was deleted during transaction",
                      wal.index->meta().name());
         }
-        auto s =
-            write_batch->Put(db_->graph_cf().wal, wal.index->NextWALKey(),
-                             wal.update.SerializeAsString());
+        auto s = write_batch->Put(db_->graph_cf().wal, wal.index->NextWALKey(),
+                                  wal.update.SerializeAsString());
         if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
       }
     }
