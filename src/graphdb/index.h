@@ -135,6 +135,7 @@ class VertexFullTextIndex
   void ApplyWAL();
   void Start();
   void Stop();
+  void ReleaseResources();
   [[nodiscard]] bool MatchLabelIds(
       const std::unordered_set<uint32_t>& lids) const;
   [[nodiscard]] bool MatchPropertyIds(

@@ -434,6 +434,7 @@ void GraphDB::ScheduleVertexFullTextIndexBuild(
           return;
         }
         DeleteFullTextIndexRanges(db_, &graph_cf_, index->index_id());
+        index->ReleaseResources();
         ResetFullTextIndexPath(index->meta().path());
         index->ResetForClear();
         index->SetState(meta::IndexBuildState::BUILDING);
@@ -621,6 +622,7 @@ void GraphDB::ClearData() {
     index->ResetForBuild();
   }
   for (const auto& index : ft_indexes) {
+    index->ReleaseResources();
     ResetFullTextIndexPath(index->meta().path());
     index->ResetForClear();
     if (index->IsReady()) {
@@ -831,6 +833,7 @@ void GraphDB::DeleteVertexFullTextIndex(const std::string& index_name) {
   uint32_t index_id = ft_index->index_id();
   ft_index->MarkDeleted();
   ft_index->Stop();
+  ft_index->ReleaseResources();
   meta_info_.DeleteVertexFullTextIndex(index_name);
 
   rocksdb::WriteBatch wb;

@@ -744,12 +744,19 @@ void VertexFullTextIndex::Stop() {
   timer_cv_.wait(lock, [this] { return active_callbacks_ == 0; });
 }
 
+void VertexFullTextIndex::ReleaseResources() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  ft_index_ = nullptr;
+  instance_.reset();
+}
+
 void VertexFullTextIndex::ResetForClear() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     deleted_.store(false);
     apply_id_ = 0;
     next_wal_id_ = 1;
+    ft_index_ = nullptr;
     instance_.reset();
     ::rust::Vec<::rust::String> fields;
     for (const auto& prop : meta_.properties()) {
