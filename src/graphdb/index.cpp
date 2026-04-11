@@ -919,7 +919,10 @@ void VertexFullTextIndex::Load(const rocksdb::Snapshot* snapshot,
     indexed_properties.emplace_back(
         pid, id_generator_->GetPropertyName(pid).value());
   }
-  std::unordered_set<int64_t> loaded_vids;
+  std::optional<std::unordered_set<int64_t>> loaded_vids;
+  if (lids_.size() > 1) {
+    loaded_vids.emplace();
+  }
   for (auto lid : lids_) {
     rocksdb::ReadOptions ro;
     ro.snapshot = snapshot;
@@ -931,10 +934,12 @@ void VertexFullTextIndex::Load(const rocksdb::Snapshot* snapshot,
       auto key = iter->key();
       key.remove_prefix(sizeof(uint32_t));
       int64_t id = ReadValue<int64_t>(key.data());
-      // A vertex may appear in multiple label scans; skip it before property
-      // IO.
-      if (!loaded_vids.emplace(id).second) {
-        continue;
+      if (loaded_vids) {
+        // A vertex may appear in multiple label scans; skip it before
+        // property IO.
+        if (!loaded_vids->emplace(id).second) {
+          continue;
+        }
       }
       std::vector<std::string> fields;
       std::vector<std::string> values;
@@ -1176,6 +1181,7 @@ VertexVectorIndex::VertexVectorIndex(rocksdb::TransactionDB* db,
     }
     ThrowIfIteratorError(iter.get(),
                          "vector index next wal id iterator failed");
+    next_wal_id_ = std::max(next_wal_id_.load(), big_to_native(apply_id_) + 1);
     LOG_INFO("vector index {}, next_wal_id: {}", meta_.name(),
              next_wal_id_.load());
   }

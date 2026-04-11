@@ -150,6 +150,28 @@ TEST(VectorIndex, build) {
   txn->Commit();
 }
 
+TEST(VectorIndex, invalidCreateParametersAreRejectedSynchronously) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, {});
+
+  EXPECT_THROW_CODE_MSG(
+      graphDB->AddVertexVectorIndex("invalid_dimension_zero", "label1",
+                                    "embedding", 0, "l2", 16, 100),
+      InvalidParameter, "dimension");
+  EXPECT_THROW_CODE_MSG(
+      graphDB->AddVertexVectorIndex("invalid_dimension_negative", "label1",
+                                    "embedding", -1, "l2", 16, 100),
+      InvalidParameter, "dimension");
+  EXPECT_THROW_CODE_MSG(
+      graphDB->AddVertexVectorIndex("invalid_hnsw_m", "label1", "embedding", 4,
+                                    "l2", 4, 100),
+      InvalidParameter, "hnsw.m");
+  EXPECT_THROW_CODE_MSG(
+      graphDB->AddVertexVectorIndex("invalid_hnsw_ef", "label1", "embedding", 4,
+                                    "l2", 16, 15),
+      InvalidParameter, "hnsw.efConstruction");
+}
+
 class VectorIndexParamTest : public ::testing::TestWithParam<int> {};
 
 TEST_P(VectorIndexParamTest, dim) {
@@ -675,6 +697,58 @@ TEST(VectorIndex, deleteOnlyWalIsCheckpointedAndTrimmed) {
     auto result =
         txn->QueryVertexByKnnSearch(index_name, {1.0, 1.0, 1.0, 1.0}, 10, 100);
     EXPECT_FALSE(result->Valid());
+    txn->Commit();
+  }
+}
+
+TEST(VectorIndex, restartAfterCheckpointContinuesWalSequence) {
+  fs::remove_all(testdb);
+  GraphDBOptions options;
+  options.vt_apply_interval_ = 3600;
+  ScopedSerializeInterval interval(1);
+  std::string index_name = "vector_index";
+
+  {
+    auto graphDB = GraphDB::Open(testdb, options);
+    graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2",
+                                  16, 100);
+    ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
+
+    auto index = graphDB->meta_info().GetVertexVectorIndex(index_name);
+    ASSERT_TRUE(index != nullptr);
+    std::string prefix(common::AsChars(index->index_id()),
+                       sizeof(index->index_id()));
+
+    auto txn = graphDB->BeginTransaction();
+    txn->CreateVertex(
+        {"label1"}, {{"id", Value::Integer(1)},
+                     {"embedding", Value::DoubleArray({1.0, 1.0, 1.0, 1.0})}});
+    txn->Commit();
+
+    index->ApplyWAL();
+    EXPECT_EQ(
+        CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().wal, prefix), 0);
+  }
+
+  {
+    auto graphDB = GraphDB::Open(testdb, options);
+    auto index = graphDB->meta_info().GetVertexVectorIndex(index_name);
+    ASSERT_TRUE(index != nullptr);
+
+    auto txn = graphDB->BeginTransaction();
+    txn->CreateVertex(
+        {"label1"}, {{"id", Value::Integer(2)},
+                     {"embedding", Value::DoubleArray({2.0, 2.0, 2.0, 2.0})}});
+    txn->Commit();
+
+    index->ApplyWAL();
+
+    txn = graphDB->BeginTransaction();
+    auto nearest =
+        txn->QueryVertexByKnnSearch(index_name, {2.0, 2.0, 2.0, 2.0}, 1, 100);
+    ASSERT_TRUE(nearest->Valid());
+    EXPECT_EQ(nearest->GetVertexScore().vertex.GetProperty("id").AsInteger(),
+              2);
     txn->Commit();
   }
 }

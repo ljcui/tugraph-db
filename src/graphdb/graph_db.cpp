@@ -854,6 +854,28 @@ void GraphDB::AddVertexVectorIndex(const std::string& index_name,
   if (index_name.empty() || label.empty() || property.empty()) {
     THROW_CODE(InvalidParameter);
   }
+  if (dimension < 1 || dimension > 4096) {
+    THROW_CODE(InvalidParameter,
+               "dimension should be an integer in the range [1, 4096]");
+  }
+  if (hnsw_m < 5 || hnsw_m > 64) {
+    THROW_CODE(InvalidParameter,
+               "hnsw.m should be an integer in the range [5, 64]");
+  }
+  if (hnsw_ef_construction < hnsw_m || hnsw_ef_construction > 1000) {
+    THROW_CODE(
+        InvalidParameter,
+        "hnsw.efConstruction should be an integer in the range [hnsw.m,1000]");
+  }
+  meta::VectorDistanceType dist_type;
+  if (distance_type == "l2") {
+    dist_type = meta::VectorDistanceType::L2;
+  } else if (distance_type == "ip") {
+    dist_type = meta::VectorDistanceType::IP;
+  } else {
+    THROW_CODE(InvalidParameter, "Distance Type {} not supported",
+               distance_type);
+  }
   if (meta_info_.GetVertexVectorIndex(index_name)) {
     THROW_CODE(VertexVectorIndexAlreadyExist,
                "Vertex vector index [{}] already exists", index_name);
@@ -870,15 +892,6 @@ void GraphDB::AddVertexVectorIndex(const std::string& index_name,
   DeleteVectorIndexRanges(db_, &graph_cf_, index_id);
   ResetIndexPath(vt_index_pth, "vector index");
   meta::VectorIndexType index_type = meta::VectorIndexType::HNSW;
-  meta::VectorDistanceType dist_type;
-  if (distance_type == "l2") {
-    dist_type = meta::VectorDistanceType::L2;
-  } else if (distance_type == "ip") {
-    dist_type = meta::VectorDistanceType::IP;
-  } else {
-    THROW_CODE(InvalidParameter, "Distance Type {} not supported",
-               distance_type);
-  }
   meta::VertexVectorIndex meta;
   meta.set_index_id(big_to_native(index_id));
   meta.set_path(vt_index_pth);
