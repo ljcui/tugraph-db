@@ -31,11 +31,11 @@ namespace graphdb {
 
 using VertexSerializedProperties = std::unordered_map<uint32_t, std::string>;
 
-void SyncVertexIndexUpdates(txn::Transaction* txn, int64_t vid,
-                            const std::unordered_set<uint32_t>& old_lids,
-                            const std::unordered_set<uint32_t>& new_lids,
-                            const VertexSerializedProperties& old_properties,
-                            const VertexSerializedProperties& new_properties,
-                            const std::unordered_set<uint32_t>& touched_pids);
+void UpdateVertexIndexes(txn::Transaction* txn, int64_t vid,
+                         const std::unordered_set<uint32_t>& old_lids,
+                         const std::unordered_set<uint32_t>& new_lids,
+                         const VertexSerializedProperties& old_properties,
+                         const VertexSerializedProperties& new_properties,
+                         const std::unordered_set<uint32_t>& touched_pids);
 
 }  // namespace graphdb

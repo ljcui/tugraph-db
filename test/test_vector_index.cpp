@@ -752,6 +752,75 @@ TEST(VectorIndex, deleteLabelsUpdatesMembershipCorrectly) {
   txn->Commit();
 }
 
+TEST(VectorIndex, updateAndRemoveEmbeddingMaintainMembership) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, {});
+  std::string index_name = "vector_index";
+  graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
+                                100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
+
+  auto txn = graphDB->BeginTransaction();
+  txn->CreateVertex({"label1"},
+                    {{"id", Value::Integer(1)},
+                     {"embedding", Value::DoubleArray({1.0, 1.0, 1.0, 1.0})}});
+  txn->CreateVertex({"label1"},
+                    {{"id", Value::Integer(2)},
+                     {"embedding", Value::DoubleArray({2.0, 2.0, 2.0, 2.0})}});
+  txn->Commit();
+
+  for (const auto& index : graphDB->meta_info().GetVertexVectorIndexes()) {
+    index->ApplyWAL();
+  }
+
+  txn = graphDB->BeginTransaction();
+  auto viter = txn->NewVertexIterator(
+      "label1",
+      std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
+  ASSERT_TRUE(viter->Valid());
+  viter->GetVertex().SetProperties(
+      {{"embedding", Value::DoubleArray({10.0, 10.0, 10.0, 10.0})}});
+  txn->Commit();
+
+  for (const auto& index : graphDB->meta_info().GetVertexVectorIndexes()) {
+    index->ApplyWAL();
+  }
+
+  txn = graphDB->BeginTransaction();
+  auto near_new =
+      txn->QueryVertexByKnnSearch(index_name, {10.0, 10.0, 10.0, 10.0}, 1, 100);
+  ASSERT_TRUE(near_new->Valid());
+  EXPECT_EQ(near_new->GetVertexScore().vertex.GetProperty("id").AsInteger(), 1);
+
+  auto near_old =
+      txn->QueryVertexByKnnSearch(index_name, {1.0, 1.0, 1.0, 1.0}, 1, 100);
+  ASSERT_TRUE(near_old->Valid());
+  EXPECT_EQ(near_old->GetVertexScore().vertex.GetProperty("id").AsInteger(), 2);
+  txn->Commit();
+
+  txn = graphDB->BeginTransaction();
+  viter = txn->NewVertexIterator(
+      "label1",
+      std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
+  ASSERT_TRUE(viter->Valid());
+  viter->GetVertex().RemoveProperty("embedding");
+  txn->Commit();
+
+  for (const auto& index : graphDB->meta_info().GetVertexVectorIndexes()) {
+    index->ApplyWAL();
+  }
+
+  txn = graphDB->BeginTransaction();
+  std::set<int64_t> ids;
+  for (auto result = txn->QueryVertexByKnnSearch(
+           index_name, {10.0, 10.0, 10.0, 10.0}, 10, 100);
+       result->Valid(); result->Next()) {
+    ids.insert(result->GetVertexScore().vertex.GetProperty("id").AsInteger());
+  }
+  EXPECT_EQ(ids, (std::set<int64_t>{2}));
+  txn->Commit();
+}
+
 TEST(VectorIndex, buildDoesNotBlockWrites) {
   fs::remove_all(testdb);
   auto graphDB = GraphDB::Open(testdb, {});

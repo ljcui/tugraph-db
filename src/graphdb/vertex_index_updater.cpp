@@ -174,13 +174,13 @@ bool IsSameVectorValues(const std::optional<std::vector<float>>& lhs,
   return *lhs == *rhs;
 }
 
-void SyncPropertyIndexes(txn::Transaction* txn, int64_t vid,
-                         const std::unordered_set<uint32_t>& old_lids,
-                         const std::unordered_set<uint32_t>& new_lids,
-                         const VertexSerializedProperties& old_properties,
-                         const VertexSerializedProperties& new_properties,
-                         const std::unordered_set<uint32_t>& touched_pids,
-                         bool labels_changed) {
+void UpdatePropertyIndexes(txn::Transaction* txn, int64_t vid,
+                           const std::unordered_set<uint32_t>& old_lids,
+                           const std::unordered_set<uint32_t>& new_lids,
+                           const VertexSerializedProperties& old_properties,
+                           const VertexSerializedProperties& new_properties,
+                           const std::unordered_set<uint32_t>& touched_pids,
+                           bool labels_changed) {
   for (const auto& index : txn->db()->meta_info().GetVertexPropertyIndexes()) {
     bool old_label_match = old_lids.count(index->lid());
     bool new_label_match = new_lids.count(index->lid());
@@ -200,13 +200,13 @@ void SyncPropertyIndexes(txn::Transaction* txn, int64_t vid,
   }
 }
 
-void SyncFullTextIndexes(txn::Transaction* txn, int64_t vid,
-                         const std::unordered_set<uint32_t>& old_lids,
-                         const std::unordered_set<uint32_t>& new_lids,
-                         const VertexSerializedProperties& old_properties,
-                         const VertexSerializedProperties& new_properties,
-                         const std::unordered_set<uint32_t>& touched_pids,
-                         bool labels_changed) {
+void UpdateFullTextIndexes(txn::Transaction* txn, int64_t vid,
+                           const std::unordered_set<uint32_t>& old_lids,
+                           const std::unordered_set<uint32_t>& new_lids,
+                           const VertexSerializedProperties& old_properties,
+                           const VertexSerializedProperties& new_properties,
+                           const std::unordered_set<uint32_t>& touched_pids,
+                           bool labels_changed) {
   for (const auto& index : txn->db()->meta_info().GetVertexFullTextIndexes()) {
     if (!index->MatchLabelIds(old_lids) && !index->MatchLabelIds(new_lids)) {
       continue;
@@ -234,13 +234,13 @@ void SyncFullTextIndexes(txn::Transaction* txn, int64_t vid,
   }
 }
 
-void SyncVectorIndexes(txn::Transaction* txn, int64_t vid,
-                       const std::unordered_set<uint32_t>& old_lids,
-                       const std::unordered_set<uint32_t>& new_lids,
-                       const VertexSerializedProperties& old_properties,
-                       const VertexSerializedProperties& new_properties,
-                       const std::unordered_set<uint32_t>& touched_pids,
-                       bool labels_changed) {
+void UpdateVectorIndexes(txn::Transaction* txn, int64_t vid,
+                         const std::unordered_set<uint32_t>& old_lids,
+                         const std::unordered_set<uint32_t>& new_lids,
+                         const VertexSerializedProperties& old_properties,
+                         const VertexSerializedProperties& new_properties,
+                         const std::unordered_set<uint32_t>& touched_pids,
+                         bool labels_changed) {
   for (const auto& index : txn->db()->meta_info().GetVertexVectorIndexes()) {
     bool old_label_match = old_lids.count(index->lid());
     bool new_label_match = new_lids.count(index->lid());
@@ -267,12 +267,12 @@ void SyncVectorIndexes(txn::Transaction* txn, int64_t vid,
 
 }  // namespace
 
-void SyncVertexIndexUpdates(txn::Transaction* txn, int64_t vid,
-                            const std::unordered_set<uint32_t>& old_lids,
-                            const std::unordered_set<uint32_t>& new_lids,
-                            const VertexSerializedProperties& old_properties,
-                            const VertexSerializedProperties& new_properties,
-                            const std::unordered_set<uint32_t>& touched_pids) {
+void UpdateVertexIndexes(txn::Transaction* txn, int64_t vid,
+                         const std::unordered_set<uint32_t>& old_lids,
+                         const std::unordered_set<uint32_t>& new_lids,
+                         const VertexSerializedProperties& old_properties,
+                         const VertexSerializedProperties& new_properties,
+                         const std::unordered_set<uint32_t>& touched_pids) {
   bool labels_changed = old_lids != new_lids;
   auto effective_touched_pids = touched_pids;
   if (effective_touched_pids.empty()) {
@@ -283,12 +283,12 @@ void SyncVertexIndexUpdates(txn::Transaction* txn, int64_t vid,
     return;
   }
 
-  SyncPropertyIndexes(txn, vid, old_lids, new_lids, old_properties,
+  UpdatePropertyIndexes(txn, vid, old_lids, new_lids, old_properties,
+                        new_properties, effective_touched_pids, labels_changed);
+  UpdateFullTextIndexes(txn, vid, old_lids, new_lids, old_properties,
+                        new_properties, effective_touched_pids, labels_changed);
+  UpdateVectorIndexes(txn, vid, old_lids, new_lids, old_properties,
                       new_properties, effective_touched_pids, labels_changed);
-  SyncFullTextIndexes(txn, vid, old_lids, new_lids, old_properties,
-                      new_properties, effective_touched_pids, labels_changed);
-  SyncVectorIndexes(txn, vid, old_lids, new_lids, old_properties,
-                    new_properties, effective_touched_pids, labels_changed);
 }
 
 }  // namespace graphdb

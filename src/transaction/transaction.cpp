@@ -156,8 +156,8 @@ Vertex Transaction::CreateVertex(
   }
   std::unordered_set<uint32_t> empty_lids;
   VertexSerializedProperties empty_properties;
-  SyncVertexIndexUpdates(this, vid, empty_lids, lids, empty_properties,
-                         serialized_values, pids);
+  UpdateVertexIndexes(this, vid, empty_lids, lids, empty_properties,
+                      serialized_values, pids);
   return {this, vid};
 }
 

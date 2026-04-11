@@ -22,6 +22,7 @@
 #include <set>
 #include <shared_mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "graph_cf.h"
@@ -52,6 +53,10 @@ struct MetaInfo {
   std::vector<std::shared_ptr<VertexPropertyIndex>> GetVertexPropertyIndexes();
   std::vector<std::shared_ptr<VertexPropertyIndex>>
   GetBuildingVertexPropertyIndexes();
+  bool ShouldUpdateVertexIndexes(
+      const std::unordered_set<uint32_t>& old_lids,
+      const std::unordered_set<uint32_t>& new_lids,
+      const std::unordered_set<uint32_t>& touched_pids);
   bool AddVertexPropertyIndex(std::shared_ptr<VertexPropertyIndex> vpi);
   void PublishVertexPropertyIndex(const std::string& index_name);
   void DeleteVertexPropertyIndex(const std::string& index_name);
