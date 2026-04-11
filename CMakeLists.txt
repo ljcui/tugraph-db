@@ -242,6 +242,7 @@ set(GRAPHDB_SOURCES
     src/graphdb/vertex_iterator.cpp
     src/graphdb/edge_iterator.cpp
     src/graphdb/graph_entity.cpp
+    src/graphdb/vertex_index_updater.cpp
     src/graphdb/meta_info.cpp
     src/graphdb/index.cpp
     src/graphdb/hnsw_index.cpp

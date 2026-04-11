@@ -24,6 +24,7 @@
 #include "common/exceptions.h"
 #include "common/logger.h"
 #include "graph_db.h"
+#include "graphdb/vertex_index_updater.h"
 #include "transaction/transaction.h"
 using namespace boost::endian;
 using common::AsChars;
@@ -31,9 +32,9 @@ using common::ReadValue;
 namespace graphdb {
 namespace {
 
-std::unordered_map<uint32_t, std::string> LoadVertexSerializedProperties(
-    txn::Transaction *txn, int64_t vid) {
-  std::unordered_map<uint32_t, std::string> props;
+VertexSerializedProperties LoadVertexSerializedProperties(txn::Transaction *txn,
+                                                          int64_t vid) {
+  VertexSerializedProperties props;
   rocksdb::ReadOptions ro;
   std::string prefix(AsChars(vid), sizeof(vid));
   std::unique_ptr<rocksdb::Iterator> iter(
@@ -46,106 +47,6 @@ std::unordered_map<uint32_t, std::string> LoadVertexSerializedProperties(
     props.emplace(pid, iter->value().ToString());
   }
   return props;
-}
-
-bool HasFullTextIndexedData(
-    const std::shared_ptr<VertexFullTextIndex> &index,
-    const std::unordered_set<uint32_t> &lids,
-    const std::unordered_map<uint32_t, std::string> &properties) {
-  if (!index->MatchLabelIds(lids)) {
-    return false;
-  }
-  for (auto pid : index->PropertyIds()) {
-    auto iter = properties.find(pid);
-    if (iter == properties.end()) {
-      continue;
-    }
-    Value value;
-    value.Deserialize(iter->second.data(), iter->second.size());
-    if (value.IsString() && !value.AsString().empty()) {
-      return true;
-    }
-  }
-  return false;
-}
-
-meta::FullTextIndexUpdate BuildFullTextAddUpdate(
-    txn::Transaction *txn, const std::shared_ptr<VertexFullTextIndex> &index,
-    int64_t vid, const std::unordered_map<uint32_t, std::string> &properties) {
-  meta::FullTextIndexUpdate add;
-  add.set_vid(vid);
-  add.set_type(meta::UpdateType::Add);
-  for (auto pid : index->PropertyIds()) {
-    auto iter = properties.find(pid);
-    if (iter == properties.end()) {
-      continue;
-    }
-    Value value;
-    value.Deserialize(iter->second.data(), iter->second.size());
-    if (!value.IsString() || value.AsString().empty()) {
-      continue;
-    }
-    add.add_fields(txn->db()->id_generator().GetPropertyName(pid).value());
-    add.add_values(value.AsString());
-  }
-  return add;
-}
-
-void AddVertexPropertyIndexesForLabels(
-    txn::Transaction *txn, int64_t vid,
-    const std::unordered_set<uint32_t> &lids,
-    const std::unordered_map<uint32_t, std::string> &properties) {
-  auto indexes = txn->db()->meta_info().GetVertexPropertyIndexes();
-  for (const auto &index : indexes) {
-    if (!lids.count(index->lid())) {
-      continue;
-    }
-    auto index_values =
-        index->LoadIndexedPropertyValues(txn, vid, &properties, nullptr);
-    if (!index_values) {
-      continue;
-    }
-    index->AddIndex(txn, vid, *index_values);
-  }
-}
-
-void DeleteVertexPropertyIndexesForLabels(
-    txn::Transaction *txn, int64_t vid,
-    const std::unordered_set<uint32_t> &lids,
-    const std::unordered_map<uint32_t, std::string> &properties) {
-  auto indexes = txn->db()->meta_info().GetVertexPropertyIndexes();
-  for (const auto &index : indexes) {
-    if (!lids.count(index->lid())) {
-      continue;
-    }
-    auto index_values =
-        index->LoadIndexedPropertyValues(txn, vid, &properties, nullptr);
-    if (!index_values) {
-      continue;
-    }
-    index->DeleteIndex(txn, vid, *index_values);
-  }
-}
-
-void RefreshVertexPropertyIndexes(
-    txn::Transaction *txn, int64_t vid,
-    const std::unordered_set<uint32_t> &lids,
-    const std::unordered_set<uint32_t> &touched_pids,
-    const std::unordered_map<uint32_t, std::string> &overrides,
-    const std::unordered_set<uint32_t> &removed_pids) {
-  if (touched_pids.empty()) {
-    return;
-  }
-  auto indexes = txn->db()->meta_info().GetVertexPropertyIndexes();
-  for (const auto &index : indexes) {
-    if (!lids.count(index->lid()) || !index->TouchesAnyProperty(touched_pids)) {
-      continue;
-    }
-    auto old_values = index->LoadIndexedPropertyValues(txn, vid);
-    auto new_values =
-        index->LoadIndexedPropertyValues(txn, vid, &overrides, &removed_pids);
-    index->UpdateIndex(txn, vid, new_values, old_values);
-  }
 }
 
 }  // namespace
@@ -356,32 +257,14 @@ int Vertex::Delete() {
             txn_->db()->graph_cf().vertex_label_vid, labelVid);
         if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
       }
-      DeleteVertexPropertyIndexesForLabels(txn_, id_, labelIds, props);
+      std::unordered_set<uint32_t> empty_lids;
+      VertexSerializedProperties empty_properties;
+      SyncVertexIndexUpdates(txn_, id_, labelIds, empty_lids, props,
+                             empty_properties, pids);
       for (auto &p_key : prop_keys) {
         auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
             txn_->db()->graph_cf().vertex_property, p_key);
         if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
-      }
-      auto ft_indexes = txn_->db()->meta_info().GetVertexFullTextIndexes();
-      auto vector_indexes = txn_->db()->meta_info().GetVertexVectorIndexes();
-      // fulltext index
-      for (const auto &ft : ft_indexes) {
-        if (HasFullTextIndexedData(ft, labelIds, props)) {
-          meta::FullTextIndexUpdate del;
-          del.set_type(meta::UpdateType::Delete);
-          del.set_vid(id_);
-          ft->DeleteIndex(txn_, id_, del);
-        }
-      }
-      // vector index
-      for (const auto &vvi : vector_indexes) {
-        if (!labelIds.count(vvi->lid())) {
-          continue;
-        }
-        if (!pids.count(vvi->pid())) {
-          continue;
-        }
-        vvi->DeleteIfPresent(txn_, id_);
       }
       auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
           txn_->db()->graph_cf().graph_topology, key);
@@ -479,52 +362,13 @@ void Vertex::AddLabels(const std::unordered_set<std::string> &labels) {
   if (new_lids.empty()) {
     return;
   }
-  auto ft_indexes = txn_->db()->meta_info().GetVertexFullTextIndexes();
-  auto vector_indexes = txn_->db()->meta_info().GetVertexVectorIndexes();
   auto props = LoadVertexSerializedProperties(txn_, id_);
-  AddVertexPropertyIndexesForLabels(txn_, id_, new_lids, props);
-  // full text index
-  for (const auto &ft : ft_indexes) {
-    if (!ft->MatchLabelIds(new_lids)) {
-      continue;
-    }
-    if (HasFullTextIndexedData(ft, labelIds, props)) {
-      continue;
-    }
-    auto add = BuildFullTextAddUpdate(txn_, ft, id_, props);
-    if (!add.fields().empty()) {
-      ft->AddIndex(txn_, id_, add);
-    }
-  }
-  // vector index
-  for (const auto &vvi : vector_indexes) {
-    if (!new_lids.count(vvi->lid())) {
-      continue;
-    }
-    auto p_val = GetProperty(vvi->pid());
-    if (!p_val.IsArray()) {
-      continue;
-    }
-    auto &array = p_val.AsArray();
-    if (array.empty() || (!array[0].IsDouble() && !array[0].IsFloat())) {
-      continue;
-    }
-    if (array.size() != vvi->meta().dimensions()) {
-      continue;
-    }
-    meta::VectorIndexUpdate add;
-    add.set_type(meta::UpdateType::Add);
-    for (auto &item : array) {
-      if (item.IsFloat()) {
-        add.add_vector(item.AsFloat());
-      } else {
-        add.add_vector(static_cast<float>(item.AsDouble()));
-      }
-    }
-    vvi->AddIndex(txn_, id_, add);
-  }
-
-  labelIds.insert(new_lids.begin(), new_lids.end());
+  auto updated_lids = labelIds;
+  updated_lids.insert(new_lids.begin(), new_lids.end());
+  std::unordered_set<uint32_t> touched_pids;
+  SyncVertexIndexUpdates(txn_, id_, labelIds, updated_lids, props, props,
+                         touched_pids);
+  labelIds = std::move(updated_lids);
   std::string buffer;
   for (auto l : labelIds) {
     buffer.append(AsChars(l), sizeof(l));
@@ -562,33 +406,14 @@ void Vertex::DeleteLabels(const std::unordered_set<std::string> &labels) {
   if (remove_lids.empty()) {
     return;
   }
-  auto ft_indexes = txn_->db()->meta_info().GetVertexFullTextIndexes();
-  auto vector_indexes = txn_->db()->meta_info().GetVertexVectorIndexes();
   auto props = LoadVertexSerializedProperties(txn_, id_);
-  DeleteVertexPropertyIndexesForLabels(txn_, id_, remove_lids, props);
   auto remaining_lids = labelIds;
   for (auto id : remove_lids) {
     remaining_lids.erase(id);
   }
-  // full text index
-  for (const auto &ft : ft_indexes) {
-    if (ft->MatchLabelIds(remaining_lids)) {
-      continue;
-    }
-    if (HasFullTextIndexedData(ft, labelIds, props)) {
-      meta::FullTextIndexUpdate del;
-      del.set_type(meta::UpdateType::Delete);
-      del.set_vid(id_);
-      ft->DeleteIndex(txn_, id_, del);
-    }
-  }
-  // vector index
-  for (const auto &vvi : vector_indexes) {
-    if (!remove_lids.count(vvi->lid())) {
-      continue;
-    }
-    vvi->DeleteIfPresent(txn_, id_);
-  }
+  std::unordered_set<uint32_t> touched_pids;
+  SyncVertexIndexUpdates(txn_, id_, labelIds, remaining_lids, props, props,
+                         touched_pids);
   labelIds = std::move(remaining_lids);
   std::string buffer;
   for (auto l : labelIds) {
@@ -667,69 +492,21 @@ void Vertex::SetProperties(
   if (values.empty()) {
     return;
   }
-  std::unordered_map<uint32_t, const Value *> original;
-  std::unordered_map<uint32_t, std::string> serialized;
+  VertexSerializedProperties serialized;
   std::unordered_set<uint32_t> pids;
   for (const auto &[name, val] : values) {
     auto pid = txn_->db()->id_generator().GetOrCreatePid(name);
-    original[pid] = &val;
     serialized[pid] = val.Serialize();
     pids.insert(pid);
   }
   Lock();
   auto lids = GetLabelIds();
-  auto ft_indexes = txn_->db()->meta_info().GetVertexFullTextIndexes();
-  auto vector_indexes = txn_->db()->meta_info().GetVertexVectorIndexes();
   auto props = LoadVertexSerializedProperties(txn_, id_);
   auto updated_props = props;
   for (const auto &[pid, pval] : serialized) {
     updated_props[pid] = pval;
   }
-  RefreshVertexPropertyIndexes(txn_, id_, lids, pids, serialized, {});
-  // full text index
-  for (const auto &index : ft_indexes) {
-    if (!index->MatchLabelIds(lids) || !index->MatchPropertyIds(pids)) {
-      continue;
-    }
-    if (HasFullTextIndexedData(index, lids, props)) {
-      meta::FullTextIndexUpdate del;
-      del.set_type(meta::UpdateType::Delete);
-      del.set_vid(id_);
-      index->DeleteIndex(txn_, id_, del);
-    }
-    auto add = BuildFullTextAddUpdate(txn_, index, id_, updated_props);
-    if (!add.fields().empty()) {
-      index->AddIndex(txn_, id_, add);
-    }
-  }
-  // vector index
-  for (const auto &index : vector_indexes) {
-    if (!pids.count(index->pid()) || !lids.count(index->lid())) {
-      continue;
-    }
-    index->DeleteIfPresent(txn_, id_);
-    auto value = original.at(index->pid());
-    if (!value->IsArray()) {
-      continue;
-    }
-    auto &array = value->AsArray();
-    if (array.empty() || (!array[0].IsDouble() && !array[0].IsFloat())) {
-      continue;
-    }
-    if (array.size() != index->meta().dimensions()) {
-      continue;
-    }
-    meta::VectorIndexUpdate add;
-    add.set_type(meta::UpdateType::Add);
-    for (auto &item : array) {
-      if (item.IsFloat()) {
-        add.add_vector(item.AsFloat());
-      } else {
-        add.add_vector(static_cast<float>(item.AsDouble()));
-      }
-    }
-    index->AddIndex(txn_, id_, add);
-  }
+  SyncVertexIndexUpdates(txn_, id_, lids, lids, props, updated_props, pids);
   for (auto &[pid, pval] : serialized) {
     std::string pkey(AsChars(id_), sizeof(id_));
     pkey.append(AsChars(pid), sizeof(pid));
@@ -761,25 +538,8 @@ void Vertex::RemoveAllProperty() {
     pids.insert(pid);
   }
   p_iter.reset();
-  auto ft_indexes = txn_->db()->meta_info().GetVertexFullTextIndexes();
-  auto vector_indexes = txn_->db()->meta_info().GetVertexVectorIndexes();
-  RefreshVertexPropertyIndexes(txn_, id_, lids, pids, {}, pids);
-  // full text index
-  for (const auto &ft : ft_indexes) {
-    if (HasFullTextIndexedData(ft, lids, props)) {
-      meta::FullTextIndexUpdate del;
-      del.set_vid(id_);
-      del.set_type(meta::UpdateType::Delete);
-      ft->DeleteIndex(txn_, id_, del);
-    }
-  }
-  // vector index
-  for (const auto &vvi : vector_indexes) {
-    if (!pids.count(vvi->pid()) || !lids.count(vvi->lid())) {
-      continue;
-    }
-    vvi->DeleteIfPresent(txn_, id_);
-  }
+  VertexSerializedProperties empty_properties;
+  SyncVertexIndexUpdates(txn_, id_, lids, lids, props, empty_properties, pids);
   for (auto &key : prop_keys) {
     auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
         txn_->db()->graph_cf().vertex_property, key);
@@ -803,32 +563,7 @@ void Vertex::RemoveProperty(const std::string &name) {
   }
   auto updated_props = props;
   updated_props.erase(pid);
-  auto ft_indexes = txn_->db()->meta_info().GetVertexFullTextIndexes();
-  auto vector_indexes = txn_->db()->meta_info().GetVertexVectorIndexes();
-  RefreshVertexPropertyIndexes(txn_, id_, lids, {pid}, {}, {pid});
-  // full text index
-  for (const auto &ft : ft_indexes) {
-    if (!ft->MatchLabelIds(lids) || !ft->MatchPropertyIds({pid})) {
-      continue;
-    }
-    if (HasFullTextIndexedData(ft, lids, props)) {
-      meta::FullTextIndexUpdate del;
-      del.set_vid(id_);
-      del.set_type(meta::UpdateType::Delete);
-      ft->DeleteIndex(txn_, id_, del);
-    }
-    auto add = BuildFullTextAddUpdate(txn_, ft, id_, updated_props);
-    if (!add.fields().empty()) {
-      ft->AddIndex(txn_, id_, add);
-    }
-  }
-  // vector index
-  for (const auto &vvi : vector_indexes) {
-    if (pid != vvi->pid() || !lids.count(vvi->lid())) {
-      continue;
-    }
-    vvi->DeleteIfPresent(txn_, id_);
-  }
+  SyncVertexIndexUpdates(txn_, id_, lids, lids, props, updated_props, {pid});
   auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
       txn_->db()->graph_cf().vertex_property, pkey);
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());

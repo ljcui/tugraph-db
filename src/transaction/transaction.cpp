@@ -29,6 +29,7 @@
 #include "common/logger.h"
 #include "cypher/execution_plan/result_iterator.h"
 #include "graphdb/graph_db.h"
+#include "graphdb/vertex_index_updater.h"
 using namespace graphdb;
 using namespace boost::endian;
 using common::AsChars;
@@ -138,28 +139,12 @@ Vertex Transaction::CreateVertex(
                                  rocksdb::Slice(AsChars(vid), sizeof(vid)),
                                  buffer);
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
-  std::unordered_map<uint32_t, const Value*> pid_values;
-  std::unordered_map<uint32_t, std::string> serialized_values;
+  VertexSerializedProperties serialized_values;
   std::unordered_set<uint32_t> pids;
-  auto property_indexes = db_->meta_info().GetVertexPropertyIndexes();
-  auto ft_indexes = db_->meta_info().GetVertexFullTextIndexes();
-  auto vector_indexes = db_->meta_info().GetVertexVectorIndexes();
   for (const auto& [name, value] : values) {
     uint32_t pid = db_->id_generator().GetOrCreatePid(name);
-    pid_values[pid] = &value;
     serialized_values.emplace(pid, value.Serialize());
     pids.insert(pid);
-  }
-  for (const auto& index : property_indexes) {
-    if (!lids.count(index->lid())) {
-      continue;
-    }
-    auto index_values = index->LoadIndexedPropertyValues(
-        this, vid, &serialized_values, nullptr);
-    if (!index_values) {
-      continue;
-    }
-    index->AddIndex(this, vid, *index_values);
   }
   for (const auto& [pid, val] : serialized_values) {
     buffer.clear();
@@ -169,56 +154,10 @@ Vertex Transaction::CreateVertex(
                                    val);
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   }
-  // full text index
-  for (const auto& ft : ft_indexes) {
-    if (!ft->MatchLabelIds(lids)) {
-      continue;
-    }
-    meta::FullTextIndexUpdate add;
-    add.set_type(meta::UpdateType::Add);
-    add.set_vid(vid);
-    for (const auto& [pid, prop] : pid_values) {
-      if (prop->IsString() && !prop->AsString().empty() &&
-          ft->PropertyIds().count(pid)) {
-        add.add_fields(db_->id_generator().GetPropertyName(pid).value());
-        add.add_values(prop->AsString());
-      }
-    }
-    if (!add.fields().empty()) {
-      ft->AddIndex(this, vid, add);
-    }
-  }
-  // vector index
-  for (const auto& vvi : vector_indexes) {
-    if (!lids.count(vvi->lid())) {
-      continue;
-    }
-    auto iter = pid_values.find(vvi->pid());
-    if (iter == pid_values.end()) {
-      continue;
-    }
-    auto prop = iter->second;
-    if (!prop->IsArray()) {
-      continue;
-    }
-    auto& array = prop->AsArray();
-    if (array.empty() || (!array[0].IsDouble() && !array[0].IsFloat())) {
-      continue;
-    }
-    if (array.size() != vvi->meta().dimensions()) {
-      continue;
-    }
-    meta::VectorIndexUpdate add;
-    add.set_type(meta::UpdateType::Add);
-    for (auto& item : array) {
-      if (item.IsFloat()) {
-        add.add_vector(item.AsFloat());
-      } else {
-        add.add_vector((float)item.AsDouble());
-      }
-    }
-    vvi->AddIndex(this, vid, add);
-  }
+  std::unordered_set<uint32_t> empty_lids;
+  VertexSerializedProperties empty_properties;
+  SyncVertexIndexUpdates(this, vid, empty_lids, lids, empty_properties,
+                         serialized_values, pids);
   return {this, vid};
 }
 
