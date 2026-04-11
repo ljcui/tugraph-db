@@ -245,6 +245,7 @@ set(GRAPHDB_SOURCES
     src/graphdb/meta_info.cpp
     src/graphdb/index.cpp
     src/graphdb/hnsw_index.cpp
+    src/graphdb/vector_store.cpp
 )
 
 set(COMMON_SOURCES

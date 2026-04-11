@@ -100,8 +100,7 @@ message FullTextIndexUpdate {
 message VectorIndexUpdate {
     UpdateType type        = 1;
     int64 vid              = 2;
-    int64 vector_id        = 3;
-    repeated float vector  = 4;
+    repeated float vector  = 3;
 }
 
 message PropertyIndexUpdate {

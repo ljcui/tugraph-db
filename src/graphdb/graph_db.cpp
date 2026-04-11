@@ -127,14 +127,11 @@ void DeleteFullTextIndexRanges(rocksdb::TransactionDB* db, GraphCF* graph_cf,
 
 void DeleteVectorIndexRanges(rocksdb::TransactionDB* db, GraphCF* graph_cf,
                              uint32_t index_id) {
-  std::string start_key(AsChars(index_id), sizeof(index_id));
-  start_key.append(sizeof(int64_t), static_cast<char>(0x00));
-  std::string end_key(AsChars(index_id), sizeof(index_id));
-  end_key.append(sizeof(int64_t), static_cast<char>(0xFF));
-
   rocksdb::WriteBatch wb;
-  wb.DeleteRange(graph_cf->index, start_key, end_key);
-  wb.DeleteRange(graph_cf->wal, start_key, end_key);
+  std::string wal_start(AsChars(index_id), sizeof(index_id));
+  std::string wal_end(AsChars(index_id), sizeof(index_id));
+  wal_end.append(sizeof(uint64_t), static_cast<char>(0xFF));
+  wb.DeleteRange(graph_cf->wal, wal_start, wal_end);
 
   rocksdb::TransactionDBWriteOptimizations two;
   two.skip_concurrency_control = true;
@@ -514,6 +511,7 @@ void GraphDB::ScheduleVertexVectorIndexBuild(
           return;
         }
         DeleteVectorIndexRanges(db_, &graph_cf_, index->index_id());
+        index->ReleaseResources();
         ResetIndexPath(index->meta().path(), "vector index");
         index->ResetForClear();
         index->SetState(meta::IndexBuildState::BUILDING);
@@ -630,6 +628,7 @@ void GraphDB::ClearData() {
     }
   }
   for (const auto& index : vector_indexes) {
+    index->ReleaseResources();
     ResetIndexPath(index->meta().path(), "vector index");
     index->ResetForClear();
     if (index->IsReady()) {
@@ -937,17 +936,16 @@ void GraphDB::DeleteVertexVectorIndex(const std::string& index_name) {
   uint32_t index_id = index->index_id();
   index->MarkDeleted();
   index->Stop();
+  index->ReleaseResources();
   meta_info_.DeleteVertexVectorIndex(index_name);
   rocksdb::WriteBatch wb;
   wb.Delete(graph_cf_.meta_info,
             BuildMetaKey(MetaDataType::VertexVectorIndex, index_name));
 
-  std::string start_key(AsChars(index_id), sizeof(index_id));
-  start_key.append(sizeof(int64_t), static_cast<char>(0x00));
-  std::string end_key(AsChars(index_id), sizeof(index_id));
-  end_key.append(sizeof(int64_t), static_cast<char>(0xFF));
-  wb.DeleteRange(graph_cf_.index, start_key, end_key);
-  wb.DeleteRange(graph_cf_.wal, start_key, end_key);
+  std::string wal_start(AsChars(index_id), sizeof(index_id));
+  std::string wal_end(AsChars(index_id), sizeof(index_id));
+  wal_end.append(sizeof(uint64_t), static_cast<char>(0xFF));
+  wb.DeleteRange(graph_cf_.wal, wal_start, wal_end);
 
   rocksdb::TransactionDBWriteOptimizations two;
   two.skip_concurrency_control = true;

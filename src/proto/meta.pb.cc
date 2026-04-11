@@ -245,7 +245,6 @@ const ::google::protobuf::uint32 TableStruct::offsets[] GOOGLE_PROTOBUF_ATTRIBUT
   ~0u,  // no _weak_field_map_
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VectorIndexUpdate, type_),
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VectorIndexUpdate, vid_),
-  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VectorIndexUpdate, vector_id_),
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VectorIndexUpdate, vector_),
   ~0u,  // no _has_bits_
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::PropertyIndexUpdate, _internal_metadata_),
@@ -263,7 +262,7 @@ static const ::google::protobuf::internal::MigrationSchema schemas[] GOOGLE_PROT
   { 53, -1, sizeof(::meta::GraphDBMetaInfo)},
   { 60, -1, sizeof(::meta::FullTextIndexUpdate)},
   { 69, -1, sizeof(::meta::VectorIndexUpdate)},
-  { 78, -1, sizeof(::meta::PropertyIndexUpdate)},
+  { 77, -1, sizeof(::meta::PropertyIndexUpdate)},
 };
 
 static ::google::protobuf::Message const * const file_default_instances[] = {
@@ -324,20 +323,19 @@ void AddDescriptorsImpl() {
       "aInfo\022\022\n\ngraph_name\030\001 \001(\t\022\020\n\010graph_id\030\002 "
       "\001(\r\"b\n\023FullTextIndexUpdate\022\036\n\004type\030\001 \001(\016"
       "2\020.meta.UpdateType\022\013\n\003vid\030\002 \001(\003\022\016\n\006field"
-      "s\030\003 \003(\t\022\016\n\006values\030\004 \003(\t\"c\n\021VectorIndexUp"
+      "s\030\003 \003(\t\022\016\n\006values\030\004 \003(\t\"P\n\021VectorIndexUp"
       "date\022\036\n\004type\030\001 \001(\0162\020.meta.UpdateType\022\013\n\003"
-      "vid\030\002 \001(\003\022\021\n\tvector_id\030\003 \001(\003\022\016\n\006vector\030\004"
-      " \003(\002\"R\n\023PropertyIndexUpdate\022\036\n\004type\030\001 \001("
-      "\0162\020.meta.UpdateType\022\013\n\003vid\030\002 \001(\003\022\016\n\006valu"
-      "es\030\003 \003(\014*0\n\022VectorDistanceType\022\006\n\002L2\020\000\022\006"
-      "\n\002IP\020\001\022\n\n\006COSINE\020\002*)\n\017VectorIndexType\022\010\n"
-      "\004HNSW\020\000\022\014\n\010IVF_FLAT\020\001*G\n\017IndexBuildState"
-      "\022\014\n\010BUILDING\020\000\022\017\n\013CATCHING_UP\020\001\022\t\n\005READY"
-      "\020\002\022\n\n\006FAILED\020\003*!\n\nUpdateType\022\007\n\003Add\020\000\022\n\n"
-      "\006Delete\020\001b\006proto3"
+      "vid\030\002 \001(\003\022\016\n\006vector\030\003 \003(\002\"R\n\023PropertyInd"
+      "exUpdate\022\036\n\004type\030\001 \001(\0162\020.meta.UpdateType"
+      "\022\013\n\003vid\030\002 \001(\003\022\016\n\006values\030\003 \003(\014*0\n\022VectorD"
+      "istanceType\022\006\n\002L2\020\000\022\006\n\002IP\020\001\022\n\n\006COSINE\020\002*"
+      ")\n\017VectorIndexType\022\010\n\004HNSW\020\000\022\014\n\010IVF_FLAT"
+      "\020\001*G\n\017IndexBuildState\022\014\n\010BUILDING\020\000\022\017\n\013C"
+      "ATCHING_UP\020\001\022\t\n\005READY\020\002\022\n\n\006FAILED\020\003*!\n\nU"
+      "pdateType\022\007\n\003Add\020\000\022\n\n\006Delete\020\001b\006proto3"
   };
   ::google::protobuf::DescriptorPool::InternalAddGeneratedFile(
-      descriptor, 1497);
+      descriptor, 1478);
   ::google::protobuf::MessageFactory::InternalRegisterGeneratedFile(
     "meta.proto", &protobuf_RegisterTypes);
 }
@@ -3392,7 +3390,6 @@ void VectorIndexUpdate::InitAsDefaultInstance() {
 #if !defined(_MSC_VER) || _MSC_VER >= 1900
 const int VectorIndexUpdate::kTypeFieldNumber;
 const int VectorIndexUpdate::kVidFieldNumber;
-const int VectorIndexUpdate::kVectorIdFieldNumber;
 const int VectorIndexUpdate::kVectorFieldNumber;
 #endif  // !defined(_MSC_VER) || _MSC_VER >= 1900
 
@@ -3494,33 +3491,19 @@ bool VectorIndexUpdate::MergePartialFromCodedStream(
         break;
       }
 
-      // int64 vector_id = 3;
+      // repeated float vector = 3;
       case 3: {
         if (static_cast< ::google::protobuf::uint8>(tag) ==
-            static_cast< ::google::protobuf::uint8>(24u /* 24 & 0xFF */)) {
-
-          DO_((::google::protobuf::internal::WireFormatLite::ReadPrimitive<
-                   ::google::protobuf::int64, ::google::protobuf::internal::WireFormatLite::TYPE_INT64>(
-                 input, &vector_id_)));
-        } else {
-          goto handle_unusual;
-        }
-        break;
-      }
-
-      // repeated float vector = 4;
-      case 4: {
-        if (static_cast< ::google::protobuf::uint8>(tag) ==
-            static_cast< ::google::protobuf::uint8>(34u /* 34 & 0xFF */)) {
+            static_cast< ::google::protobuf::uint8>(26u /* 26 & 0xFF */)) {
           DO_((::google::protobuf::internal::WireFormatLite::ReadPackedPrimitive<
                    float, ::google::protobuf::internal::WireFormatLite::TYPE_FLOAT>(
                  input, this->mutable_vector())));
         } else if (
             static_cast< ::google::protobuf::uint8>(tag) ==
-            static_cast< ::google::protobuf::uint8>(37u /* 37 & 0xFF */)) {
+            static_cast< ::google::protobuf::uint8>(29u /* 29 & 0xFF */)) {
           DO_((::google::protobuf::internal::WireFormatLite::ReadRepeatedPrimitiveNoInline<
                    float, ::google::protobuf::internal::WireFormatLite::TYPE_FLOAT>(
-                 1, 34u, input, this->mutable_vector())));
+                 1, 26u, input, this->mutable_vector())));
         } else {
           goto handle_unusual;
         }
@@ -3564,14 +3547,9 @@ void VectorIndexUpdate::SerializeWithCachedSizes(
     ::google::protobuf::internal::WireFormatLite::WriteInt64(2, this->vid(), output);
   }
 
-  // int64 vector_id = 3;
-  if (this->vector_id() != 0) {
-    ::google::protobuf::internal::WireFormatLite::WriteInt64(3, this->vector_id(), output);
-  }
-
-  // repeated float vector = 4;
+  // repeated float vector = 3;
   if (this->vector_size() > 0) {
-    ::google::protobuf::internal::WireFormatLite::WriteTag(4, ::google::protobuf::internal::WireFormatLite::WIRETYPE_LENGTH_DELIMITED, output);
+    ::google::protobuf::internal::WireFormatLite::WriteTag(3, ::google::protobuf::internal::WireFormatLite::WIRETYPE_LENGTH_DELIMITED, output);
     output->WriteVarint32(static_cast< ::google::protobuf::uint32>(
         _vector_cached_byte_size_));
     ::google::protobuf::internal::WireFormatLite::WriteFloatArray(
@@ -3603,15 +3581,10 @@ void VectorIndexUpdate::SerializeWithCachedSizes(
     target = ::google::protobuf::internal::WireFormatLite::WriteInt64ToArray(2, this->vid(), target);
   }
 
-  // int64 vector_id = 3;
-  if (this->vector_id() != 0) {
-    target = ::google::protobuf::internal::WireFormatLite::WriteInt64ToArray(3, this->vector_id(), target);
-  }
-
-  // repeated float vector = 4;
+  // repeated float vector = 3;
   if (this->vector_size() > 0) {
     target = ::google::protobuf::internal::WireFormatLite::WriteTagToArray(
-      4,
+      3,
       ::google::protobuf::internal::WireFormatLite::WIRETYPE_LENGTH_DELIMITED,
       target);
     target = ::google::protobuf::io::CodedOutputStream::WriteVarint32ToArray(
@@ -3638,7 +3611,7 @@ size_t VectorIndexUpdate::ByteSizeLong() const {
       ::google::protobuf::internal::WireFormat::ComputeUnknownFieldsSize(
         (::google::protobuf::internal::GetProto3PreserveUnknownsDefault()   ? _internal_metadata_.unknown_fields()   : _internal_metadata_.default_instance()));
   }
-  // repeated float vector = 4;
+  // repeated float vector = 3;
   {
     unsigned int count = static_cast<unsigned int>(this->vector_size());
     size_t data_size = 4UL * count;
@@ -3659,13 +3632,6 @@ size_t VectorIndexUpdate::ByteSizeLong() const {
     total_size += 1 +
       ::google::protobuf::internal::WireFormatLite::Int64Size(
         this->vid());
-  }
-
-  // int64 vector_id = 3;
-  if (this->vector_id() != 0) {
-    total_size += 1 +
-      ::google::protobuf::internal::WireFormatLite::Int64Size(
-        this->vector_id());
   }
 
   // .meta.UpdateType type = 1;
@@ -3705,9 +3671,6 @@ void VectorIndexUpdate::MergeFrom(const VectorIndexUpdate& from) {
   if (from.vid() != 0) {
     set_vid(from.vid());
   }
-  if (from.vector_id() != 0) {
-    set_vector_id(from.vector_id());
-  }
   if (from.type() != 0) {
     set_type(from.type());
   }
@@ -3739,7 +3702,6 @@ void VectorIndexUpdate::InternalSwap(VectorIndexUpdate* other) {
   using std::swap;
   vector_.InternalSwap(&other->vector_);
   swap(vid_, other->vid_);
-  swap(vector_id_, other->vector_id_);
   swap(type_, other->type_);
   _internal_metadata_.Swap(&other->_internal_metadata_);
 }

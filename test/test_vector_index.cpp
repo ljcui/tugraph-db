@@ -13,6 +13,8 @@
  */
 
 #include <gtest/gtest.h>
+#include <rocksdb/db.h>
+#include <rocksdb/options.h>
 
 #include <chrono>
 #include <filesystem>
@@ -329,6 +331,146 @@ TEST(VectorIndex, serialize) {
   }
 }
 
+TEST(VectorIndex, usesDedicatedVectorStore) {
+  fs::remove_all(testdb);
+  ScopedSerializeInterval interval(1);
+  auto graphDB = GraphDB::Open(testdb, {});
+  std::string index_name = "vector_index";
+  graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
+                                100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
+
+  auto txn = graphDB->BeginTransaction();
+  txn->CreateVertex({"label1"},
+                    {{"id", Value::Integer(1)},
+                     {"embedding", Value::DoubleArray({1.0, 1.0, 1.0, 1.0})}});
+  txn->Commit();
+
+  auto index = graphDB->meta_info().GetVertexVectorIndex(index_name);
+  ASSERT_TRUE(index != nullptr);
+  index->ApplyWAL();
+
+  EXPECT_TRUE(fs::exists(testdb + "/vt/" + index_name + "/rocksdb/CURRENT"));
+
+  txn = graphDB->BeginTransaction();
+  rocksdb::ReadOptions ro;
+  std::unique_ptr<rocksdb::Iterator> iter(
+      txn->dbtxn()->GetIterator(ro, graphDB->graph_cf().index));
+  iter->SeekToFirst();
+  EXPECT_FALSE(iter->Valid());
+  txn->Commit();
+  iter.reset();
+  txn.reset();
+  index.reset();
+
+  graphDB.reset();
+
+  rocksdb::Options options;
+  rocksdb::DB* vector_db = nullptr;
+  auto s = rocksdb::DB::OpenForReadOnly(
+      options, testdb + "/vt/" + index_name + "/rocksdb", &vector_db);
+  ASSERT_TRUE(s.ok()) << s.ToString();
+
+  int vid_keys = 0;
+  int delete_keys = 0;
+  std::unique_ptr<rocksdb::Iterator> vector_iter(vector_db->NewIterator({}));
+  for (vector_iter->SeekToFirst(); vector_iter->Valid(); vector_iter->Next()) {
+    ASSERT_FALSE(vector_iter->key().empty());
+    auto prefix = vector_iter->key()[0];
+    if (prefix == static_cast<char>(0)) {
+      continue;
+    }
+    if (prefix == static_cast<char>(1)) {
+      vid_keys++;
+      continue;
+    }
+    if (prefix == static_cast<char>(2)) {
+      delete_keys++;
+      continue;
+    }
+    FAIL() << "unexpected vector store key prefix: "
+           << static_cast<int>(prefix);
+  }
+
+  EXPECT_EQ(vid_keys, 1);
+  EXPECT_EQ(delete_keys, 0);
+
+  vector_iter.reset();
+  ASSERT_TRUE(vector_db->Close().ok());
+  delete vector_db;
+}
+
+TEST(VectorIndex, vectorStorePersistsOnlyAtCheckpoint) {
+  fs::remove_all(testdb);
+  ScopedSerializeInterval interval(1000);
+  GraphDBOptions options;
+  options.vt_apply_interval_ = 3600;
+  auto graphDB = GraphDB::Open(testdb, options);
+  std::string index_name = "vector_index";
+  graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
+                                100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
+
+  auto txn = graphDB->BeginTransaction();
+  txn->CreateVertex({"label1"},
+                    {{"id", Value::Integer(1)},
+                     {"embedding", Value::DoubleArray({1.0, 1.0, 1.0, 1.0})}});
+  txn->Commit();
+
+  auto index = graphDB->meta_info().GetVertexVectorIndex(index_name);
+  ASSERT_TRUE(index != nullptr);
+  index->ApplyWAL();
+
+  txn = graphDB->BeginTransaction();
+  int count = 0;
+  for (auto viter = txn->QueryVertexByKnnSearch(index_name,
+                                                {1.0, 1.0, 1.0, 1.0}, 10, 100);
+       viter->Valid(); viter->Next()) {
+    count++;
+  }
+  EXPECT_EQ(count, 1);
+  txn->Commit();
+  txn.reset();
+  index.reset();
+
+  graphDB.reset();
+
+  rocksdb::Options db_options;
+  rocksdb::DB* vector_db = nullptr;
+  auto s = rocksdb::DB::OpenForReadOnly(
+      db_options, testdb + "/vt/" + index_name + "/rocksdb", &vector_db);
+  ASSERT_TRUE(s.ok()) << s.ToString();
+
+  int state_keys = 0;
+  std::unique_ptr<rocksdb::Iterator> vector_iter(vector_db->NewIterator({}));
+  for (vector_iter->SeekToFirst(); vector_iter->Valid(); vector_iter->Next()) {
+    ASSERT_FALSE(vector_iter->key().empty());
+    auto prefix = vector_iter->key()[0];
+    if (prefix == static_cast<char>(1) || prefix == static_cast<char>(2)) {
+      state_keys++;
+    }
+  }
+  EXPECT_EQ(state_keys, 0);
+  vector_iter.reset();
+  ASSERT_TRUE(vector_db->Close().ok());
+  delete vector_db;
+
+  graphDB = GraphDB::Open(testdb, options);
+  index = graphDB->meta_info().GetVertexVectorIndex(index_name);
+  ASSERT_TRUE(index != nullptr);
+  index->ApplyWAL();
+
+  txn = graphDB->BeginTransaction();
+  count = 0;
+  for (auto viter = txn->QueryVertexByKnnSearch(index_name,
+                                                {1.0, 1.0, 1.0, 1.0}, 10, 100);
+       viter->Valid(); viter->Next()) {
+    count++;
+  }
+  EXPECT_EQ(count, 1);
+  txn->Commit();
+}
+
 TEST(VectorIndex, corruptedWalIsRejected) {
   fs::remove_all(testdb);
   GraphDBOptions options;
@@ -351,13 +493,76 @@ TEST(VectorIndex, corruptedWalIsRejected) {
   EXPECT_THROW_CODE(index->ApplyWAL(), VectorIndexException);
 }
 
+TEST(VectorIndex, duplicateAddWalReplacesPreviousVector) {
+  fs::remove_all(testdb);
+  GraphDBOptions options;
+  options.vt_apply_interval_ = 3600;
+  ScopedSerializeInterval interval(1000);
+  auto graphDB = GraphDB::Open(testdb, options);
+  std::string index_name = "vector_index";
+  graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
+                                100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
+
+  auto txn = graphDB->BeginTransaction();
+  txn->CreateVertex({"label1"},
+                    {{"id", Value::Integer(1)},
+                     {"embedding", Value::DoubleArray({1.0, 1.0, 1.0, 1.0})}});
+  txn->CreateVertex(
+      {"label1"},
+      {{"id", Value::Integer(2)},
+       {"embedding", Value::DoubleArray({10.0, 10.0, 10.0, 10.0})}});
+  txn->Commit();
+
+  auto index = graphDB->meta_info().GetVertexVectorIndex(index_name);
+  ASSERT_TRUE(index != nullptr);
+  index->ApplyWAL();
+
+  txn = graphDB->BeginTransaction();
+  auto viter = txn->NewVertexIterator(
+      "label1",
+      std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
+  ASSERT_TRUE(viter->Valid());
+  auto vid = viter->GetVertex().GetId();
+
+  meta::VectorIndexUpdate update;
+  update.set_type(meta::UpdateType::Add);
+  update.set_vid(vid);
+  update.add_vector(100.0f);
+  update.add_vector(100.0f);
+  update.add_vector(100.0f);
+  update.add_vector(100.0f);
+
+  std::string payload;
+  ASSERT_TRUE(update.SerializeToString(&payload));
+  auto s = txn->dbtxn()->GetWriteBatch()->Put(graphDB->graph_cf().wal,
+                                              index->NextWALKey(), payload);
+  ASSERT_TRUE(s.ok());
+  txn->Commit();
+
+  EXPECT_NO_THROW(index->ApplyWAL());
+
+  txn = graphDB->BeginTransaction();
+  auto near_old =
+      txn->QueryVertexByKnnSearch(index_name, {1.0, 1.0, 1.0, 1.0}, 1, 100);
+  ASSERT_TRUE(near_old->Valid());
+  EXPECT_EQ(near_old->GetVertexScore().vertex.GetProperty("id").AsInteger(), 2);
+
+  auto near_new = txn->QueryVertexByKnnSearch(
+      index_name, {100.0, 100.0, 100.0, 100.0}, 1, 100);
+  ASSERT_TRUE(near_new->Valid());
+  EXPECT_EQ(near_new->GetVertexScore().vertex.GetProperty("id").AsInteger(), 1);
+  txn->Commit();
+}
+
 TEST(VectorIndex, checkpointMetaWriteFailureIsReported) {
   fs::remove_all(testdb);
   GraphDBOptions options;
   options.vt_apply_interval_ = 3600;
   ScopedSerializeInterval scoped_interval(1);
   std::string index_name = "vector_index";
-  std::string meta_path = testdb + "/vt/" + index_name + "/hnsw.index.meta";
+  std::string checkpoint_path =
+      testdb + "/vt/" + index_name + "/hnsw.index.data.1";
   {
     auto graphDB = GraphDB::Open(testdb, options);
     graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2",
@@ -370,13 +575,13 @@ TEST(VectorIndex, checkpointMetaWriteFailureIsReported) {
                      {"embedding", Value::DoubleArray({1.0, 1.0, 1.0, 1.0})}});
     txn->Commit();
 
-    ASSERT_TRUE(fs::create_directory(meta_path));
+    ASSERT_TRUE(fs::create_directory(checkpoint_path));
     auto index = graphDB->meta_info().GetVertexVectorIndex(index_name);
     ASSERT_TRUE(index != nullptr);
     EXPECT_THROW_CODE(index->ApplyWAL(), IOException);
   }
 
-  fs::remove_all(meta_path);
+  fs::remove_all(checkpoint_path);
 
   {
     auto graphDB = GraphDB::Open(testdb, options);

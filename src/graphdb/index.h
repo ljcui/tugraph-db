@@ -36,8 +36,8 @@
 #include "common/value.h"
 #include "ftindex/include/lib.rs.h"
 #include "graphdb/graph_cf.h"
-#include "graphdb/hnsw_index.h"
 #include "graphdb/id_generator.h"
+#include "graphdb/vector_store.h"
 #include "proto/meta.pb.h"
 
 namespace txn {
@@ -310,12 +310,11 @@ class VertexVectorIndex
   void MarkDeleted() { deleted_.store(true); }
   void Start();
   void Stop();
+  void ReleaseResources();
   void Load(const rocksdb::Snapshot* snapshot = nullptr,
             uint64_t snapshot_wal_id = 0);
   void DeleteIfPresent(txn::Transaction* txn, int64_t vid);
   std::string NextWALKey();
-  std::string IndexKey(int64_t vid);
-  std::string DeleteMarkKey(int64_t vector_id);
   void AddIndex(txn::Transaction* txn, int64_t vid,
                 meta::VectorIndexUpdate& wal);
   void ApplyWAL();
@@ -329,8 +328,7 @@ class VertexVectorIndex
   uint32_t lid_;
   uint32_t pid_;
   meta::VertexVectorIndex meta_;
-  std::unique_ptr<FaissHnswIndex> hnsw_index_;
-  std::atomic<int64_t> next_vector_id_ = 1;
+  std::unique_ptr<VectorStore> vector_store_;
   std::atomic<uint64_t> next_wal_id_ = 1;
   uint64_t apply_id_ = 0;
   std::shared_mutex mutex_;
@@ -342,8 +340,6 @@ class VertexVectorIndex
   bool stopped_ = false;
   size_t interval_ = 5;
   boost::asio::steady_timer timer_;
-  std::unordered_set<int64_t> deleted_vector_ids_;
-  std::unordered_map<int64_t, int64_t> vectorid_vid_;
   std::atomic<bool> deleted_{false};
 };
 

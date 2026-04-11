@@ -1243,10 +1243,10 @@ class VectorIndexUpdate : public ::google::protobuf::Message /* @@protoc_inserti
 
   // accessors -------------------------------------------------------
 
-  // repeated float vector = 4;
+  // repeated float vector = 3;
   int vector_size() const;
   void clear_vector();
-  static const int kVectorFieldNumber = 4;
+  static const int kVectorFieldNumber = 3;
   float vector(int index) const;
   void set_vector(int index, float value);
   void add_vector(float value);
@@ -1261,12 +1261,6 @@ class VectorIndexUpdate : public ::google::protobuf::Message /* @@protoc_inserti
   ::google::protobuf::int64 vid() const;
   void set_vid(::google::protobuf::int64 value);
 
-  // int64 vector_id = 3;
-  void clear_vector_id();
-  static const int kVectorIdFieldNumber = 3;
-  ::google::protobuf::int64 vector_id() const;
-  void set_vector_id(::google::protobuf::int64 value);
-
   // .meta.UpdateType type = 1;
   void clear_type();
   static const int kTypeFieldNumber = 1;
@@ -1280,7 +1274,6 @@ class VectorIndexUpdate : public ::google::protobuf::Message /* @@protoc_inserti
   ::google::protobuf::RepeatedField< float > vector_;
   mutable int _vector_cached_byte_size_;
   ::google::protobuf::int64 vid_;
-  ::google::protobuf::int64 vector_id_;
   int type_;
   mutable ::google::protobuf::internal::CachedSize _cached_size_;
   friend struct ::protobuf_meta_2eproto::TableStruct;
@@ -2884,21 +2877,7 @@ inline void VectorIndexUpdate::set_vid(::google::protobuf::int64 value) {
   // @@protoc_insertion_point(field_set:meta.VectorIndexUpdate.vid)
 }
 
-// int64 vector_id = 3;
-inline void VectorIndexUpdate::clear_vector_id() {
-  vector_id_ = GOOGLE_LONGLONG(0);
-}
-inline ::google::protobuf::int64 VectorIndexUpdate::vector_id() const {
-  // @@protoc_insertion_point(field_get:meta.VectorIndexUpdate.vector_id)
-  return vector_id_;
-}
-inline void VectorIndexUpdate::set_vector_id(::google::protobuf::int64 value) {
-  
-  vector_id_ = value;
-  // @@protoc_insertion_point(field_set:meta.VectorIndexUpdate.vector_id)
-}
-
-// repeated float vector = 4;
+// repeated float vector = 3;
 inline int VectorIndexUpdate::vector_size() const {
   return vector_.size();
 }
