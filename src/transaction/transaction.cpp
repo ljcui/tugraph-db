@@ -29,6 +29,7 @@
 #include "common/logger.h"
 #include "cypher/execution_plan/result_iterator.h"
 #include "graphdb/graph_db.h"
+#include "graphdb/index_error.h"
 #include "graphdb/vertex_index_updater.h"
 using namespace graphdb;
 using namespace boost::endian;
@@ -44,9 +45,9 @@ std::shared_ptr<VertexPropertyIndex> ResolveVertexPropertyIndexOrThrow(
     txn::Transaction* txn, const std::string& index_name) {
   auto index = txn->db()->meta_info().GetReadyVertexPropertyIndex(index_name);
   if (!index) {
-    if (txn->db()->meta_info().GetVertexPropertyIndex(index_name)) {
-      THROW_CODE(IndexNotReady, "Vertex index [{}] is still building",
-                 index_name);
+    if (auto building_index =
+            txn->db()->meta_info().GetVertexPropertyIndex(index_name)) {
+      ThrowIfIndexUnavailable(building_index, index_name, "Vertex");
     }
     THROW_CODE(VertexUniqueIndexNotFound, "No such vertex index [{}]",
                index_name);

@@ -63,6 +63,57 @@ bool WaitUntilVectorIndexReady(
   return false;
 }
 
+bool WaitUntilVectorQueryCount(
+    GraphDB* graph_db, const std::string& index_name,
+    const std::vector<float>& query, size_t expected_count,
+    std::chrono::milliseconds timeout = std::chrono::seconds(3)) {
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (true) {
+    auto txn = graph_db->BeginTransaction();
+    size_t actual_count = 0;
+    bool query_succeeded = false;
+    try {
+      for (auto result =
+               txn->QueryVertexByKnnSearch(index_name, query, 10, 100);
+           result->Valid(); result->Next()) {
+        actual_count++;
+      }
+      txn->Commit();
+      query_succeeded = true;
+    } catch (LgraphException& e) {
+      txn->Rollback();
+      if (e.code() != ErrorCode::IndexNotReady) {
+        throw;
+      }
+    } catch (...) {
+      txn->Rollback();
+      throw;
+    }
+    if (query_succeeded && actual_count == expected_count) {
+      return true;
+    }
+    if (std::chrono::steady_clock::now() >= deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+}
+
+size_t CountKeysWithPrefix(GraphDB* graph_db, rocksdb::ColumnFamilyHandle* cf,
+                           const std::string& prefix) {
+  auto txn = graph_db->BeginTransaction();
+  rocksdb::ReadOptions ro;
+  size_t count = 0;
+  std::unique_ptr<rocksdb::Iterator> iter(txn->dbtxn()->GetIterator(ro, cf));
+  for (iter->Seek(prefix); iter->Valid() && iter->key().starts_with(prefix);
+       iter->Next()) {
+    count++;
+  }
+  iter.reset();
+  txn->Rollback();
+  return count;
+}
+
 }  // namespace
 
 TEST(VectorIndex, build) {
@@ -491,6 +542,95 @@ TEST(VectorIndex, corruptedWalIsRejected) {
   txn->Commit();
 
   EXPECT_THROW_CODE(index->ApplyWAL(), VectorIndexException);
+}
+
+TEST(VectorIndex, periodicTimerSurvivesWalApplyFailure) {
+  fs::remove_all(testdb);
+  GraphDBOptions options;
+  options.vt_apply_interval_ = 1;
+  auto graphDB = GraphDB::Open(testdb, options);
+  std::string index_name = "vector_index";
+  graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
+                                100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
+
+  auto index = graphDB->meta_info().GetVertexVectorIndex(index_name);
+  ASSERT_TRUE(index != nullptr);
+
+  std::string bad_wal_key = index->NextWALKey();
+  auto txn = graphDB->BeginTransaction();
+  auto s = txn->dbtxn()->GetWriteBatch()->Put(graphDB->graph_cf().wal,
+                                              bad_wal_key, "bad_wal");
+  ASSERT_TRUE(s.ok());
+  txn->Commit();
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+  txn = graphDB->BeginTransaction();
+  s = txn->dbtxn()->GetWriteBatch()->Delete(graphDB->graph_cf().wal,
+                                            bad_wal_key);
+  ASSERT_TRUE(s.ok());
+  txn->Commit();
+
+  txn = graphDB->BeginTransaction();
+  txn->CreateVertex({"label1"},
+                    {{"id", Value::Integer(1)},
+                     {"embedding", Value::DoubleArray({1.0, 1.0, 1.0, 1.0})}});
+  txn->Commit();
+
+  EXPECT_TRUE(WaitUntilVectorQueryCount(graphDB.get(), index_name,
+                                        {1.0, 1.0, 1.0, 1.0}, 1,
+                                        std::chrono::milliseconds(2500)));
+}
+
+TEST(VectorIndex, deleteOnlyWalIsCheckpointedAndTrimmed) {
+  fs::remove_all(testdb);
+  GraphDBOptions options;
+  options.vt_apply_interval_ = 3600;
+  ScopedSerializeInterval interval(1);
+  std::string index_name = "vector_index";
+  {
+    auto graphDB = GraphDB::Open(testdb, options);
+    graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2",
+                                  16, 100);
+    ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
+
+    auto index = graphDB->meta_info().GetVertexVectorIndex(index_name);
+    ASSERT_TRUE(index != nullptr);
+    std::string prefix(common::AsChars(index->index_id()),
+                       sizeof(index->index_id()));
+
+    auto txn = graphDB->BeginTransaction();
+    txn->CreateVertex(
+        {"label1"}, {{"id", Value::Integer(1)},
+                     {"embedding", Value::DoubleArray({1.0, 1.0, 1.0, 1.0})}});
+    txn->Commit();
+
+    index->ApplyWAL();
+    EXPECT_EQ(
+        CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().wal, prefix), 0);
+
+    txn = graphDB->BeginTransaction();
+    auto viter = txn->NewVertexIterator(
+        "label1",
+        std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
+    ASSERT_TRUE(viter->Valid());
+    viter->GetVertex().Delete();
+    txn->Commit();
+
+    index->ApplyWAL();
+    EXPECT_EQ(
+        CountKeysWithPrefix(graphDB.get(), graphDB->graph_cf().wal, prefix), 0);
+  }
+
+  {
+    auto graphDB = GraphDB::Open(testdb, options);
+    auto txn = graphDB->BeginTransaction();
+    auto result =
+        txn->QueryVertexByKnnSearch(index_name, {1.0, 1.0, 1.0, 1.0}, 10, 100);
+    EXPECT_FALSE(result->Valid());
+    txn->Commit();
+  }
 }
 
 TEST(VectorIndex, duplicateAddWalReplacesPreviousVector) {

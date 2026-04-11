@@ -422,6 +422,11 @@ TEST(VertexUniqueIndex, buildConflict) {
   EXPECT_NE(
       failed_index->meta().build_error().find("Index value already exist"),
       std::string::npos);
+  txn = graphDB->BeginTransaction();
+  EXPECT_THROW_CODE_MSG(
+      txn->QueryVertexByPropertyIndex("label1_id", Value::Integer(10)),
+      IndexNotReady, "build failed");
+  txn->Rollback();
   txn.reset();
   graphDB.reset();
   graphDB = GraphDB::Open(testdb, {});

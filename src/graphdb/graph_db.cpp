@@ -18,6 +18,7 @@
 #include "graph_db.h"
 
 #include <filesystem>
+#include <string_view>
 
 #include "common/byte_utils.h"
 #include "common/logger.h"
@@ -30,6 +31,8 @@ using common::AsChars;
 using common::ReadValue;
 namespace graphdb {
 namespace {
+
+void ThrowIfIteratorError(rocksdb::Iterator* iter, std::string_view action);
 
 std::string BuildFullTextIndexPath(const std::string& graph_path,
                                    const std::string& index_name,
@@ -56,10 +59,14 @@ uint64_t LoadVisibleMaxWalId(rocksdb::TransactionDB* db, GraphCF* graph_cf,
   std::unique_ptr<rocksdb::Iterator> iter(db->NewIterator(ro, graph_cf->wal));
   iter->SeekForPrev(seek_key);
   if (!iter->Valid()) {
+    ThrowIfIteratorError(iter.get(),
+                         "index wal iterator failed while loading max wal id");
     return 0;
   }
   auto key = iter->key();
   if (!key.starts_with(prefix)) {
+    ThrowIfIteratorError(iter.get(),
+                         "index wal iterator failed while loading max wal id");
     return 0;
   }
   key.remove_prefix(sizeof(index_id));
@@ -69,6 +76,8 @@ uint64_t LoadVisibleMaxWalId(rocksdb::TransactionDB* db, GraphCF* graph_cf,
                "expect {}, actual {}",
                sizeof(uint64_t), key.size());
   }
+  ThrowIfIteratorError(iter.get(),
+                       "index wal iterator failed while loading max wal id");
   return big_to_native(ReadValue<uint64_t>(key.data()));
 }
 
@@ -187,6 +196,13 @@ void DeleteAllEntriesInColumnFamily(rocksdb::TransactionDB* db,
   std::string end = iter->key().ToString();
   end.push_back('\0');
   wb->DeleteRange(cf, begin, end);
+}
+
+void ThrowIfIteratorError(rocksdb::Iterator* iter, std::string_view action) {
+  auto status = iter->status();
+  if (!status.ok()) {
+    THROW_CODE(StorageEngineError, "{}: {}", action, status.ToString());
+  }
 }
 
 }  // namespace

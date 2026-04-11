@@ -24,6 +24,7 @@
 #include "common/byte_utils.h"
 #include "common/logger.h"
 #include "graph_db.h"
+#include "index_error.h"
 #include "transaction/transaction.h"
 using namespace txn;
 using common::AsChars;
@@ -352,9 +353,9 @@ GetVertexByFullTextIndex::GetVertexByFullTextIndex(
     : VertexScoreIterator(txn) {
   auto ft = txn->db()->meta_info().GetReadyVertexFullTextIndex(ft_index_name);
   if (!ft) {
-    if (txn->db()->meta_info().GetVertexFullTextIndex(ft_index_name)) {
-      THROW_CODE(IndexNotReady, "Fulltext index [{}] is still building",
-                 ft_index_name);
+    if (auto building_index =
+            txn->db()->meta_info().GetVertexFullTextIndex(ft_index_name)) {
+      ThrowIfIndexUnavailable(building_index, ft_index_name, "Fulltext");
     }
     THROW_CODE(FullTextIndexNotFound, "No such fulltext index: {}",
                ft_index_name);
@@ -385,9 +386,9 @@ GetVertexByKnnSearch::GetVertexByKnnSearch(txn::Transaction *txn,
     : VertexScoreIterator(txn) {
   auto index = txn->db()->meta_info().GetReadyVertexVectorIndex(vector_index);
   if (!index) {
-    if (txn->db()->meta_info().GetVertexVectorIndex(vector_index)) {
-      THROW_CODE(IndexNotReady, "Vector index [{}] is still building",
-                 vector_index);
+    if (auto building_index =
+            txn->db()->meta_info().GetVertexVectorIndex(vector_index)) {
+      ThrowIfIndexUnavailable(building_index, vector_index, "Vector");
     }
     THROW_CODE(VectorIndexException, "No such vector index:{}", vector_index);
   }
