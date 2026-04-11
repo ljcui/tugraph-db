@@ -40,8 +40,8 @@ constexpr char kVidPrefix = 1;
 constexpr char kDeletePrefix = 2;
 
 const char* kCheckpointAppliedWalIdKey = "checkpoint_applied_wal_id";
-const char* kVectorStoreDbDir = "rocksdb";
-const char* kFaissCheckpointFilePrefix = "hnsw.index.data.";
+const char* kVectorStoreStateDbDir = "state_db";
+const char* kVectorStoreCheckpointFilePrefix = "checkpoint.";
 
 std::string BuildKey(char prefix, std::string_view suffix) {
   std::string key(1, prefix);
@@ -78,7 +78,7 @@ std::string VectorStore::BuildDeleteMarkKey(int64_t vector_id) {
 }
 
 std::string VectorStore::FaissCheckpointPath(uint64_t applied_wal_id) const {
-  return path_ + "/" + kFaissCheckpointFilePrefix +
+  return path_ + "/" + kVectorStoreCheckpointFilePrefix +
          std::to_string(applied_wal_id);
 }
 
@@ -89,7 +89,7 @@ void VectorStore::Open() {
     THROW_CODE(IOException, "failed to create vector index directory {}: {}",
                path_, ec.message());
   }
-  auto db_path = path_ + "/" + kVectorStoreDbDir;
+  auto db_path = path_ + "/" + kVectorStoreStateDbDir;
   rocksdb::Options options;
   options.create_if_missing = true;
   options.IncreaseParallelism();

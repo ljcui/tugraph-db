@@ -350,7 +350,7 @@ TEST(VectorIndex, usesDedicatedVectorStore) {
   ASSERT_TRUE(index != nullptr);
   index->ApplyWAL();
 
-  EXPECT_TRUE(fs::exists(testdb + "/vt/" + index_name + "/rocksdb/CURRENT"));
+  EXPECT_TRUE(fs::exists(testdb + "/vt/" + index_name + "/state_db/CURRENT"));
 
   txn = graphDB->BeginTransaction();
   rocksdb::ReadOptions ro;
@@ -368,7 +368,7 @@ TEST(VectorIndex, usesDedicatedVectorStore) {
   rocksdb::Options options;
   rocksdb::DB* vector_db = nullptr;
   auto s = rocksdb::DB::OpenForReadOnly(
-      options, testdb + "/vt/" + index_name + "/rocksdb", &vector_db);
+      options, testdb + "/vt/" + index_name + "/state_db", &vector_db);
   ASSERT_TRUE(s.ok()) << s.ToString();
 
   int vid_keys = 0;
@@ -438,7 +438,7 @@ TEST(VectorIndex, vectorStorePersistsOnlyAtCheckpoint) {
   rocksdb::Options db_options;
   rocksdb::DB* vector_db = nullptr;
   auto s = rocksdb::DB::OpenForReadOnly(
-      db_options, testdb + "/vt/" + index_name + "/rocksdb", &vector_db);
+      db_options, testdb + "/vt/" + index_name + "/state_db", &vector_db);
   ASSERT_TRUE(s.ok()) << s.ToString();
 
   int state_keys = 0;
@@ -562,7 +562,7 @@ TEST(VectorIndex, checkpointMetaWriteFailureIsReported) {
   ScopedSerializeInterval scoped_interval(1);
   std::string index_name = "vector_index";
   std::string checkpoint_path =
-      testdb + "/vt/" + index_name + "/hnsw.index.data.1";
+      testdb + "/vt/" + index_name + "/checkpoint.1";
   {
     auto graphDB = GraphDB::Open(testdb, options);
     graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2",
