@@ -14,7 +14,10 @@
 
 #pragma once
 
+#include <array>
 #include <chrono>
+#include <filesystem>
+#include <string_view>
 #include <thread>
 
 #include "graphdb/graph_db.h"
@@ -89,3 +92,19 @@ inline bool WaitUntilPropertyIndexFailed(
   }
   return false;
 }
+
+namespace testutil {
+
+inline constexpr std::array<std::string_view, 7> kTestDataDirectories = {
+    "testdb",       "cypher_testdb", "temporal_db", "test_galaxy",
+    "test_ftindex", "testkv",        "varlendb"};
+
+inline void CleanupTestDataDirectories() {
+  std::error_code ec;
+  for (const auto dir : kTestDataDirectories) {
+    ec.clear();
+    std::filesystem::remove_all(std::filesystem::path(dir), ec);
+  }
+}
+
+}  // namespace testutil
