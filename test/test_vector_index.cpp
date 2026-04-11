@@ -16,6 +16,7 @@
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <random>
@@ -26,6 +27,7 @@
 #include "common/value.h"
 #include "cypher/execution_plan/result_iterator.h"
 #include "graphdb/graph_db.h"
+#include "graphdb/vector_store.h"
 #include "test_util.h"
 #include "transaction/transaction.h"
 using namespace graphdb;
@@ -449,6 +451,50 @@ TEST(VectorIndex, usesDedicatedVectorStore) {
   vector_iter.reset();
   ASSERT_TRUE(vector_db->Close().ok());
   delete vector_db;
+}
+
+TEST(VectorIndex, createIndexClearsStaleArtifactsFromPreviousFailedBuild) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, {});
+  std::string index_name = "vector_index";
+  std::string stale_path = testdb + "/vt/" + index_name;
+
+  {
+    VectorStore stale_store(stale_path, 4, meta::VectorDistanceType::L2, 16,
+                            100);
+    std::array<float, 4> stale_embedding = {99.0f, 99.0f, 99.0f, 99.0f};
+    stale_store.Add(777, stale_embedding.data());
+    stale_store.Checkpoint(0);
+  }
+
+  graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
+                                100);
+  ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
+
+  auto index = graphDB->meta_info().GetVertexVectorIndex(index_name);
+  ASSERT_TRUE(index != nullptr);
+  EXPECT_EQ(index->NumElements(), 0);
+
+  auto txn = graphDB->BeginTransaction();
+  auto result = txn->QueryVertexByKnnSearch(index_name,
+                                            {99.0, 99.0, 99.0, 99.0}, 10, 100);
+  EXPECT_FALSE(result->Valid());
+  txn->Commit();
+
+  txn = graphDB->BeginTransaction();
+  txn->CreateVertex({"label1"},
+                    {{"id", Value::Integer(1)},
+                     {"embedding", Value::DoubleArray({1.0, 1.0, 1.0, 1.0})}});
+  txn->Commit();
+
+  index->ApplyWAL();
+
+  txn = graphDB->BeginTransaction();
+  result =
+      txn->QueryVertexByKnnSearch(index_name, {1.0, 1.0, 1.0, 1.0}, 10, 100);
+  ASSERT_TRUE(result->Valid());
+  EXPECT_EQ(result->GetVertexScore().vertex.GetProperty("id").AsInteger(), 1);
+  txn->Commit();
 }
 
 TEST(VectorIndex, vectorStorePersistsOnlyAtCheckpoint) {

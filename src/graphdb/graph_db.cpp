@@ -865,9 +865,10 @@ void GraphDB::AddVertexVectorIndex(const std::string& index_name,
                "Vertex vector index [label:{}, property:{}] already exists",
                big_to_native(lid), big_to_native(pid));
   }
-  std::string vt_index_pth = path_ + "/vt/" + index_name;
-  std::filesystem::create_directories(vt_index_pth);
   uint32_t index_id = id_generator().GetNextIndexId();
+  std::string vt_index_pth = path_ + "/vt/" + index_name;
+  DeleteVectorIndexRanges(db_, &graph_cf_, index_id);
+  ResetIndexPath(vt_index_pth, "vector index");
   meta::VectorIndexType index_type = meta::VectorIndexType::HNSW;
   meta::VectorDistanceType dist_type;
   if (distance_type == "l2") {

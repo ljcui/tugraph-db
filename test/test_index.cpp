@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <boost/endian/conversion.hpp>
 #include <chrono>
 #include <filesystem>
 #include <thread>
@@ -462,6 +463,35 @@ TEST(VertexUniqueIndex, buildNonExists) {
   EXPECT_THROW_CODE(txn->CreateVertex(v1_labels, {{"id", Value::Integer(10)}}),
                     IndexValueAlreadyExist);
   txn->Rollback();
+}
+
+TEST(VertexPropertyIndex, loadPreservesBuildStartWalId) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, {});
+  auto lid = graphDB->id_generator().GetOrCreateLid("label1");
+  auto pid = graphDB->id_generator().GetOrCreatePid("id");
+  uint32_t index_id = graphDB->id_generator().GetNextIndexId();
+
+  meta::VertexPropertyIndex meta;
+  meta.set_name("label1_id");
+  meta.set_is_unique(true);
+  meta.set_label("label1");
+  meta.set_label_id(boost::endian::big_to_native(lid));
+  meta.add_properties("id");
+  meta.add_property_ids(boost::endian::big_to_native(pid));
+  meta.set_index_id(boost::endian::big_to_native(index_id));
+  meta.set_state(meta::IndexBuildState::BUILDING);
+  meta.set_build_start_wal_id(8);
+  meta.set_applied_wal_id(0);
+
+  auto index = std::make_shared<VertexPropertyIndex>(
+      graphDB->raw_db(), &graphDB->graph_cf(), meta, graphDB->graph_cf().index,
+      index_id, lid, std::vector<uint32_t>{pid});
+
+  index->Load(nullptr, 7);
+
+  EXPECT_EQ(index->meta().build_start_wal_id(), 8u);
+  EXPECT_EQ(index->meta().applied_wal_id(), 7u);
 }
 
 TEST(VertexUniqueIndex, onlineBuildConflictsWithConcurrentWrite) {

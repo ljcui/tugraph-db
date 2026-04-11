@@ -316,6 +316,30 @@ uint64_t LoadVisibleMaxWalId(rocksdb::TransactionDB* db, GraphCF* graph_cf,
   return big_to_native(ReadValue<uint64_t>(key.data()));
 }
 
+bool TryParseVectorArray(const Value& value, size_t dimensions,
+                         std::vector<float>* out) {
+  if (!value.IsArray()) {
+    return false;
+  }
+  const auto& array = value.AsArray();
+  if (array.empty() || array.size() != dimensions) {
+    return false;
+  }
+  out->clear();
+  out->reserve(array.size());
+  for (const auto& item : array) {
+    if (item.IsFloat()) {
+      out->push_back(item.AsFloat());
+    } else if (item.IsDouble()) {
+      out->push_back(static_cast<float>(item.AsDouble()));
+    } else {
+      out->clear();
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 void VertexPropertyIndex::AddIndex(Transaction* txn, int64_t vid,
@@ -556,7 +580,6 @@ void VertexPropertyIndex::Load(const rocksdb::Snapshot* snapshot,
   ThrowIfIteratorError(iter.get(),
                        "vertex property index load iterator failed");
   apply_id_ = native_to_big(snapshot_wal_id);
-  meta_.set_build_start_wal_id(1);
   meta_.set_applied_wal_id(snapshot_wal_id);
 }
 
@@ -888,6 +911,7 @@ std::string VertexFullTextIndex::NextWALKey() {
 void VertexFullTextIndex::Load(const rocksdb::Snapshot* snapshot,
                                uint64_t snapshot_wal_id) {
   int count = 0;
+  bool has_documents = false;
   FTUpdateBatch batch;
   std::vector<std::pair<uint32_t, std::string>> indexed_properties;
   indexed_properties.reserve(pids_.size());
@@ -938,12 +962,12 @@ void VertexFullTextIndex::Load(const rocksdb::Snapshot* snapshot,
         values.push_back(pv.AsString());
       }
       if (!fields.empty()) {
+        has_documents = true;
         batch.AddDocument(id, &fields, &values);
         count++;
         if (count == 10000) {
           ApplyUpdatesBatch(batch.ids, batch.ops, batch.field_counts,
                             batch.fields, batch.value_counts, batch.values);
-          Commit(std::to_string(snapshot_wal_id));
           count = 0;
           batch.Clear();
         }
@@ -955,10 +979,11 @@ void VertexFullTextIndex::Load(const rocksdb::Snapshot* snapshot,
   if (count > 0) {
     ApplyUpdatesBatch(batch.ids, batch.ops, batch.field_counts, batch.fields,
                       batch.value_counts, batch.values);
+  }
+  if (has_documents) {
     Commit(std::to_string(snapshot_wal_id));
   }
   apply_id_ = native_to_big(snapshot_wal_id);
-  meta_.set_build_start_wal_id(1);
   meta_.set_applied_wal_id(snapshot_wal_id);
 }
 
@@ -1436,27 +1461,13 @@ void VertexVectorIndex::Load(const rocksdb::Snapshot* snapshot,
     }
     Value pv;
     pv.Deserialize(property_val.data(), property_val.size());
-    if (!pv.IsArray()) {
+    std::vector<float> embedding;
+    if (!TryParseVectorArray(pv, meta_.dimensions(), &embedding)) {
       continue;
-    }
-    auto& array = pv.AsArray();
-    if (array.empty() || array.size() != meta_.dimensions()) {
-      continue;
-    }
-    if (!array[0].IsDouble() && !array[0].IsFloat()) {
-      continue;
-    }
-    std::unique_ptr<float[]> embedding(new float[array.size()]);
-    for (size_t i = 0; i < array.size(); i++) {
-      if (array[i].IsDouble()) {
-        embedding[i] = static_cast<float>(array[i].AsDouble());
-      } else {
-        embedding[i] = array[i].AsFloat();
-      }
     }
     {
       std::unique_lock write(mutex_);
-      vector_store_->Add(vid, embedding.get());
+      vector_store_->Add(vid, embedding.data());
     }
     count++;
     if (count % 10000 == 0) {
@@ -1468,7 +1479,6 @@ void VertexVectorIndex::Load(const rocksdb::Snapshot* snapshot,
               count);
   if (count == 0) {
     apply_id_ = native_to_big(snapshot_wal_id);
-    meta_.set_build_start_wal_id(1);
     meta_.set_applied_wal_id(snapshot_wal_id);
     return;
   }
@@ -1480,7 +1490,6 @@ void VertexVectorIndex::Load(const rocksdb::Snapshot* snapshot,
                 vector_store_->NumElements());
   }
   apply_id_ = native_to_big(snapshot_wal_id);
-  meta_.set_build_start_wal_id(1);
   meta_.set_applied_wal_id(snapshot_wal_id);
 }
 

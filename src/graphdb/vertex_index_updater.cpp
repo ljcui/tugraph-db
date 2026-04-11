@@ -136,9 +136,6 @@ std::optional<std::vector<float>> BuildVectorValues(
     return std::nullopt;
   }
   const auto& array = value.AsArray();
-  if (array.empty() || (!array[0].IsDouble() && !array[0].IsFloat())) {
-    return std::nullopt;
-  }
   if (array.size() != index->meta().dimensions()) {
     return std::nullopt;
   }
@@ -147,8 +144,10 @@ std::optional<std::vector<float>> BuildVectorValues(
   for (const auto& item : array) {
     if (item.IsFloat()) {
       vector.push_back(item.AsFloat());
-    } else {
+    } else if (item.IsDouble()) {
       vector.push_back(static_cast<float>(item.AsDouble()));
+    } else {
+      return std::nullopt;
     }
   }
   return vector;

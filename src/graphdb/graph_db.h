@@ -75,6 +75,7 @@ class GraphDB {
   std::vector<rocksdb::ColumnFamilyHandle*>& cf_handles() {
     return cf_handles_;
   }
+  rocksdb::TransactionDB* raw_db() { return db_; }
   GraphCF& graph_cf() { return graph_cf_; }
   IdGenerator& id_generator() { return meta_info_.id_generator(); }
   MetaInfo& meta_info() { return meta_info_; }
