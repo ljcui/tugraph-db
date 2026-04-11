@@ -688,38 +688,6 @@ void GraphDB::AddVertexPropertyIndex(
   auto vpi = std::make_shared<VertexPropertyIndex>(
       db_, &graph_cf_, meta_val, graph_cf_.index, index_id, lid, pids);
 
-  if (unique) {
-    auto busy_guard = busy_index_.Hold({lid}, std::move(pid_set));
-    vpi->SetState(meta::IndexBuildState::READY);
-    auto build_txn = BeginTransaction();
-    rocksdb::ReadOptions ro;
-    std::unique_ptr<rocksdb::Iterator> iter(
-        build_txn->dbtxn()->GetIterator(ro, graph_cf_.vertex_label_vid));
-    rocksdb::Slice prefix(AsChars(lid), sizeof(lid));
-    for (iter->Seek(prefix); iter->Valid() && iter->key().starts_with(prefix);
-         iter->Next()) {
-      auto key = iter->key();
-      key.remove_prefix(sizeof(uint32_t));
-      int64_t vid = common::ReadValue<int64_t>(key.data());
-      auto values = vpi->LoadIndexedPropertyValues(build_txn.get(), vid);
-      if (!values) {
-        continue;
-      }
-      vpi->AddIndex(build_txn.get(), vid, *values);
-    }
-    auto s = build_txn->dbtxn()->GetWriteBatch()->Put(
-        graph_cf_.meta_info,
-        BuildMetaKey(MetaDataType::VertexPropertyIndex, index_name),
-        vpi->meta().SerializeAsString());
-    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
-    build_txn->Commit();
-    auto ret = meta_info_.AddVertexPropertyIndex(std::move(vpi));
-    assert(ret);
-    LOG_INFO("Add vertex index: [lid:{}, property_count:{}, is_unique:{}]",
-             big_to_native(lid), pids.size(), true);
-    return;
-  }
-
   vpi->SetState(meta::IndexBuildState::BUILDING);
   auto s = db_->Put({}, graph_cf_.meta_info,
                     BuildMetaKey(MetaDataType::VertexPropertyIndex, index_name),
@@ -727,8 +695,10 @@ void GraphDB::AddVertexPropertyIndex(
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   auto ret = meta_info_.AddVertexPropertyIndex(vpi);
   assert(ret);
-  LOG_INFO("Begin online build vertex index: [lid:{}, property_count:{}]",
-           big_to_native(lid), pids.size());
+  LOG_INFO(
+      "Begin online build vertex index: [lid:{}, property_count:{}, "
+      "is_unique:{}]",
+      big_to_native(lid), pids.size(), unique);
   ScheduleVertexPropertyIndexBuild(vpi, false);
 }
 

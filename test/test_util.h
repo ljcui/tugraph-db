@@ -14,6 +14,11 @@
 
 #pragma once
 
+#include <chrono>
+#include <thread>
+
+#include "graphdb/graph_db.h"
+
 #define EXPECT_THROW_CODE(statement, error_code)                \
   {                                                             \
     try {                                                       \
@@ -50,3 +55,37 @@
       FAIL() << "Unexpected exception message: " << e.what();   \
     }                                                           \
   }
+
+inline bool WaitUntilPropertyIndexReady(
+    graphdb::GraphDB* graph_db, const std::string& index_name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (graph_db->meta_info().GetReadyVertexPropertyIndex(index_name)) {
+      return true;
+    }
+    auto index = graph_db->meta_info().GetVertexPropertyIndex(index_name);
+    if (index && index->state() == meta::IndexBuildState::FAILED) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return false;
+}
+
+inline bool WaitUntilPropertyIndexFailed(
+    graphdb::GraphDB* graph_db, const std::string& index_name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto index = graph_db->meta_info().GetVertexPropertyIndex(index_name);
+    if (index && index->state() == meta::IndexBuildState::FAILED) {
+      return true;
+    }
+    if (graph_db->meta_info().GetReadyVertexPropertyIndex(index_name)) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return false;
+}

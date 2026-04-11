@@ -402,18 +402,15 @@ void VertexPropertyIndex::UpdateIndex(
     UpdateIndexDirect(txn, vid, new_values, old_values);
     return;
   }
-  if (meta_.is_unique()) {
-    THROW_CODE(Unimplemented,
-               "online build for unique property index [{}] is not supported",
-               meta_.name());
-  }
   std::string new_key;
   std::string old_key;
   if (new_values) {
-    new_key = EntryKey(*new_values, vid);
+    new_key =
+        meta_.is_unique() ? IndexKey(*new_values) : EntryKey(*new_values, vid);
   }
   if (old_values) {
-    old_key = EntryKey(*old_values, vid);
+    old_key =
+        meta_.is_unique() ? IndexKey(*old_values) : EntryKey(*old_values, vid);
   }
   if (old_values && (!new_values || old_key != new_key)) {
     AppendBuildUpdate(txn, meta::UpdateType::Delete, vid, *old_values);
@@ -425,11 +422,6 @@ void VertexPropertyIndex::UpdateIndex(
 
 void VertexPropertyIndex::ApplyBuildUpdate(
     const meta::PropertyIndexUpdate& update) {
-  if (meta_.is_unique()) {
-    THROW_CODE(Unimplemented,
-               "online build for unique property index [{}] is not supported",
-               meta_.name());
-  }
   std::vector<Value> values;
   values.reserve(update.values_size());
   for (const auto& item : update.values()) {
@@ -437,15 +429,58 @@ void VertexPropertyIndex::ApplyBuildUpdate(
   }
   rocksdb::WriteOptions wo;
   rocksdb::Status s;
-  auto entry_key = EntryKey(values, update.vid());
-  if (update.type() == meta::UpdateType::Add) {
-    s = db_->Put(wo, cf_, entry_key, {});
-  } else if (update.type() == meta::UpdateType::Delete) {
-    s = db_->Delete(wo, cf_, entry_key);
+  if (meta_.is_unique()) {
+    rocksdb::ReadOptions ro;
+    auto index_key = IndexKey(values);
+    std::string current_vid;
+    s = db_->Get(ro, cf_, index_key, &current_vid);
+    if (update.type() == meta::UpdateType::Add) {
+      if (s.ok()) {
+        if (current_vid.size() != sizeof(int64_t)) {
+          THROW_CODE(StorageEngineError,
+                     "vertex unique index stores invalid vid size");
+        }
+        if (ReadValue<int64_t>(current_vid.data()) != update.vid()) {
+          THROW_CODE(IndexValueAlreadyExist);
+        }
+        return;
+      }
+      if (!s.IsNotFound()) {
+        THROW_CODE(StorageEngineError, s.ToString());
+      }
+      s = db_->Put(wo, cf_, index_key,
+                   rocksdb::Slice(AsChars(update.vid()), sizeof(update.vid())));
+    } else if (update.type() == meta::UpdateType::Delete) {
+      if (s.IsNotFound()) {
+        return;
+      }
+      if (!s.ok()) {
+        THROW_CODE(StorageEngineError, s.ToString());
+      }
+      if (current_vid.size() != sizeof(int64_t)) {
+        THROW_CODE(StorageEngineError,
+                   "vertex unique index stores invalid vid size");
+      }
+      if (ReadValue<int64_t>(current_vid.data()) != update.vid()) {
+        return;
+      }
+      s = db_->Delete(wo, cf_, index_key);
+    } else {
+      THROW_CODE(StorageEngineError,
+                 "property index wal has invalid update type: {}",
+                 static_cast<int>(update.type()));
+    }
   } else {
-    THROW_CODE(StorageEngineError,
-               "property index wal has invalid update type: {}",
-               static_cast<int>(update.type()));
+    auto entry_key = EntryKey(values, update.vid());
+    if (update.type() == meta::UpdateType::Add) {
+      s = db_->Put(wo, cf_, entry_key, {});
+    } else if (update.type() == meta::UpdateType::Delete) {
+      s = db_->Delete(wo, cf_, entry_key);
+    } else {
+      THROW_CODE(StorageEngineError,
+                 "property index wal has invalid update type: {}",
+                 static_cast<int>(update.type()));
+    }
   }
   if (!s.ok()) {
     THROW_CODE(StorageEngineError, s.ToString());

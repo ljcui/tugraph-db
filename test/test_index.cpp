@@ -74,27 +74,6 @@ std::vector<int64_t> CollectVertexIds(
 
 }  // namespace
 
-namespace {
-
-bool WaitUntilPropertyIndexReady(
-    GraphDB* graph_db, const std::string& index_name,
-    std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
-  auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (graph_db->meta_info().GetReadyVertexPropertyIndex(index_name)) {
-      return true;
-    }
-    auto index = graph_db->meta_info().GetVertexPropertyIndex(index_name);
-    if (index && index->state() == meta::IndexBuildState::FAILED) {
-      return false;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
-  return false;
-}
-
-}  // namespace
-
 TEST(VertexUniqueIndex, basic) {
   fs::remove_all(testdb);
   auto graphDB = GraphDB::Open(testdb, {});
@@ -106,6 +85,7 @@ TEST(VertexUniqueIndex, basic) {
   }
   txn->Commit();
   graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
   txn = graphDB->BeginTransaction();
   for (auto i = 0; i < 100; i++) {
     auto viter = txn->NewVertexIterator(
@@ -151,6 +131,7 @@ TEST(VertexUniqueIndex, delete) {
   }
   txn->Commit();
   graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
   txn = graphDB->BeginTransaction();
   for (auto viter = txn->NewVertexIterator(); viter->Valid(); viter->Next()) {
     if (viter->GetVertex().GetProperty("id").AsInteger() < 10) {
@@ -192,6 +173,7 @@ TEST(VertexUniqueIndex, addLabelMaintainsIndex) {
   txn->Commit();
 
   graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
 
   txn = graphDB->BeginTransaction();
   txn->GetVertexById(addable_id).AddLabels({"label1"});
@@ -233,6 +215,7 @@ TEST(VertexUniqueIndex, deleteLabelMaintainsIndex) {
   txn->Commit();
 
   graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
 
   txn = graphDB->BeginTransaction();
   txn->GetVertexById(removable_id).DeleteLabels({"label1"});
@@ -276,6 +259,7 @@ TEST(VertexUniqueIndex, update) {
   }
   txn->Commit();
   graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
   txn = graphDB->BeginTransaction();
   for (auto viter = txn->NewVertexIterator(); viter->Valid(); viter->Next()) {
     auto& v = viter->GetVertex();
@@ -332,6 +316,7 @@ TEST(VertexUniqueIndex, idempotentUpdate) {
   txn->Commit();
 
   graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
 
   txn = graphDB->BeginTransaction();
   auto viter = txn->NewVertexIterator(
@@ -364,6 +349,7 @@ TEST(VertexUniqueIndex, conflict) {
   }
   txn->Commit();
   graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
   for (auto i = 0; i < 100; i++) {
     txn = graphDB->BeginTransaction();
     EXPECT_THROW_CODE(
@@ -400,6 +386,7 @@ TEST(VertexUniqueIndex, reopen) {
   }
   txn->Commit();
   graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
   txn.reset();
   graphDB.reset();
   graphDB = GraphDB::Open(testdb, {});
@@ -427,9 +414,14 @@ TEST(VertexUniqueIndex, buildConflict) {
   }
   txn->CreateVertex(v1_labels, {{"id", Value::Integer(10)}});
   txn->Commit();
-  EXPECT_THROW_CODE(
-      graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"}),
-      IndexValueAlreadyExist);
+  graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
+  ASSERT_TRUE(WaitUntilPropertyIndexFailed(graphDB.get(), "label1_id"));
+  auto failed_index = graphDB->meta_info().GetVertexPropertyIndex("label1_id");
+  ASSERT_TRUE(failed_index);
+  EXPECT_EQ(failed_index->state(), meta::IndexBuildState::FAILED);
+  EXPECT_NE(
+      failed_index->meta().build_error().find("Index value already exist"),
+      std::string::npos);
   txn.reset();
   graphDB.reset();
   graphDB = GraphDB::Open(testdb, {});
@@ -443,6 +435,7 @@ TEST(VertexUniqueIndex, buildConflict) {
   }
   txn->Commit();
   graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
   EXPECT_THROW_CODE(
       graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"}),
       VertexIndexAlreadyExist);
@@ -459,10 +452,49 @@ TEST(VertexUniqueIndex, buildNonExists) {
                                   {"str", Value::String(std::to_string(i))}});
   }
   txn->Commit();
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
   txn = graphDB->BeginTransaction();
   EXPECT_THROW_CODE(txn->CreateVertex(v1_labels, {{"id", Value::Integer(10)}}),
                     IndexValueAlreadyExist);
   txn->Rollback();
+}
+
+TEST(VertexUniqueIndex, onlineBuildConflictsWithConcurrentWrite) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, {});
+  auto setup = graphDB->BeginTransaction();
+  for (int i = 0; i < 50000; ++i) {
+    setup->CreateVertex(
+        {"label1"},
+        {{"id", Value::Integer(i)}, {"str", Value::String(std::to_string(i))}});
+  }
+  setup->Commit();
+
+  graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
+
+  auto txn = graphDB->BeginTransaction();
+  bool duplicate_committed = false;
+  try {
+    txn->CreateVertex({"label1"}, {{"id", Value::Integer(49999)},
+                                   {"str", Value::String("dup_during_build")}});
+    txn->Commit();
+    duplicate_committed = true;
+  } catch (LgraphException& e) {
+    EXPECT_EQ(e.code(), ErrorCode::IndexValueAlreadyExist);
+    txn->Rollback();
+  }
+
+  if (duplicate_committed) {
+    ASSERT_TRUE(WaitUntilPropertyIndexFailed(graphDB.get(), "label1_id",
+                                             std::chrono::seconds(10)));
+    auto failed_index =
+        graphDB->meta_info().GetVertexPropertyIndex("label1_id");
+    ASSERT_TRUE(failed_index);
+    EXPECT_EQ(failed_index->state(), meta::IndexBuildState::FAILED);
+  } else {
+    ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id",
+                                            std::chrono::seconds(10)));
+  }
 }
 
 TEST(VertexPropertyIndex, nonUniqueCompositeIndexMaintainsEntries) {
@@ -635,6 +667,7 @@ TEST(VertexUniqueIndex, compositeLookupAndConflict) {
 
   graphDB->AddVertexPropertyIndex("label1_id_country", true, "label1",
                                   {"id", "country"});
+  ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id_country"));
 
   txn = graphDB->BeginTransaction();
   EXPECT_EQ(txn->GetVertexIteratorInfo(
