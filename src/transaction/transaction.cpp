@@ -150,9 +150,6 @@ Vertex Transaction::CreateVertex(
     serialized_values.emplace(pid, value.Serialize());
     pids.insert(pid);
   }
-  if (db_->busy_index().Busy(lids, pids)) {
-    THROW_CODE(IndexBusy);
-  }
   for (const auto& index : property_indexes) {
     if (!lids.count(index->lid())) {
       continue;

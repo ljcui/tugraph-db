@@ -26,7 +26,6 @@
 #include <future>
 #include <mutex>
 #include <optional>
-#include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -200,89 +199,6 @@ class VertexFullTextIndex
   size_t writer_threads_ = 1;
   size_t writer_memory_budget_ = 0;
   boost::asio::steady_timer timer_;
-};
-
-struct BusyIndex {
- public:
-  class ScopedMark {
-   public:
-    ScopedMark() = default;
-    ScopedMark(BusyIndex* owner, std::unordered_set<uint32_t> lids,
-               std::unordered_set<uint32_t> pids)
-        : owner_(owner) {
-      if (owner_) {
-        owner_->Mark(std::move(lids), std::move(pids));
-      }
-    }
-    ScopedMark(const ScopedMark&) = delete;
-    ScopedMark& operator=(const ScopedMark&) = delete;
-    ScopedMark(ScopedMark&& other) noexcept
-        : owner_(std::exchange(other.owner_, nullptr)) {}
-    ScopedMark& operator=(ScopedMark&& other) noexcept {
-      if (this == &other) {
-        return *this;
-      }
-      Reset();
-      owner_ = std::exchange(other.owner_, nullptr);
-      return *this;
-    }
-    ~ScopedMark() { Reset(); }
-
-    void Reset() {
-      if (owner_) {
-        owner_->Clear();
-        owner_ = nullptr;
-      }
-    }
-
-   private:
-    BusyIndex* owner_ = nullptr;
-  };
-
-  [[nodiscard]] ScopedMark Hold(std::unordered_set<uint32_t> _lids,
-                                std::unordered_set<uint32_t> _pids) {
-    return ScopedMark(this, std::move(_lids), std::move(_pids));
-  }
-
-  void Mark(std::unordered_set<uint32_t> _lids,
-            std::unordered_set<uint32_t> _pids) {
-    std::unique_lock lock(mutex_);
-    lids_ = std::move(_lids);
-    pids_ = std::move(_pids);
-  }
-  bool LabelBusy(const std::unordered_set<uint32_t>& _lids) const {
-    std::shared_lock lock(mutex_);
-    for (auto id : _lids) {
-      if (lids_.count(id)) {
-        return true;
-      }
-    }
-    return false;
-  }
-  bool Busy(const std::unordered_set<uint32_t>& _lids, uint32_t _pid) const {
-    std::shared_lock lock(mutex_);
-    return std::any_of(lids_.begin(), lids_.end(),
-                       [&_lids](uint32_t id) { return _lids.count(id) > 0; }) &&
-           pids_.count(_pid);
-  }
-  bool Busy(const std::unordered_set<uint32_t>& _lids,
-            const std::unordered_set<uint32_t>& _pids) const {
-    std::shared_lock lock(mutex_);
-    return std::any_of(lids_.begin(), lids_.end(),
-                       [&_lids](uint32_t id) { return _lids.count(id) > 0; }) &&
-           std::any_of(pids_.begin(), pids_.end(),
-                       [&_pids](uint32_t id) { return _pids.count(id) > 0; });
-  }
-  void Clear() {
-    std::unique_lock lock(mutex_);
-    lids_.clear();
-    pids_.clear();
-  }
-
- private:
-  mutable std::shared_mutex mutex_;
-  std::unordered_set<uint32_t> lids_;
-  std::unordered_set<uint32_t> pids_;
 };
 
 class VertexVectorIndex

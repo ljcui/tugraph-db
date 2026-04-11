@@ -347,9 +347,6 @@ int Vertex::Delete() {
         props.emplace(pid, vp_iter->value().ToString());
         prop_keys.push_back(std::move(p_key));
       }
-      if (txn_->db()->busy_index().Busy(labelIds, pids)) {
-        THROW_CODE(IndexBusy);
-      }
       // delete label vid
       for (auto labelId : labelIds) {
         std::string labelVid;
@@ -471,9 +468,6 @@ void Vertex::AddLabels(const std::unordered_set<std::string> &labels) {
     auto lid = txn_->db()->id_generator().GetOrCreateLid(label);
     add_lids.insert(lid);
   }
-  if (txn_->db()->busy_index().LabelBusy(add_lids)) {
-    THROW_CODE(IndexBusy);
-  }
   Lock();
   auto labelIds = GetLabelIds();
   for (auto &lid : add_lids) {
@@ -567,9 +561,6 @@ void Vertex::DeleteLabels(const std::unordered_set<std::string> &labels) {
   }
   if (remove_lids.empty()) {
     return;
-  }
-  if (txn_->db()->busy_index().LabelBusy(remove_lids)) {
-    THROW_CODE(IndexBusy);
   }
   auto ft_indexes = txn_->db()->meta_info().GetVertexFullTextIndexes();
   auto vector_indexes = txn_->db()->meta_info().GetVertexVectorIndexes();
@@ -687,9 +678,6 @@ void Vertex::SetProperties(
   }
   Lock();
   auto lids = GetLabelIds();
-  if (txn_->db()->busy_index().Busy(lids, pids)) {
-    THROW_CODE(IndexBusy);
-  }
   auto ft_indexes = txn_->db()->meta_info().GetVertexFullTextIndexes();
   auto vector_indexes = txn_->db()->meta_info().GetVertexVectorIndexes();
   auto props = LoadVertexSerializedProperties(txn_, id_);
@@ -773,9 +761,6 @@ void Vertex::RemoveAllProperty() {
     pids.insert(pid);
   }
   p_iter.reset();
-  if (txn_->db()->busy_index().Busy(lids, pids)) {
-    THROW_CODE(IndexBusy);
-  }
   auto ft_indexes = txn_->db()->meta_info().GetVertexFullTextIndexes();
   auto vector_indexes = txn_->db()->meta_info().GetVertexVectorIndexes();
   RefreshVertexPropertyIndexes(txn_, id_, lids, pids, {}, pids);
@@ -812,9 +797,6 @@ void Vertex::RemoveProperty(const std::string &name) {
   pkey.append(AsChars(pid), sizeof(pid));
   Lock();
   auto lids = GetLabelIds();
-  if (txn_->db()->busy_index().Busy(lids, pid)) {
-    THROW_CODE(IndexBusy);
-  }
   auto props = LoadVertexSerializedProperties(txn_, id_);
   if (!props.count(pid)) {
     return;

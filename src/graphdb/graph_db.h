@@ -78,7 +78,6 @@ class GraphDB {
   GraphCF& graph_cf() { return graph_cf_; }
   IdGenerator& id_generator() { return meta_info_.id_generator(); }
   MetaInfo& meta_info() { return meta_info_; }
-  BusyIndex& busy_index() { return busy_index_; }
   meta::GraphDBMetaInfo& db_meta() { return db_meta_; }
   const std::string& path() { return path_; }
   bool& drop_on_close() { return drop_on_close_; }
@@ -111,7 +110,6 @@ class GraphDB {
   boost::asio::io_service assistant_;
   GraphCF graph_cf_;
   MetaInfo meta_info_;
-  BusyIndex busy_index_;
   meta::GraphDBMetaInfo db_meta_;
   std::vector<std::thread> service_threads_;
   GraphDBOptions options_;

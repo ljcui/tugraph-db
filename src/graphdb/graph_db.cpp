@@ -635,7 +635,6 @@ void GraphDB::ClearData() {
       index->Start();
     }
   }
-  busy_index_.Clear();
 }
 
 void GraphDB::AddVertexPropertyIndex(

@@ -561,8 +561,7 @@ TEST(VectorIndex, checkpointMetaWriteFailureIsReported) {
   options.vt_apply_interval_ = 3600;
   ScopedSerializeInterval scoped_interval(1);
   std::string index_name = "vector_index";
-  std::string checkpoint_path =
-      testdb + "/vt/" + index_name + "/checkpoint.1";
+  std::string checkpoint_path = testdb + "/vt/" + index_name + "/checkpoint.1";
   {
     auto graphDB = GraphDB::Open(testdb, options);
     graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2",

@@ -522,9 +522,11 @@ TEST(VertexPropertyIndex, nonUniqueCompositeIndexMaintainsEntries) {
   EXPECT_EQ(index->meta().properties_size(), 2);
 
   txn = graphDB->BeginTransaction();
+  std::vector<int64_t> ab_ids = {v1_id, v2_id};
+  std::sort(ab_ids.begin(), ab_ids.end());
   EXPECT_EQ((CollectVertexPropertyIndexVids(
                 txn.get(), index, {Value::Integer(1), Value::String("a")})),
-            (std::vector<int64_t>{v1_id, v2_id}));
+            ab_ids);
   EXPECT_EQ((CollectVertexPropertyIndexVids(
                 txn.get(), index, {Value::Integer(1), Value::String("b")})),
             (std::vector<int64_t>{v3_id}));
@@ -714,54 +716,4 @@ TEST(VertexUniqueIndex, compositeLookupAndConflict) {
   EXPECT_EQ(viter->GetVertex().GetId(), beta_id);
   EXPECT_EQ(viter->GetVertex().GetProperty("str"), Value::String("beta"));
   txn->Commit();
-}
-
-TEST(VertexUniqueIndex, buildBusyBlocksSetAndRemoveAllProperty) {
-  fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
-
-  auto txn = graphDB->BeginTransaction();
-  txn->CreateVertex({"label1"},
-                    {{"id", Value::Integer(1)}, {"str", Value::String("1")}});
-  txn->Commit();
-
-  auto lid = graphDB->id_generator().GetOrCreateLid("label1");
-  auto pid = graphDB->id_generator().GetOrCreatePid("id");
-  graphDB->busy_index().Mark({lid}, {pid});
-
-  txn = graphDB->BeginTransaction();
-  auto viter = txn->NewVertexIterator(
-      "label1",
-      std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
-  ASSERT_TRUE(viter->Valid());
-  EXPECT_THROW_CODE(
-      viter->GetVertex().SetProperties({{"id", Value::Integer(2)}}), IndexBusy);
-  txn->Rollback();
-
-  txn = graphDB->BeginTransaction();
-  viter = txn->NewVertexIterator(
-      "label1",
-      std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
-  ASSERT_TRUE(viter->Valid());
-  viter->GetVertex().SetProperties({{"str", Value::String("still_allowed")}});
-  txn->Commit();
-
-  txn = graphDB->BeginTransaction();
-  viter = txn->NewVertexIterator(
-      "label1",
-      std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
-  ASSERT_TRUE(viter->Valid());
-  EXPECT_EQ(viter->GetVertex().GetProperty("str"),
-            Value::String("still_allowed"));
-  txn->Commit();
-
-  txn = graphDB->BeginTransaction();
-  viter = txn->NewVertexIterator(
-      "label1",
-      std::unordered_map<std::string, Value>{{"id", Value::Integer(1)}});
-  ASSERT_TRUE(viter->Valid());
-  EXPECT_THROW_CODE(viter->GetVertex().RemoveAllProperty(), IndexBusy);
-  txn->Rollback();
-
-  graphDB->busy_index().Clear();
 }
