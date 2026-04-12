@@ -191,8 +191,7 @@ class LGraphDaemon : public Service {
            .ft_apply_interval = FLAGS_ft_apply_interval,
            .ft_writer_threads = FLAGS_ft_writer_threads,
            .ft_writer_memory_budget = FLAGS_ft_writer_memory_budget,
-           .vt_apply_interval = FLAGS_vt_apply_interval,
-           .server_id = static_cast<uint16_t>(FLAGS_server_id)});
+           .vt_apply_interval = FLAGS_vt_apply_interval});
       BoltServer::Instance().Start(FLAGS_bolt_port, FLAGS_bolt_io_thread_num,
                                    g_bolt_handler);
       g_galaxy.reset();

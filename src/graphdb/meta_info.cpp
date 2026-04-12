@@ -504,10 +504,11 @@ void MetaInfo::ClearVertexVectorIndexes() {
 
 void MetaInfo::Init(rocksdb::TransactionDB* db,
                     boost::asio::io_service& service, GraphCF* graph_cf,
-                    uint16_t server_id, size_t ft_commit_interval,
-                    size_t ft_writer_threads, size_t ft_writer_memory_budget,
-                    size_t vt_commit_interval) {
-  id_generator_.Bind(db, graph_cf, server_id);
+                    size_t ft_commit_interval, size_t ft_writer_threads,
+                    size_t ft_writer_memory_budget, size_t vt_commit_interval) {
+  id_generator_.Bind(db, graph_cf);
+  int64_t next_vid = 1;
+  int64_t next_eid = 1;
   uint32_t max_lid = 0;
   uint32_t max_pid = 0;
   uint32_t max_tid = 0;
@@ -522,6 +523,24 @@ void MetaInfo::Init(rocksdb::TransactionDB* db,
     }
     auto val = iter->value();
     auto prefix = static_cast<MetaDataType>(key.data()[0]);
+    if (prefix == MetaDataType::NextVertexId ||
+        prefix == MetaDataType::NextEdgeId) {
+      if (val.size() != sizeof(int64_t)) {
+        THROW_CODE(StorageEngineError,
+                   "entity id metadata has invalid size, expect {}, actual {}",
+                   sizeof(int64_t), val.size());
+      }
+      int64_t next_id = big_to_native(ReadValue<int64_t>(val.data()));
+      if (next_id < 1) {
+        THROW_CODE(StorageEngineError, "entity id metadata must be positive");
+      }
+      if (prefix == MetaDataType::NextVertexId) {
+        next_vid = next_id;
+      } else {
+        next_eid = next_id;
+      }
+      continue;
+    }
     if (prefix == MetaDataType::VertexLabel ||
         prefix == MetaDataType::EdgeType || prefix == MetaDataType::Property) {
       std::string name(key.data() + 1, key.size() - 1);
@@ -595,5 +614,6 @@ void MetaInfo::Init(rocksdb::TransactionDB* db,
     }
   }
   id_generator_.SetMaxIds(max_lid, max_pid, max_tid, max_index_id);
+  id_generator_.SetNextEntityIds(next_vid, next_eid);
 }
 }  // namespace graphdb

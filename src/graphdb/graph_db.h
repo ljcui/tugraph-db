@@ -43,7 +43,6 @@ struct GraphDBOptions {
   size_t ft_writer_threads_ = 1;
   size_t ft_writer_memory_budget_ = 50 * 1000 * 1000;
   size_t vt_apply_interval_ = 1;
-  uint16_t server_id_ = 0;
 };
 
 class GraphDB {

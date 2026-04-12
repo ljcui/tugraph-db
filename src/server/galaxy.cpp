@@ -92,8 +92,7 @@ std::unique_ptr<Galaxy> Galaxy::Open(const std::string &path,
          .ft_apply_interval_ = galaxy->options_.ft_apply_interval,
          .ft_writer_threads_ = galaxy->options_.ft_writer_threads,
          .ft_writer_memory_budget_ = galaxy->options_.ft_writer_memory_budget,
-         .vt_apply_interval_ = galaxy->options_.vt_apply_interval,
-         .server_id_ = galaxy->options_.server_id});
+         .vt_apply_interval_ = galaxy->options_.vt_apply_interval});
     graph_db->db_meta() = meta;
     galaxy->graphs_.emplace(meta.graph_name(), std::move(graph_db));
   }
@@ -131,8 +130,7 @@ GraphDB *Galaxy::CreateGraph(const std::string &name) {
                    .ft_apply_interval_ = options_.ft_apply_interval,
                    .ft_writer_threads_ = options_.ft_writer_threads,
                    .ft_writer_memory_budget_ = options_.ft_writer_memory_budget,
-                   .vt_apply_interval_ = options_.vt_apply_interval,
-                   .server_id_ = options_.server_id});
+                   .vt_apply_interval_ = options_.vt_apply_interval});
   rocksdb::WriteOptions wo;
   rocksdb::WriteBatch wb;
   std::string key;

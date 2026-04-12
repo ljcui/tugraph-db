@@ -20,9 +20,6 @@
 
 #include <algorithm>
 #include <boost/endian/conversion.hpp>
-#include <chrono>
-#include <iostream>
-#include <thread>
 
 #include "common/byte_utils.h"
 #include "common/exceptions.h"
@@ -39,67 +36,15 @@ std::string TokenKey(MetaDataType type, const std::string &name) {
   return key;
 }
 
+std::string EntityIdKey(MetaDataType type) {
+  return std::string(1, static_cast<char>(type));
+}
+
 }  // namespace
 
-int64_t SnowflakeIdGenerator::CurrentTimeMs() {
-  auto now = std::chrono::time_point_cast<std::chrono::milliseconds>(
-                 std::chrono::system_clock::now())
-                 .time_since_epoch()
-                 .count();
-  if (now < kEpochMs) {
-    THROW_CODE(InvalidParameter,
-               "system clock is earlier than snowflake epoch");
-  }
-  return now;
-}
-
-int64_t SnowflakeIdGenerator::WaitNextMillis(int64_t last_timestamp_ms) const {
-  int64_t now_ms = CurrentTimeMs();
-  while (now_ms <= last_timestamp_ms) {
-    std::this_thread::yield();
-    now_ms = CurrentTimeMs();
-  }
-  return now_ms;
-}
-
-int64_t SnowflakeIdGenerator::ComposeId(int64_t timestamp_ms,
-                                        int64_t sequence) const {
-  return ((timestamp_ms - kEpochMs) << kTimestampShift) |
-         (static_cast<int64_t>(worker_id_) << kWorkerShift) | sequence;
-}
-
-void SnowflakeIdGenerator::SetWorkerId(uint16_t worker_id) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (worker_id > kMaxWorkerId) {
-    THROW_CODE(InvalidParameter, "snowflake worker id {} exceeds max {}",
-               worker_id, kMaxWorkerId);
-  }
-  worker_id_ = worker_id;
-}
-
-int64_t SnowflakeIdGenerator::NextId() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  int64_t timestamp_ms = CurrentTimeMs();
-  if (timestamp_ms < last_timestamp_ms_) {
-    timestamp_ms = WaitNextMillis(last_timestamp_ms_);
-  }
-  if (timestamp_ms == last_timestamp_ms_) {
-    sequence_ = (sequence_ + 1) & kSequenceMask;
-    if (sequence_ == 0) {
-      timestamp_ms = WaitNextMillis(last_timestamp_ms_);
-    }
-  } else {
-    sequence_ = 0;
-  }
-  last_timestamp_ms_ = timestamp_ms;
-  return ComposeId(timestamp_ms, sequence_);
-}
-
-void IdGenerator::Bind(rocksdb::TransactionDB *db, GraphCF *graph_cf,
-                       uint16_t server_id) {
+void IdGenerator::Bind(rocksdb::TransactionDB *db, GraphCF *graph_cf) {
   db_ = db;
   graph_cf_ = graph_cf;
-  id_generator_.SetWorkerId(server_id);
 }
 
 void IdGenerator::LoadToken(MetaDataType type, const std::string &name,
@@ -129,12 +74,64 @@ void IdGenerator::SetMaxIds(uint32_t max_lid, uint32_t max_pid,
   index_next_id_ = max_index_id + 1;
 }
 
+void IdGenerator::SetNextEntityIds(int64_t next_vid, int64_t next_eid) {
+  if (next_vid < 1 || next_eid < 1) {
+    THROW_CODE(InvalidParameter, "entity id range must start from positive id");
+  }
+  persisted_next_vid_ = next_vid;
+  next_vid_ = next_vid;
+  vid_range_end_ = next_vid;
+  persisted_next_eid_ = next_eid;
+  next_eid_ = next_eid;
+  eid_range_end_ = next_eid;
+}
+
+int64_t IdGenerator::GetNextEntityId(std::atomic<int64_t> *next_id,
+                                     std::atomic<int64_t> *range_end,
+                                     std::atomic<int64_t> *persisted_next_id,
+                                     std::mutex *refill_mutex,
+                                     MetaDataType meta_type) {
+  for (;;) {
+    int64_t candidate = next_id->load();
+    int64_t limit = range_end->load();
+    while (candidate < limit) {
+      if (next_id->compare_exchange_weak(candidate, candidate + 1)) {
+        return native_to_big(candidate);
+      }
+    }
+
+    std::unique_lock refill_lock(*refill_mutex);
+    candidate = next_id->load();
+    limit = range_end->load();
+    if (candidate < limit) {
+      continue;
+    }
+
+    int64_t start = persisted_next_id->load();
+    if (start > std::numeric_limits<int64_t>::max() - kIdRangeSize) {
+      THROW_CODE(StorageEngineError, "entity id range exhausted");
+    }
+    int64_t end = start + kIdRangeSize;
+    int64_t bigendian_end = native_to_big(end);
+    auto s =
+        db_->Put({}, graph_cf_->meta_info, EntityIdKey(meta_type),
+                 std::string(AsChars(bigendian_end), sizeof(bigendian_end)));
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    persisted_next_id->store(end);
+    next_id->store(start + 1);
+    range_end->store(end);
+    return native_to_big(start);
+  }
+}
+
 int64_t IdGenerator::GetNextVid() {
-  return native_to_big(id_generator_.NextId());
+  return GetNextEntityId(&next_vid_, &vid_range_end_, &persisted_next_vid_,
+                         &vid_refill_mutex_, MetaDataType::NextVertexId);
 }
 
 int64_t IdGenerator::GetNextEid() {
-  return native_to_big(id_generator_.NextId());
+  return GetNextEntityId(&next_eid_, &eid_range_end_, &persisted_next_eid_,
+                         &eid_refill_mutex_, MetaDataType::NextEdgeId);
 }
 
 uint32_t IdGenerator::GetNextIndexId() {

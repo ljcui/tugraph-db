@@ -14,8 +14,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <boost/endian/conversion.hpp>
 #include <filesystem>
+#include <vector>
 
 #include "common/logger.h"
 #include "common/value.h"
@@ -131,6 +133,62 @@ TEST(GraphDB, reOpen) {
   EXPECT_EQ(e2.GetType(), "edge_type23");
   EXPECT_EQ(e3.GetType(), "edge_type34");
   EXPECT_EQ(e4.GetType(), "edge_type41");
+  txn->Commit();
+}
+
+TEST(GraphDB, entityIdRangeReOpen) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, {});
+  auto txn = graphDB->BeginTransaction();
+  auto v1 = txn->CreateVertex({"label1"}, {});
+  auto v2 = txn->CreateVertex({"label2"}, {});
+  auto e1 = txn->CreateEdge(v1, v2, "edge_type12", {});
+  txn->Commit();
+
+  auto max_vid = std::max(big_to_native(v1.GetId()), big_to_native(v2.GetId()));
+  auto max_eid = big_to_native(e1.GetId());
+  txn.reset();
+  graphDB.reset();
+
+  graphDB = GraphDB::Open(testdb, {});
+  txn = graphDB->BeginTransaction();
+  auto existing = txn->GetVertexById(v2.GetId());
+  auto v3 = txn->CreateVertex({"label3"}, {});
+  auto e2 = txn->CreateEdge(existing, v3, "edge_type23", {});
+  EXPECT_GT(big_to_native(v3.GetId()), max_vid);
+  EXPECT_GT(big_to_native(e2.GetId()), max_eid);
+  txn->Commit();
+}
+
+TEST(GraphDB, entityIdRangeRefill) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, {});
+  auto txn = graphDB->BeginTransaction();
+
+  std::vector<int64_t> vids;
+  vids.reserve(1030);
+  for (int i = 0; i < 1030; ++i) {
+    auto v = txn->CreateVertex({"label1"}, {});
+    vids.push_back(big_to_native(v.GetId()));
+  }
+  for (size_t i = 1; i < vids.size(); ++i) {
+    EXPECT_LT(vids[i - 1], vids[i]);
+  }
+
+  auto start =
+      txn->GetVertexById(boost::endian::native_to_big(static_cast<int64_t>(1)));
+  auto end =
+      txn->GetVertexById(boost::endian::native_to_big(static_cast<int64_t>(2)));
+  std::vector<int64_t> eids;
+  eids.reserve(1030);
+  for (int i = 0; i < 1030; ++i) {
+    auto e = txn->CreateEdge(start, end, "edge_type12", {});
+    eids.push_back(big_to_native(e.GetId()));
+  }
+  for (size_t i = 1; i < eids.size(); ++i) {
+    EXPECT_LT(eids[i - 1], eids[i]);
+  }
+
   txn->Commit();
 }
 

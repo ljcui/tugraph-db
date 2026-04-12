@@ -32,7 +32,6 @@ struct GalaxyOptions {
   size_t ft_writer_threads = 1;
   size_t ft_writer_memory_budget = 50 * 1000 * 1000;
   size_t vt_apply_interval = 1;
-  uint16_t server_id = 0;
 };
 
 class Galaxy {

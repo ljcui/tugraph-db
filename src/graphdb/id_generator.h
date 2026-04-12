@@ -21,9 +21,14 @@
 
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <shared_mutex>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "graph_cf.h"
 namespace graphdb {
@@ -33,34 +38,9 @@ enum class MetaDataType : char {
   Property = 2,
   VertexPropertyIndex = 3,
   VertexFullTextIndex = 4,
-  VertexVectorIndex = 5
-};
-
-class SnowflakeIdGenerator {
- public:
-  explicit SnowflakeIdGenerator(uint16_t worker_id = 0)
-      : worker_id_(worker_id) {}
-
-  void SetWorkerId(uint16_t worker_id);
-  int64_t NextId();
-
- private:
-  static constexpr int64_t kEpochMs = 1704067200000LL;
-  static constexpr int64_t kWorkerBits = 10;
-  static constexpr int64_t kSequenceBits = 12;
-  static constexpr uint16_t kMaxWorkerId = (1U << kWorkerBits) - 1;
-  static constexpr int64_t kWorkerShift = kSequenceBits;
-  static constexpr int64_t kTimestampShift = kWorkerBits + kSequenceBits;
-  static constexpr int64_t kSequenceMask = (1LL << kSequenceBits) - 1;
-
-  static int64_t CurrentTimeMs();
-  int64_t WaitNextMillis(int64_t last_timestamp_ms) const;
-  int64_t ComposeId(int64_t timestamp_ms, int64_t sequence) const;
-
-  uint16_t worker_id_;
-  int64_t last_timestamp_ms_ = -1;
-  int64_t sequence_ = 0;
-  std::mutex mutex_;
+  VertexVectorIndex = 5,
+  NextVertexId = 6,
+  NextEdgeId = 7
 };
 
 class IdGenerator {
@@ -70,10 +50,11 @@ class IdGenerator {
   IdGenerator(const IdGenerator&) = delete;
   void operator=(const IdGenerator&) = delete;
 
-  void Bind(rocksdb::TransactionDB* db, GraphCF* graph_cf, uint16_t server_id);
+  void Bind(rocksdb::TransactionDB* db, GraphCF* graph_cf);
   void LoadToken(MetaDataType type, const std::string& name, uint32_t id);
   void SetMaxIds(uint32_t max_lid, uint32_t max_pid, uint32_t max_tid,
                  uint32_t max_index_id);
+  void SetNextEntityIds(int64_t next_vid, int64_t next_eid);
   int64_t GetNextVid();
   int64_t GetNextEid();
   uint32_t GetNextIndexId();
@@ -91,7 +72,19 @@ class IdGenerator {
   std::unordered_set<std::string> GetEdgeTypes();
 
  private:
-  SnowflakeIdGenerator id_generator_;
+  static constexpr int64_t kIdRangeSize = 1024;
+
+  int64_t GetNextEntityId(std::atomic<int64_t>* next_id,
+                          std::atomic<int64_t>* range_end,
+                          std::atomic<int64_t>* persisted_next_id,
+                          std::mutex* refill_mutex, MetaDataType meta_type);
+
+  std::atomic<int64_t> next_vid_{1};
+  std::atomic<int64_t> vid_range_end_{1};
+  std::atomic<int64_t> persisted_next_vid_{1};
+  std::atomic<int64_t> next_eid_{1};
+  std::atomic<int64_t> eid_range_end_{1};
+  std::atomic<int64_t> persisted_next_eid_{1};
   std::atomic<uint32_t> label_next_lid_{1};
   std::atomic<uint32_t> label_next_pid_{1};
   std::atomic<uint32_t> label_next_tid_{1};
@@ -104,6 +97,8 @@ class IdGenerator {
   std::unordered_map<uint32_t, std::string> properties_id_to_name_;
   rocksdb::TransactionDB* db_ = nullptr;
   GraphCF* graph_cf_ = nullptr;
+  std::mutex vid_refill_mutex_;
+  std::mutex eid_refill_mutex_;
   std::shared_mutex vertex_labels_mutex_;
   std::shared_mutex edge_types_mutex_;
   std::shared_mutex properties_mutex_;

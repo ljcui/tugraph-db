@@ -272,7 +272,7 @@ std::unique_ptr<GraphDB> GraphDB::Open(const std::string& path,
     self->assistant_.run();
   });
   graph_db->meta_info_.Init(graph_db->db_, graph_db->assistant_,
-                            &graph_db->graph_cf_, graph_db->options_.server_id_,
+                            &graph_db->graph_cf_,
                             graph_db->options_.ft_apply_interval_,
                             graph_db->options_.ft_writer_threads_,
                             graph_db->options_.ft_writer_memory_budget_,
