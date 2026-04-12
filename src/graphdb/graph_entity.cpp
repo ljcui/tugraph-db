@@ -32,6 +32,14 @@ using common::ReadValue;
 namespace graphdb {
 namespace {
 
+constexpr char kEdgeLockKeyPrefix = static_cast<char>(0xFF);
+
+std::string BuildEdgeLockKey(int64_t eid) {
+  std::string key(1, kEdgeLockKeyPrefix);
+  key.append(AsChars(eid), sizeof(eid));
+  return key;
+}
+
 VertexSerializedProperties LoadVertexSerializedProperties(txn::Transaction *txn,
                                                           int64_t vid) {
   VertexSerializedProperties props;
@@ -283,10 +291,10 @@ int Vertex::Delete() {
       int64_t eid = ReadValue<int64_t>(p);
       {
         // lock edge
+        auto edge_lock_key = BuildEdgeLockKey(eid);
         auto s = txn_->dbtxn()->GetForUpdate(
             ro, txn_->db()->graph_cf().graph_topology,
-            rocksdb::Slice(AsChars(eid), sizeof(eid)),
-            static_cast<std::string *>(nullptr));
+            rocksdb::Slice(edge_lock_key), static_cast<std::string *>(nullptr));
         if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
       }
       // delete other edge key
@@ -764,14 +772,15 @@ void Edge::RemoveAllProperty() {
 
 void Edge::Lock() {
   rocksdb::ReadOptions ro;
-  // Use a synthetic per-edge key as the transaction lock point. In
-  // TransactionDB, GetForUpdate() with a null value buffer still acquires the
-  // lock even when the key does not exist, so edge mutations can serialize on
-  // eid without materializing an extra record in graph_topology.
-  auto s =
-      txn_->dbtxn()->GetForUpdate(ro, txn_->db()->graph_cf().graph_topology,
-                                  rocksdb::Slice(AsChars(id_), sizeof(id_)),
-                                  static_cast<std::string *>(nullptr));
+  // Use a prefixed synthetic per-edge key as the transaction lock point so
+  // edge locks do not share the same key namespace as vertex records.
+  auto edge_lock_key = BuildEdgeLockKey(id_);
+  // In TransactionDB, GetForUpdate() with a null value buffer still acquires
+  // the lock even when the key does not exist, so edge mutations can serialize
+  // on eid without materializing an extra record in graph_topology.
+  auto s = txn_->dbtxn()->GetForUpdate(
+      ro, txn_->db()->graph_cf().graph_topology, rocksdb::Slice(edge_lock_key),
+      static_cast<std::string *>(nullptr));
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
 }
 }  // namespace graphdb
