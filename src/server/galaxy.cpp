@@ -120,7 +120,8 @@ GraphDB *Galaxy::CreateGraph(const std::string &name) {
     THROW_CODE(GraphAlreadyExists, "The graph already exists: {}", name);
   }
   meta::GraphDBMetaInfo meta;
-  uint64_t graph_id = next_graph_id_++;
+  uint64_t graph_id = next_graph_id_.load();
+  uint64_t next = graph_id + 1;
   meta.set_graph_id(graph_id);
   meta.set_graph_name(name);
   std::string graph_path = path_ + "/graph" + std::to_string(meta.graph_id());
@@ -139,11 +140,11 @@ GraphDB *Galaxy::CreateGraph(const std::string &name) {
   native_to_big_inplace(graph_id);
   key.append((const char *)&graph_id, sizeof(graph_id));
   wb.Put(key, meta.SerializeAsString());
-  uint64_t next = next_graph_id_;
   wb.Put(std::string(1, static_cast<char>(GalaxyMetaDataType::NextGraphID)),
          std::string((const char *)&next, sizeof(next)));
   auto s = meta_db_->Write(wo, {}, &wb);
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  next_graph_id_ = next;
   LOG_INFO("Create graph:{}, path:{}", name, graph_path);
   graph_db->db_meta() = meta;
   graphs_.emplace(meta.graph_name(), std::move(graph_db));
