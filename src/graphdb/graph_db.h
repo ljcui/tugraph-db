@@ -91,6 +91,7 @@ class GraphDB {
   std::mutex& vector_index_commit_mutex() { return vector_index_commit_mutex_; }
 
  private:
+  void DrainAssistant();
   void ResumeBackgroundIndexBuilds();
   void PersistVertexPropertyIndexMeta(
       const std::shared_ptr<VertexPropertyIndex>& index);
@@ -115,6 +116,7 @@ class GraphDB {
   std::vector<std::thread> service_threads_;
   GraphDBOptions options_;
   bool drop_on_close_ = false;
+  std::mutex clear_data_mutex_;
   std::mutex index_ddl_mutex_;
   std::mutex property_index_commit_mutex_;
   std::mutex fulltext_index_commit_mutex_;

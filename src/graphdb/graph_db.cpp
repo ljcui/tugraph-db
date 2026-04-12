@@ -18,6 +18,7 @@
 #include "graph_db.h"
 
 #include <filesystem>
+#include <future>
 #include <string_view>
 
 #include "common/byte_utils.h"
@@ -357,6 +358,13 @@ void GraphDB::ResumeBackgroundIndexBuilds() {
   }
 }
 
+void GraphDB::DrainAssistant() {
+  std::promise<void> drained;
+  auto future = drained.get_future();
+  boost::asio::post(assistant_, [&drained]() mutable { drained.set_value(); });
+  future.wait();
+}
+
 void GraphDB::ScheduleVertexPropertyIndexBuild(
     const std::shared_ptr<VertexPropertyIndex>& index, bool reset_existing) {
   boost::asio::post(assistant_, [this, index, reset_existing]() {
@@ -596,6 +604,23 @@ void GraphDB::ScheduleVertexVectorIndexBuild(
 }
 
 void GraphDB::ClearData() {
+  std::lock_guard<std::mutex> clear_lock(clear_data_mutex_);
+  std::vector<std::shared_ptr<VertexFullTextIndex>> ft_indexes;
+  std::vector<std::shared_ptr<VertexVectorIndex>> vector_indexes;
+  {
+    std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
+    ft_indexes = meta_info_.GetVertexFullTextIndexes();
+    vector_indexes = meta_info_.GetVertexVectorIndexes();
+  }
+
+  for (const auto& index : ft_indexes) {
+    index->Stop();
+  }
+  for (const auto& index : vector_indexes) {
+    index->Stop();
+  }
+  DrainAssistant();
+
   std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
   std::unique_lock<std::mutex> property_commit_lock(
       property_index_commit_mutex_, std::defer_lock);
@@ -606,15 +631,8 @@ void GraphDB::ClearData() {
   std::lock(property_commit_lock, fulltext_commit_lock, vector_commit_lock);
 
   auto property_indexes = meta_info_.GetVertexPropertyIndexes();
-  auto ft_indexes = meta_info_.GetVertexFullTextIndexes();
-  auto vector_indexes = meta_info_.GetVertexVectorIndexes();
-
-  for (const auto& index : ft_indexes) {
-    index->Stop();
-  }
-  for (const auto& index : vector_indexes) {
-    index->Stop();
-  }
+  ft_indexes = meta_info_.GetVertexFullTextIndexes();
+  vector_indexes = meta_info_.GetVertexVectorIndexes();
 
   rocksdb::WriteBatch wb;
   DeleteAllEntriesInColumnFamily(db_, graph_cf_.graph_topology, &wb);
@@ -656,6 +674,7 @@ void GraphDB::ClearData() {
 void GraphDB::AddVertexPropertyIndex(
     const std::string& index_name, bool unique, const std::string& label,
     const std::vector<std::string>& properties) {
+  std::lock_guard<std::mutex> clear_lock(clear_data_mutex_);
   std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
   if (index_name.empty() || label.empty() || properties.empty()) {
     THROW_CODE(InvalidParameter);
@@ -718,6 +737,7 @@ void GraphDB::AddVertexPropertyIndex(
 }
 
 void GraphDB::DeleteVertexPropertyIndex(const std::string& index_name) {
+  std::lock_guard<std::mutex> clear_lock(clear_data_mutex_);
   std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
   std::lock_guard<std::mutex> commit_lock(property_index_commit_mutex_);
   auto index = meta_info_.GetVertexPropertyIndex(index_name);
@@ -752,6 +772,7 @@ void GraphDB::DeleteVertexPropertyIndex(const std::string& index_name) {
 void GraphDB::AddVertexFullTextIndex(
     const std::string& index_name, const std::vector<std::string>& labels,
     const std::vector<std::string>& properties) {
+  std::lock_guard<std::mutex> clear_lock(clear_data_mutex_);
   std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
   if (index_name.empty() || labels.empty() || properties.empty()) {
     THROW_CODE(InvalidParameter);
@@ -806,6 +827,7 @@ void GraphDB::AddVertexFullTextIndex(
 }
 
 void GraphDB::DeleteVertexFullTextIndex(const std::string& index_name) {
+  std::lock_guard<std::mutex> clear_lock(clear_data_mutex_);
   std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
   std::lock_guard<std::mutex> commit_lock(fulltext_index_commit_mutex_);
   auto ft_index = meta_info_.GetVertexFullTextIndex(index_name);
@@ -850,6 +872,7 @@ void GraphDB::AddVertexVectorIndex(const std::string& index_name,
                                    const std::string& property, int dimension,
                                    std::string distance_type, int hnsw_m,
                                    int hnsw_ef_construction) {
+  std::lock_guard<std::mutex> clear_lock(clear_data_mutex_);
   std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
   if (index_name.empty() || label.empty() || property.empty()) {
     THROW_CODE(InvalidParameter);
@@ -924,6 +947,7 @@ void GraphDB::AddVertexVectorIndex(const std::string& index_name,
 }
 
 void GraphDB::DeleteVertexVectorIndex(const std::string& index_name) {
+  std::lock_guard<std::mutex> clear_lock(clear_data_mutex_);
   std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
   std::lock_guard<std::mutex> commit_lock(vector_index_commit_mutex_);
   auto index = meta_info_.GetVertexVectorIndex(index_name);
