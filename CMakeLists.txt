@@ -35,7 +35,11 @@ set(PROTOBUF_INCLUDE_DIRS_LOCAL ${PROTOBUF_INCLUDE_DIR} ${Protobuf_INCLUDE_DIR}
                                 ${Protobuf_INCLUDE_DIRS}
 )
 
-set(COMMON_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/deps/geax-front-end/include)
+set(COMMON_INCLUDE_DIRS
+    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/deps
+    ${PROJECT_SOURCE_DIR}/deps/geax-front-end/include
+)
 
 add_library(project_common INTERFACE)
 target_include_directories(project_common INTERFACE ${COMMON_INCLUDE_DIRS})
@@ -166,6 +170,7 @@ set(CORE_LINK_LIBS
     bolt
     graphdb
     common
+    raft
     cypher
     deps
     transaction
@@ -263,6 +268,11 @@ set(COMMON_SOURCES
     src/common/temporal/duration.cpp
 )
 
+set(RAFT_SOURCES
+    src/raft/logger.cpp
+    deps/etcd-raft-cpp/raftpb/raft.pb.cc
+)
+
 set(CYPHER_SOURCES
     src/cypher/parser/generated/LcypherLexer.cpp
     src/cypher/parser/generated/LcypherParser.cpp
@@ -339,6 +349,9 @@ set(LGRAPH_CLI_SOURCES src/toolkits/lgraph_cli.cpp src/toolkits/linenoise/lineno
 add_static_library(bolt ${BOLT_SOURCES})
 add_static_library(graphdb ${GRAPHDB_SOURCES})
 add_static_library(common ${COMMON_SOURCES})
+add_static_library(raft ${RAFT_SOURCES})
+target_include_directories(raft PUBLIC ${PROTOBUF_INCLUDE_DIRS_LOCAL})
+target_link_libraries(raft PUBLIC protobuf::libprotobuf spdlog::spdlog)
 
 add_static_library(cypher ${CYPHER_SOURCES})
 enable_folly_sanitize(cypher)
