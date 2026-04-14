@@ -35,10 +35,8 @@ set(PROTOBUF_INCLUDE_DIRS_LOCAL ${PROTOBUF_INCLUDE_DIR} ${Protobuf_INCLUDE_DIR}
                                 ${Protobuf_INCLUDE_DIRS}
 )
 
-set(COMMON_INCLUDE_DIRS
-    ${PROJECT_SOURCE_DIR}/src
-    ${PROJECT_SOURCE_DIR}/deps
-    ${PROJECT_SOURCE_DIR}/deps/geax-front-end/include
+set(COMMON_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/deps
+                        ${PROJECT_SOURCE_DIR}/deps/geax-front-end/include
 )
 
 add_library(project_common INTERFACE)
@@ -270,6 +268,9 @@ set(COMMON_SOURCES
 
 set(RAFT_SOURCES
     src/raft/logger.cpp
+    src/raft/raft_log_store.cpp
+    src/raft/bolt_raft.pb.cc
+    src/raft/raft_driver.cpp
     deps/etcd-raft-cpp/raftpb/raft.pb.cc
 )
 
