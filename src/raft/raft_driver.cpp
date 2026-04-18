@@ -25,7 +25,6 @@
 #include <shared_mutex>
 
 #include "common/logger.h"
-#include "raft/bolt_raft.pb.h"
 
 using boost::asio::async_write;
 using boost::asio::ip::tcp;
@@ -235,7 +234,7 @@ bool RaftLogStoreConfig::Check() {
 }
 
 RaftDriver::RaftDriver(
-    std::function<void(uint64_t index, const RaftRequest&)> apply,
+    std::function<void(uint64_t index, const meta::RaftRequest&)> apply,
     uint64_t apply_id, int64_t node_id, std::vector<eraft::Peer> init_peers,
     const RaftLogStoreConfig& store_config, const RaftConfig& config)
     : apply_(std::move(apply)),
@@ -424,7 +423,7 @@ std::shared_ptr<PromiseContext> RaftDriver::ProposeConfChange(
 }
 
 std::shared_ptr<PromiseContext> RaftDriver::ProposeRaftRequest(
-    RaftRequest request) {
+    meta::RaftRequest request) {
   request.set_id(id_generator_.Next());
   raftpb::Message msg;
   auto entry = msg.add_entries();
@@ -434,7 +433,7 @@ std::shared_ptr<PromiseContext> RaftDriver::ProposeRaftRequest(
   return Propose(request.id(), std::move(msg));
 }
 
-NodeInfos RaftDriver::GetNodeInfosWithLeader() {
+meta::NodeInfos RaftDriver::GetNodeInfosWithLeader() {
   std::promise<uint64_t> promise;
   auto future = promise.get_future();
   raft_service_.post(
@@ -442,7 +441,7 @@ NodeInfos RaftDriver::GetNodeInfosWithLeader() {
   auto leader = future.get();
 
   std::shared_lock<std::shared_mutex> lock(nodes_mutex_);
-  NodeInfos ret = node_infos_;
+  meta::NodeInfos ret = node_infos_;
   if (ret.nodes().count(leader)) {
     ret.mutable_nodes()->at(leader).set_is_leader(true);
   }
@@ -561,7 +560,7 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
         if (entry.data().empty()) {
           continue;
         }
-        RaftRequest request;
+        meta::RaftRequest request;
         request.ParseFromString(entry.data());
         std::shared_ptr<raft::PromiseContext> context;
         {
@@ -587,7 +586,7 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
           LOG_FATAL("failed to parse ConfChange data");
         }
         auto confstate = rn_->ApplyConfChange(raftpb::ConfChangeWrap(cc));
-        NodeInfo node_info;
+        meta::NodeInfo node_info;
         node_info.ParseFromString(cc.context());
         switch (cc.type()) {
           case raftpb::ConfChangeType::ConfChangeAddLearnerNode:

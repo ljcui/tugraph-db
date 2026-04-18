@@ -20,7 +20,7 @@
 #include <shared_mutex>
 #include <utility>
 
-#include "raft/bolt_raft.pb.h"
+#include "proto/meta.pb.h"
 #include "raft/raft_log_store.h"
 
 namespace raft {
@@ -112,16 +112,16 @@ struct RaftLogStoreConfig {
 
 class RaftDriver {
  public:
-  RaftDriver(std::function<void(uint64_t index, const RaftRequest&)> apply,
-             uint64_t apply_id, int64_t node_id,
-             std::vector<eraft::Peer> init_peers,
-             const RaftLogStoreConfig& store_config, const RaftConfig& config);
+  RaftDriver(
+      std::function<void(uint64_t index, const meta::RaftRequest&)> apply,
+      uint64_t apply_id, int64_t node_id, std::vector<eraft::Peer> init_peers,
+      const RaftLogStoreConfig& store_config, const RaftConfig& config);
   eraft::Error Run();
   void Stop();
   void Step(raftpb::Message msg);
-  std::shared_ptr<PromiseContext> ProposeRaftRequest(RaftRequest request);
+  std::shared_ptr<PromiseContext> ProposeRaftRequest(meta::RaftRequest request);
   std::shared_ptr<PromiseContext> ProposeConfChange(raftpb::ConfChange& cc);
-  NodeInfos GetNodeInfosWithLeader();
+  meta::NodeInfos GetNodeInfosWithLeader();
   RaftStatus GetRaftStatus();
 
  private:
@@ -136,7 +136,7 @@ class RaftDriver {
   boost::asio::io_service timer_service_;
   boost::asio::io_service apply_service_;
   boost::asio::io_service client_service_;
-  std::function<void(uint64_t, const RaftRequest&)> apply_;
+  std::function<void(uint64_t, const meta::RaftRequest&)> apply_;
   uint64_t apply_id_;
   uint64_t node_id_;
   std::vector<eraft::Peer> init_peers_;
@@ -147,7 +147,7 @@ class RaftDriver {
   std::shared_ptr<eraft::RawNode> rn_;
   std::shared_ptr<RaftLogStorage> storage_;
   std::shared_mutex nodes_mutex_;
-  NodeInfos node_infos_;
+  meta::NodeInfos node_infos_;
   std::unordered_map<uint64_t, std::shared_ptr<NodeClient>> node_clients_;
   Generator id_generator_;
   std::mutex promise_mutex_;

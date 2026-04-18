@@ -108,3 +108,22 @@ message PropertyIndexUpdate {
     int64 vid               = 2;
     repeated bytes values   = 3;
 }
+
+message RaftRequest {
+    uint64 id      = 1;
+    string user    = 2;
+    bytes raw_data = 3;
+}
+
+message NodeInfo {
+    uint64 node_id       = 1;
+    string ip            = 2;
+    int32 bolt_port      = 3;
+    int32 bolt_raft_port = 4;
+    bool is_leader       = 5;
+    bool is_learner      = 6;
+}
+
+message NodeInfos {
+    map<uint64, NodeInfo> nodes = 1;
+}

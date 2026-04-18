@@ -269,7 +269,6 @@ set(COMMON_SOURCES
 set(RAFT_SOURCES
     src/raft/logger.cpp
     src/raft/raft_log_store.cpp
-    src/raft/bolt_raft.pb.cc
     src/raft/raft_driver.cpp
     deps/etcd-raft-cpp/raftpb/raft.pb.cc
 )
