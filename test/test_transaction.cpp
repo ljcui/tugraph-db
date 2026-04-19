@@ -118,3 +118,90 @@ TEST(Transaction, commitAndRollback) {
   EXPECT_NO_THROW(txn->GetEdgeById(e4.GetTypeId(), e4.GetId()));
   txn->Commit();
 }
+
+TEST(Transaction, commitWithRaftPersistsDataAndApplyIndex) {
+  const std::string raft_testdb = "testdb_raft_txn_commit";
+  fs::remove_all(raft_testdb);
+  auto graphDB = GraphDB::Open(raft_testdb, {});
+  graphDB->db_meta().set_graph_name("txn_commit_graph");
+
+  auto raft_driver = testutil::NewSingleNodeRaftDriver(
+      graphDB.get(), "txn_commit_graph", raft_testdb + "/raft", 17687, 17688);
+  auto* raft_driver_ptr = raft_driver.get();
+  auto err = raft_driver->Run();
+  if (err != nullptr) {
+    FAIL() << err.String();
+  }
+  graphDB->SetRaftDriver(std::move(raft_driver));
+  ASSERT_TRUE(testutil::WaitUntilRaftLeader(raft_driver_ptr));
+
+  auto txn = graphDB->BeginTransaction();
+  auto v1 = txn->CreateVertex({"label1"}, properties);
+  auto v2 = txn->CreateVertex({"label2"}, properties);
+  auto e1 = txn->CreateEdge(v1, v2, "edge_type12", properties);
+
+  auto before_commit_index = graphDB->GetRaftApplyIndex();
+  ASSERT_GT(before_commit_index, 0U);
+
+  txn->Commit();
+
+  auto after_commit_index = graphDB->GetRaftApplyIndex();
+  EXPECT_GT(after_commit_index, before_commit_index);
+
+  txn = graphDB->BeginTransaction();
+  auto persisted_v1 = txn->GetVertexById(v1.GetId());
+  auto persisted_v2 = txn->GetVertexById(v2.GetId());
+  auto persisted_e1 = txn->GetEdgeById(e1.GetTypeId(), e1.GetId());
+  EXPECT_EQ(persisted_v1.GetAllProperty(), properties);
+  EXPECT_EQ(persisted_v2.GetAllProperty(), properties);
+  EXPECT_EQ(persisted_e1.GetAllProperty(), properties);
+  txn->Commit();
+
+  txn.reset();
+  graphDB.reset();
+  graphDB = GraphDB::Open(raft_testdb, {});
+  EXPECT_EQ(graphDB->GetRaftApplyIndex(), after_commit_index);
+
+  txn = graphDB->BeginTransaction();
+  EXPECT_EQ(txn->GetVertexById(v1.GetId()).GetAllProperty(), properties);
+  EXPECT_EQ(txn->GetVertexById(v2.GetId()).GetAllProperty(), properties);
+  EXPECT_EQ(txn->GetEdgeById(e1.GetTypeId(), e1.GetId()).GetAllProperty(),
+            properties);
+  txn->Commit();
+}
+
+TEST(Transaction, rollbackWithRaftDoesNotAdvanceApplyIndex) {
+  const std::string raft_testdb = "testdb_raft_txn_rollback";
+  fs::remove_all(raft_testdb);
+  auto graphDB = GraphDB::Open(raft_testdb, {});
+  graphDB->db_meta().set_graph_name("txn_rollback_graph");
+
+  auto raft_driver = testutil::NewSingleNodeRaftDriver(
+      graphDB.get(), "txn_rollback_graph", raft_testdb + "/raft", 17689, 17690);
+  auto* raft_driver_ptr = raft_driver.get();
+  auto err = raft_driver->Run();
+  if (err != nullptr) {
+    FAIL() << err.String();
+  }
+  graphDB->SetRaftDriver(std::move(raft_driver));
+  ASSERT_TRUE(testutil::WaitUntilRaftLeader(raft_driver_ptr));
+
+  auto txn = graphDB->BeginTransaction();
+  auto v1 = txn->CreateVertex({"label1"}, properties);
+  txn->Commit();
+
+  auto committed_index = graphDB->GetRaftApplyIndex();
+  ASSERT_GT(committed_index, 0U);
+
+  txn = graphDB->BeginTransaction();
+  auto vertex = txn->GetVertexById(v1.GetId());
+  vertex.SetProperties({{"property2", Value::Integer(999)}});
+  txn->Rollback();
+
+  EXPECT_EQ(graphDB->GetRaftApplyIndex(), committed_index);
+
+  txn = graphDB->BeginTransaction();
+  vertex = txn->GetVertexById(v1.GetId());
+  EXPECT_EQ(vertex.GetProperty("property2"), Value::Integer(100));
+  txn->Commit();
+}

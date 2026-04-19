@@ -24,6 +24,7 @@
 #include "common/byte_utils.h"
 #include "common/exceptions.h"
 #include "common/logger.h"
+#include "raft/raft_driver.h"
 using namespace boost::endian;
 using common::AsChars;
 namespace graphdb {
@@ -40,11 +41,18 @@ std::string EntityIdKey(MetaDataType type) {
   return std::string(1, static_cast<char>(type));
 }
 
+const std::string kRaftApplyIndexKey(
+    1, static_cast<char>(MetaDataType::RaftApplyIndex));
+
 }  // namespace
 
 void IdGenerator::Bind(rocksdb::TransactionDB *db, GraphCF *graph_cf) {
   db_ = db;
   graph_cf_ = graph_cf;
+}
+
+void IdGenerator::SetRaftDriver(raft::RaftDriver *raft_driver) {
+  raft_driver_ = raft_driver;
 }
 
 void IdGenerator::LoadToken(MetaDataType type, const std::string &name,
@@ -112,16 +120,70 @@ int64_t IdGenerator::GetNextEntityId(std::atomic<int64_t> *next_id,
       THROW_CODE(StorageEngineError, "entity id range exhausted");
     }
     int64_t end = start + kIdRangeSize;
-    int64_t bigendian_end = native_to_big(end);
-    auto s =
-        db_->Put({}, graph_cf_->meta_info, EntityIdKey(meta_type),
-                 std::string(AsChars(bigendian_end), sizeof(bigendian_end)));
-    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    PersistEntityId(meta_type, end);
     persisted_next_id->store(end);
     next_id->store(start + 1);
     range_end->store(end);
     return native_to_big(start);
   }
+}
+
+void IdGenerator::ProposeAndApply(rocksdb::WriteBatch *wb) {
+  if (raft_driver_ == nullptr) {
+    rocksdb::TransactionDBWriteOptimizations two;
+    auto s = db_->Write({}, two, wb);
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    return;
+  }
+
+  meta::RaftRequest request;
+  request.set_wb_data(wb->Data());
+  auto context = raft_driver_->ProposeRaftRequest(std::move(request));
+  auto commit_result = context->commited.get_future().get();
+  if (commit_result.err != nullptr) {
+    THROW_CODE(StorageEngineError, commit_result.err.String());
+  }
+
+  auto s = wb->Put(
+      graph_cf_->meta_info, kRaftApplyIndexKey,
+      std::string(AsChars(commit_result.index), sizeof(commit_result.index)));
+  if (!s.ok()) {
+    context->applied.set_value();
+    LOG_FATAL("failed to persist raft apply index before local apply: {}",
+              s.ToString());
+  }
+  auto *base_db = db_->GetBaseDB();
+  if (!base_db) {
+    context->applied.set_value();
+    LOG_FATAL("failed to access base rocksdb::DB for id generator raft apply");
+  }
+  s = base_db->Write({}, wb);
+  context->applied.set_value();
+  if (!s.ok()) {
+    LOG_FATAL("raft commit succeeded but id generator local write failed: {}",
+              s.ToString());
+  }
+}
+
+void IdGenerator::PersistEntityId(MetaDataType meta_type, int64_t next_id) {
+  int64_t bigendian_next_id = native_to_big(next_id);
+  rocksdb::WriteBatch wb;
+  auto s = wb.Put(
+      graph_cf_->meta_info, EntityIdKey(meta_type),
+      std::string(AsChars(bigendian_next_id), sizeof(bigendian_next_id)));
+  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  ProposeAndApply(&wb);
+}
+
+void IdGenerator::PersistToken(MetaDataType type, const std::string &name,
+                               uint32_t id) {
+  std::string key = TokenKey(type, name);
+  std::string val;
+  val.append(AsChars(id), sizeof(id));
+  rocksdb::WriteBatch wb;
+  auto s = wb.Put(graph_cf_->meta_info, key, val);
+  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  ProposeAndApply(&wb);
 }
 
 int64_t IdGenerator::GetNextVid() {
@@ -224,13 +286,8 @@ uint32_t IdGenerator::GetOrCreateLid(const std::string &name) {
     if (iter != vertex_labels_name_to_id_.end()) {
       return iter->second;
     }
-    std::string key = TokenKey(MetaDataType::VertexLabel, name);
-    std::string val;
     uint32_t bigendian_lid = native_to_big(label_next_lid_++);
-    val.append(AsChars(bigendian_lid), sizeof(bigendian_lid));
-    rocksdb::WriteOptions options;
-    auto s = db_->Put(options, graph_cf_->meta_info, key, val);
-    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    PersistToken(MetaDataType::VertexLabel, name, bigendian_lid);
     vertex_labels_name_to_id_[name] = bigendian_lid;
     vertex_labels_id_to_name_[bigendian_lid] = name;
     return bigendian_lid;
@@ -254,13 +311,8 @@ uint32_t IdGenerator::GetOrCreateTid(const std::string &name) {
     if (iter != edge_types_name_to_id_.end()) {
       return iter->second;
     }
-    std::string key = TokenKey(MetaDataType::EdgeType, name);
-    std::string val;
     uint32_t bigendian_tid = native_to_big(label_next_tid_++);
-    val.append(AsChars(bigendian_tid), sizeof(bigendian_tid));
-    rocksdb::WriteOptions options;
-    auto s = db_->Put(options, graph_cf_->meta_info, key, val);
-    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    PersistToken(MetaDataType::EdgeType, name, bigendian_tid);
     edge_types_name_to_id_[name] = bigendian_tid;
     edge_types_id_to_name_[bigendian_tid] = name;
     return bigendian_tid;
@@ -284,13 +336,8 @@ uint32_t IdGenerator::GetOrCreatePid(const std::string &name) {
     if (iter != properties_name_to_id_.end()) {
       return iter->second;
     }
-    std::string key = TokenKey(MetaDataType::Property, name);
-    std::string val;
     uint32_t bigendian_pid = native_to_big(label_next_pid_++);
-    val.append(AsChars(bigendian_pid), sizeof(bigendian_pid));
-    rocksdb::WriteOptions options;
-    auto s = db_->Put(options, graph_cf_->meta_info, key, val);
-    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    PersistToken(MetaDataType::Property, name, bigendian_pid);
     properties_name_to_id_[name] = bigendian_pid;
     properties_id_to_name_[bigendian_pid] = name;
     return bigendian_pid;

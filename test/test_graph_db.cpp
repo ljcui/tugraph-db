@@ -192,6 +192,59 @@ TEST(GraphDB, entityIdRangeRefill) {
   txn->Commit();
 }
 
+TEST(GraphDB, raftIdGeneratorPersistsStateAndApplyIndex) {
+  const std::string raft_testdb = "testdb_raft_id_generator";
+  fs::remove_all(raft_testdb);
+  auto graphDB = GraphDB::Open(raft_testdb, {});
+  graphDB->db_meta().set_graph_name("id_generator_graph");
+
+  auto raft_driver = testutil::NewSingleNodeRaftDriver(
+      graphDB.get(), "id_generator_graph", raft_testdb + "/raft", 17691, 17692);
+  auto* raft_driver_ptr = raft_driver.get();
+  auto err = raft_driver->Run();
+  if (err != nullptr) {
+    FAIL() << err.String();
+  }
+  graphDB->SetRaftDriver(std::move(raft_driver));
+  ASSERT_TRUE(testutil::WaitUntilRaftLeader(raft_driver_ptr));
+
+  auto lid = graphDB->id_generator().GetOrCreateLid("person");
+  auto pid = graphDB->id_generator().GetOrCreatePid("name");
+  auto tid = graphDB->id_generator().GetOrCreateTid("knows");
+  auto vid = graphDB->id_generator().GetNextVid();
+  auto eid = graphDB->id_generator().GetNextEid();
+  auto apply_index = graphDB->GetRaftApplyIndex();
+
+  EXPECT_GT(apply_index, 0U);
+  EXPECT_EQ(graphDB->id_generator().GetLid("person"), lid);
+  EXPECT_EQ(graphDB->id_generator().GetPid("name"), pid);
+  EXPECT_EQ(graphDB->id_generator().GetTid("knows"), tid);
+
+  graphDB.reset();
+  graphDB = GraphDB::Open(raft_testdb, {});
+  graphDB->db_meta().set_graph_name("id_generator_graph");
+  EXPECT_EQ(graphDB->GetRaftApplyIndex(), apply_index);
+  EXPECT_EQ(graphDB->id_generator().GetLid("person"), lid);
+  EXPECT_EQ(graphDB->id_generator().GetPid("name"), pid);
+  EXPECT_EQ(graphDB->id_generator().GetTid("knows"), tid);
+
+  raft_driver = testutil::NewSingleNodeRaftDriver(
+      graphDB.get(), "id_generator_graph", raft_testdb + "/raft", 17691, 17692);
+  raft_driver_ptr = raft_driver.get();
+  err = raft_driver->Run();
+  if (err != nullptr) {
+    FAIL() << err.String();
+  }
+  graphDB->SetRaftDriver(std::move(raft_driver));
+  ASSERT_TRUE(testutil::WaitUntilRaftLeader(raft_driver_ptr));
+
+  auto next_vid = graphDB->id_generator().GetNextVid();
+  auto next_eid = graphDB->id_generator().GetNextEid();
+  EXPECT_GT(big_to_native(next_vid), big_to_native(vid));
+  EXPECT_GT(big_to_native(next_eid), big_to_native(eid));
+  EXPECT_GT(graphDB->GetRaftApplyIndex(), apply_index);
+}
+
 TEST(GraphDB, updateProperty) {
   fs::remove_all(testdb);
   auto graphDB = GraphDB::Open(testdb, {});

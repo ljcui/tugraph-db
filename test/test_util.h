@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include <rocksdb/write_batch.h>
+
 #include <array>
 #include <chrono>
 #include <filesystem>
@@ -21,6 +23,8 @@
 #include <thread>
 
 #include "graphdb/graph_db.h"
+#include "proto/meta.pb.h"
+#include "raft/raft_driver.h"
 
 #define EXPECT_THROW_CODE(statement, error_code)                \
   {                                                             \
@@ -105,6 +109,89 @@ inline void CleanupTestDataDirectories() {
     ec.clear();
     std::filesystem::remove_all(std::filesystem::path(dir), ec);
   }
+}
+
+inline void ApplyRaftRequest(graphdb::GraphDB* graph_db, uint64_t index,
+                             const meta::RaftRequest& request) {
+  rocksdb::WriteBatch wb(request.wb_data());
+
+  auto s = graph_db->SetRaftApplyIndex(index, &wb);
+  if (!s.ok()) {
+    THROW_CODE(StorageEngineError,
+               "failed to persist raft apply index for graph [{}] at index {}: "
+               "{}",
+               graph_db->db_meta().graph_name(), index, s.ToString());
+  }
+
+  auto* base_db = graph_db->raw_db()->GetBaseDB();
+  if (!base_db) {
+    THROW_CODE(StorageEngineError,
+               "failed to access base rocksdb::DB for graph [{}]",
+               graph_db->db_meta().graph_name());
+  }
+
+  s = base_db->Write({}, &wb);
+  if (!s.ok()) {
+    THROW_CODE(StorageEngineError,
+               "failed to apply raft request for graph [{}] at index {}: {}",
+               graph_db->db_meta().graph_name(), index, s.ToString());
+  }
+}
+
+inline std::unique_ptr<raft::RaftDriver> NewSingleNodeRaftDriver(
+    graphdb::GraphDB* graph_db, const std::string& graph_name,
+    const std::string& raft_path, int32_t bolt_port, int32_t raft_port) {
+  raft::LocalNodeConfig local_node;
+  local_node.graph = graph_name;
+  local_node.ip = "127.0.0.1";
+  local_node.bolt_port = bolt_port;
+  local_node.raft_poft = raft_port;
+
+  raft::RaftLogStoreConfig store_config;
+  store_config.path = raft_path;
+  store_config.block_cache = 64;
+  store_config.total_threads = 2;
+  store_config.keep_logs = 100000;
+  store_config.gc_interval = 1;
+
+  raft::RaftConfig raft_config;
+  raft_config.tick_interval = 100;
+  raft_config.election_tick = 10;
+  raft_config.heartbeat_tick = 1;
+
+  meta::RaftNodeInfo node_info;
+  node_info.set_node_id(1);
+  node_info.set_graph(graph_name);
+  node_info.set_ip(local_node.ip);
+  node_info.set_bolt_port(local_node.bolt_port);
+  node_info.set_raft_poft(local_node.raft_poft);
+
+  std::vector<eraft::Peer> init_peers;
+  eraft::Peer peer;
+  peer.id_ = 1;
+  peer.context_ = node_info.SerializeAsString();
+  init_peers.emplace_back(std::move(peer));
+
+  return std::make_unique<raft::RaftDriver>(
+      [graph_db](uint64_t index, const meta::RaftRequest& request) {
+        ApplyRaftRequest(graph_db, index, request);
+      },
+      graph_db->GetRaftApplyIndex(), std::move(local_node),
+      std::move(init_peers), store_config, raft_config);
+}
+
+inline bool WaitUntilRaftLeader(
+    raft::RaftDriver* raft_driver,
+    std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto status = raft_driver->GetRaftStatus();
+    if (status.s.basicStatus_.softState_.lead_ == 1) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return false;
 }
 
 }  // namespace testutil

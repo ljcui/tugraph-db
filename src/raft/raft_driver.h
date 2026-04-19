@@ -83,9 +83,12 @@ struct Generator {
 };
 
 struct PromiseContext {
-  uint64_t index = 0;
-  std::promise<eraft::Error> proposed;
-  std::promise<void> commited;
+  struct CommitResult {
+    eraft::Error err;
+    uint64_t index = 0;
+  };
+
+  std::promise<CommitResult> commited;
   std::promise<void> applied;
 };
 

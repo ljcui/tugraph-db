@@ -503,16 +503,18 @@ std::shared_ptr<PromiseContext> RaftDriver::Propose(uint64_t uuid,
   auto context = std::make_shared<PromiseContext>();
   raft_service_.post([this, uuid, context, msg = std::move(msg)]() mutable {
     if (rn_->raft_->id_ != rn_->raft_->lead_) {
-      context->proposed.set_value(eraft::Error("not leader"));
+      context->commited.set_value(
+          PromiseContext::CommitResult{eraft::Error("not leader"), 0});
       return;
     }
     msg.set_from(rn_->raft_->id_);
     auto err = rn_->raft_->Step(std::move(msg));
     if (err != nullptr) {
       LOG_WARN("failed to step raft message, err: {}", err.String());
+      context->commited.set_value(
+          PromiseContext::CommitResult{std::move(err), 0});
       return;
     }
-    context->proposed.set_value(std::move(err));
     {
       std::lock_guard<std::mutex> guard(promise_mutex_);
       pending_promise_.emplace(uuid, std::move(context));
@@ -698,8 +700,8 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
           }
         }
         if (context) {
-          context->index = entry.index();
-          context->commited.set_value();
+          context->commited.set_value(
+              PromiseContext::CommitResult{nullptr, entry.index()});
           context->applied.get_future().wait();
         } else {
           apply_(entry.index(), request);
@@ -773,6 +775,8 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
           }
         }
         if (context) {
+          context->commited.set_value(
+              PromiseContext::CommitResult{nullptr, entry.index()});
           context->applied.set_value();
         }
         break;

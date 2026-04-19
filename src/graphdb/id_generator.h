@@ -31,6 +31,10 @@
 #include <unordered_set>
 
 #include "graph_cf.h"
+namespace raft {
+class RaftDriver;
+}
+
 namespace graphdb {
 enum class MetaDataType : char {
   VertexLabel = 0,
@@ -52,6 +56,7 @@ class IdGenerator {
   void operator=(const IdGenerator&) = delete;
 
   void Bind(rocksdb::TransactionDB* db, GraphCF* graph_cf);
+  void SetRaftDriver(raft::RaftDriver* raft_driver);
   void LoadToken(MetaDataType type, const std::string& name, uint32_t id);
   void SetMaxIds(uint32_t max_lid, uint32_t max_pid, uint32_t max_tid,
                  uint32_t max_index_id);
@@ -79,6 +84,9 @@ class IdGenerator {
                           std::atomic<int64_t>* range_end,
                           std::atomic<int64_t>* persisted_next_id,
                           std::mutex* refill_mutex, MetaDataType meta_type);
+  void ProposeAndApply(rocksdb::WriteBatch* wb);
+  void PersistEntityId(MetaDataType meta_type, int64_t next_id);
+  void PersistToken(MetaDataType type, const std::string& name, uint32_t id);
 
   std::atomic<int64_t> next_vid_{1};
   std::atomic<int64_t> vid_range_end_{1};
@@ -98,6 +106,7 @@ class IdGenerator {
   std::unordered_map<uint32_t, std::string> properties_id_to_name_;
   rocksdb::TransactionDB* db_ = nullptr;
   GraphCF* graph_cf_ = nullptr;
+  raft::RaftDriver* raft_driver_ = nullptr;
   std::mutex vid_refill_mutex_;
   std::mutex eid_refill_mutex_;
   std::shared_mutex vertex_labels_mutex_;
