@@ -46,6 +46,8 @@ class Galaxy {
                                       const GalaxyOptions& galaxy_options);
   std::shared_ptr<graphdb::GraphDB> OpenGraph(const std::string& name);
   graphdb::GraphDB* CreateGraph(const std::string& name);
+  graphdb::GraphDB* CreateGraphWithRaft(const std::string& name,
+                                        const meta::RaftNodeInfos& node_infos);
   graphdb::GraphDB* ClearGraph(const std::string& name);
   void DeleteGraph(const std::string& name);
   const std::unordered_map<std::string, std::shared_ptr<graphdb::GraphDB>>&
@@ -54,6 +56,8 @@ class Galaxy {
   }
 
  private:
+  graphdb::GraphDB* CreateGraphInternal(const std::string& name,
+                                        const meta::RaftNodeInfos* node_infos);
   rocksdb::TransactionDB* meta_db_ = nullptr;
   std::unordered_map<std::string, std::shared_ptr<graphdb::GraphDB>> graphs_;
   std::shared_ptr<rocksdb::Cache> block_cache_;

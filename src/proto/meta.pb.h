@@ -56,18 +56,18 @@ extern FullTextIndexUpdateDefaultTypeInternal _FullTextIndexUpdate_default_insta
 class GraphDBMetaInfo;
 class GraphDBMetaInfoDefaultTypeInternal;
 extern GraphDBMetaInfoDefaultTypeInternal _GraphDBMetaInfo_default_instance_;
-class NodeInfo;
-class NodeInfoDefaultTypeInternal;
-extern NodeInfoDefaultTypeInternal _NodeInfo_default_instance_;
-class NodeInfos;
-class NodeInfosDefaultTypeInternal;
-extern NodeInfosDefaultTypeInternal _NodeInfos_default_instance_;
-class NodeInfos_NodesEntry_DoNotUse;
-class NodeInfos_NodesEntry_DoNotUseDefaultTypeInternal;
-extern NodeInfos_NodesEntry_DoNotUseDefaultTypeInternal _NodeInfos_NodesEntry_DoNotUse_default_instance_;
 class PropertyIndexUpdate;
 class PropertyIndexUpdateDefaultTypeInternal;
 extern PropertyIndexUpdateDefaultTypeInternal _PropertyIndexUpdate_default_instance_;
+class RaftNodeInfo;
+class RaftNodeInfoDefaultTypeInternal;
+extern RaftNodeInfoDefaultTypeInternal _RaftNodeInfo_default_instance_;
+class RaftNodeInfos;
+class RaftNodeInfosDefaultTypeInternal;
+extern RaftNodeInfosDefaultTypeInternal _RaftNodeInfos_default_instance_;
+class RaftNodeInfos_NodesEntry_DoNotUse;
+class RaftNodeInfos_NodesEntry_DoNotUseDefaultTypeInternal;
+extern RaftNodeInfos_NodesEntry_DoNotUseDefaultTypeInternal _RaftNodeInfos_NodesEntry_DoNotUse_default_instance_;
 class RaftRequest;
 class RaftRequestDefaultTypeInternal;
 extern RaftRequestDefaultTypeInternal _RaftRequest_default_instance_;
@@ -88,10 +88,10 @@ namespace google {
 namespace protobuf {
 template<> ::meta::FullTextIndexUpdate* Arena::CreateMaybeMessage<::meta::FullTextIndexUpdate>(Arena*);
 template<> ::meta::GraphDBMetaInfo* Arena::CreateMaybeMessage<::meta::GraphDBMetaInfo>(Arena*);
-template<> ::meta::NodeInfo* Arena::CreateMaybeMessage<::meta::NodeInfo>(Arena*);
-template<> ::meta::NodeInfos* Arena::CreateMaybeMessage<::meta::NodeInfos>(Arena*);
-template<> ::meta::NodeInfos_NodesEntry_DoNotUse* Arena::CreateMaybeMessage<::meta::NodeInfos_NodesEntry_DoNotUse>(Arena*);
 template<> ::meta::PropertyIndexUpdate* Arena::CreateMaybeMessage<::meta::PropertyIndexUpdate>(Arena*);
+template<> ::meta::RaftNodeInfo* Arena::CreateMaybeMessage<::meta::RaftNodeInfo>(Arena*);
+template<> ::meta::RaftNodeInfos* Arena::CreateMaybeMessage<::meta::RaftNodeInfos>(Arena*);
+template<> ::meta::RaftNodeInfos_NodesEntry_DoNotUse* Arena::CreateMaybeMessage<::meta::RaftNodeInfos_NodesEntry_DoNotUse>(Arena*);
 template<> ::meta::RaftRequest* Arena::CreateMaybeMessage<::meta::RaftRequest>(Arena*);
 template<> ::meta::VectorIndexUpdate* Arena::CreateMaybeMessage<::meta::VectorIndexUpdate>(Arena*);
 template<> ::meta::VertexFullTextIndex* Arena::CreateMaybeMessage<::meta::VertexFullTextIndex>(Arena*);
@@ -1008,12 +1008,19 @@ class GraphDBMetaInfo : public ::google::protobuf::Message /* @@protoc_insertion
   ::google::protobuf::uint32 graph_id() const;
   void set_graph_id(::google::protobuf::uint32 value);
 
+  // bool enable_raft = 3;
+  void clear_enable_raft();
+  static const int kEnableRaftFieldNumber = 3;
+  bool enable_raft() const;
+  void set_enable_raft(bool value);
+
   // @@protoc_insertion_point(class_scope:meta.GraphDBMetaInfo)
  private:
 
   ::google::protobuf::internal::InternalMetadataWithArena _internal_metadata_;
   ::google::protobuf::internal::ArenaStringPtr graph_name_;
   ::google::protobuf::uint32 graph_id_;
+  bool enable_raft_;
   mutable ::google::protobuf::internal::CachedSize _cached_size_;
   friend struct ::protobuf_meta_2eproto::TableStruct;
 };
@@ -1565,24 +1572,24 @@ class RaftRequest : public ::google::protobuf::Message /* @@protoc_insertion_poi
 };
 // -------------------------------------------------------------------
 
-class NodeInfo : public ::google::protobuf::Message /* @@protoc_insertion_point(class_definition:meta.NodeInfo) */ {
+class RaftNodeInfo : public ::google::protobuf::Message /* @@protoc_insertion_point(class_definition:meta.RaftNodeInfo) */ {
  public:
-  NodeInfo();
-  virtual ~NodeInfo();
+  RaftNodeInfo();
+  virtual ~RaftNodeInfo();
 
-  NodeInfo(const NodeInfo& from);
+  RaftNodeInfo(const RaftNodeInfo& from);
 
-  inline NodeInfo& operator=(const NodeInfo& from) {
+  inline RaftNodeInfo& operator=(const RaftNodeInfo& from) {
     CopyFrom(from);
     return *this;
   }
   #if LANG_CXX11
-  NodeInfo(NodeInfo&& from) noexcept
-    : NodeInfo() {
+  RaftNodeInfo(RaftNodeInfo&& from) noexcept
+    : RaftNodeInfo() {
     *this = ::std::move(from);
   }
 
-  inline NodeInfo& operator=(NodeInfo&& from) noexcept {
+  inline RaftNodeInfo& operator=(RaftNodeInfo&& from) noexcept {
     if (GetArenaNoVirtual() == from.GetArenaNoVirtual()) {
       if (this != &from) InternalSwap(&from);
     } else {
@@ -1592,34 +1599,34 @@ class NodeInfo : public ::google::protobuf::Message /* @@protoc_insertion_point(
   }
   #endif
   static const ::google::protobuf::Descriptor* descriptor();
-  static const NodeInfo& default_instance();
+  static const RaftNodeInfo& default_instance();
 
   static void InitAsDefaultInstance();  // FOR INTERNAL USE ONLY
-  static inline const NodeInfo* internal_default_instance() {
-    return reinterpret_cast<const NodeInfo*>(
-               &_NodeInfo_default_instance_);
+  static inline const RaftNodeInfo* internal_default_instance() {
+    return reinterpret_cast<const RaftNodeInfo*>(
+               &_RaftNodeInfo_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
     8;
 
-  void Swap(NodeInfo* other);
-  friend void swap(NodeInfo& a, NodeInfo& b) {
+  void Swap(RaftNodeInfo* other);
+  friend void swap(RaftNodeInfo& a, RaftNodeInfo& b) {
     a.Swap(&b);
   }
 
   // implements Message ----------------------------------------------
 
-  inline NodeInfo* New() const final {
-    return CreateMaybeMessage<NodeInfo>(NULL);
+  inline RaftNodeInfo* New() const final {
+    return CreateMaybeMessage<RaftNodeInfo>(NULL);
   }
 
-  NodeInfo* New(::google::protobuf::Arena* arena) const final {
-    return CreateMaybeMessage<NodeInfo>(arena);
+  RaftNodeInfo* New(::google::protobuf::Arena* arena) const final {
+    return CreateMaybeMessage<RaftNodeInfo>(arena);
   }
   void CopyFrom(const ::google::protobuf::Message& from) final;
   void MergeFrom(const ::google::protobuf::Message& from) final;
-  void CopyFrom(const NodeInfo& from);
-  void MergeFrom(const NodeInfo& from);
+  void CopyFrom(const RaftNodeInfo& from);
+  void MergeFrom(const RaftNodeInfo& from);
   void Clear() final;
   bool IsInitialized() const final;
 
@@ -1636,7 +1643,7 @@ class NodeInfo : public ::google::protobuf::Message /* @@protoc_insertion_point(
   void SharedCtor();
   void SharedDtor();
   void SetCachedSize(int size) const final;
-  void InternalSwap(NodeInfo* other);
+  void InternalSwap(RaftNodeInfo* other);
   private:
   inline ::google::protobuf::Arena* GetArenaNoVirtual() const {
     return NULL;
@@ -1666,6 +1673,20 @@ class NodeInfo : public ::google::protobuf::Message /* @@protoc_insertion_point(
   ::std::string* release_ip();
   void set_allocated_ip(::std::string* ip);
 
+  // string graph = 7;
+  void clear_graph();
+  static const int kGraphFieldNumber = 7;
+  const ::std::string& graph() const;
+  void set_graph(const ::std::string& value);
+  #if LANG_CXX11
+  void set_graph(::std::string&& value);
+  #endif
+  void set_graph(const char* value);
+  void set_graph(const char* value, size_t size);
+  ::std::string* mutable_graph();
+  ::std::string* release_graph();
+  void set_allocated_graph(::std::string* graph);
+
   // uint64 node_id = 1;
   void clear_node_id();
   static const int kNodeIdFieldNumber = 1;
@@ -1678,11 +1699,11 @@ class NodeInfo : public ::google::protobuf::Message /* @@protoc_insertion_point(
   ::google::protobuf::int32 bolt_port() const;
   void set_bolt_port(::google::protobuf::int32 value);
 
-  // int32 bolt_raft_port = 4;
-  void clear_bolt_raft_port();
-  static const int kBoltRaftPortFieldNumber = 4;
-  ::google::protobuf::int32 bolt_raft_port() const;
-  void set_bolt_raft_port(::google::protobuf::int32 value);
+  // int32 raft_poft = 4;
+  void clear_raft_poft();
+  static const int kRaftPoftFieldNumber = 4;
+  ::google::protobuf::int32 raft_poft() const;
+  void set_raft_poft(::google::protobuf::int32 value);
 
   // bool is_leader = 5;
   void clear_is_leader();
@@ -1696,14 +1717,15 @@ class NodeInfo : public ::google::protobuf::Message /* @@protoc_insertion_point(
   bool is_learner() const;
   void set_is_learner(bool value);
 
-  // @@protoc_insertion_point(class_scope:meta.NodeInfo)
+  // @@protoc_insertion_point(class_scope:meta.RaftNodeInfo)
  private:
 
   ::google::protobuf::internal::InternalMetadataWithArena _internal_metadata_;
   ::google::protobuf::internal::ArenaStringPtr ip_;
+  ::google::protobuf::internal::ArenaStringPtr graph_;
   ::google::protobuf::uint64 node_id_;
   ::google::protobuf::int32 bolt_port_;
-  ::google::protobuf::int32 bolt_raft_port_;
+  ::google::protobuf::int32 raft_poft_;
   bool is_leader_;
   bool is_learner_;
   mutable ::google::protobuf::internal::CachedSize _cached_size_;
@@ -1711,45 +1733,45 @@ class NodeInfo : public ::google::protobuf::Message /* @@protoc_insertion_point(
 };
 // -------------------------------------------------------------------
 
-class NodeInfos_NodesEntry_DoNotUse : public ::google::protobuf::internal::MapEntry<NodeInfos_NodesEntry_DoNotUse, 
-    ::google::protobuf::uint64, ::meta::NodeInfo,
+class RaftNodeInfos_NodesEntry_DoNotUse : public ::google::protobuf::internal::MapEntry<RaftNodeInfos_NodesEntry_DoNotUse, 
+    ::google::protobuf::uint64, ::meta::RaftNodeInfo,
     ::google::protobuf::internal::WireFormatLite::TYPE_UINT64,
     ::google::protobuf::internal::WireFormatLite::TYPE_MESSAGE,
     0 > {
 public:
-  typedef ::google::protobuf::internal::MapEntry<NodeInfos_NodesEntry_DoNotUse, 
-    ::google::protobuf::uint64, ::meta::NodeInfo,
+  typedef ::google::protobuf::internal::MapEntry<RaftNodeInfos_NodesEntry_DoNotUse, 
+    ::google::protobuf::uint64, ::meta::RaftNodeInfo,
     ::google::protobuf::internal::WireFormatLite::TYPE_UINT64,
     ::google::protobuf::internal::WireFormatLite::TYPE_MESSAGE,
     0 > SuperType;
-  NodeInfos_NodesEntry_DoNotUse();
-  NodeInfos_NodesEntry_DoNotUse(::google::protobuf::Arena* arena);
-  void MergeFrom(const NodeInfos_NodesEntry_DoNotUse& other);
-  static const NodeInfos_NodesEntry_DoNotUse* internal_default_instance() { return reinterpret_cast<const NodeInfos_NodesEntry_DoNotUse*>(&_NodeInfos_NodesEntry_DoNotUse_default_instance_); }
+  RaftNodeInfos_NodesEntry_DoNotUse();
+  RaftNodeInfos_NodesEntry_DoNotUse(::google::protobuf::Arena* arena);
+  void MergeFrom(const RaftNodeInfos_NodesEntry_DoNotUse& other);
+  static const RaftNodeInfos_NodesEntry_DoNotUse* internal_default_instance() { return reinterpret_cast<const RaftNodeInfos_NodesEntry_DoNotUse*>(&_RaftNodeInfos_NodesEntry_DoNotUse_default_instance_); }
   void MergeFrom(const ::google::protobuf::Message& other) final;
   ::google::protobuf::Metadata GetMetadata() const;
 };
 
 // -------------------------------------------------------------------
 
-class NodeInfos : public ::google::protobuf::Message /* @@protoc_insertion_point(class_definition:meta.NodeInfos) */ {
+class RaftNodeInfos : public ::google::protobuf::Message /* @@protoc_insertion_point(class_definition:meta.RaftNodeInfos) */ {
  public:
-  NodeInfos();
-  virtual ~NodeInfos();
+  RaftNodeInfos();
+  virtual ~RaftNodeInfos();
 
-  NodeInfos(const NodeInfos& from);
+  RaftNodeInfos(const RaftNodeInfos& from);
 
-  inline NodeInfos& operator=(const NodeInfos& from) {
+  inline RaftNodeInfos& operator=(const RaftNodeInfos& from) {
     CopyFrom(from);
     return *this;
   }
   #if LANG_CXX11
-  NodeInfos(NodeInfos&& from) noexcept
-    : NodeInfos() {
+  RaftNodeInfos(RaftNodeInfos&& from) noexcept
+    : RaftNodeInfos() {
     *this = ::std::move(from);
   }
 
-  inline NodeInfos& operator=(NodeInfos&& from) noexcept {
+  inline RaftNodeInfos& operator=(RaftNodeInfos&& from) noexcept {
     if (GetArenaNoVirtual() == from.GetArenaNoVirtual()) {
       if (this != &from) InternalSwap(&from);
     } else {
@@ -1759,34 +1781,34 @@ class NodeInfos : public ::google::protobuf::Message /* @@protoc_insertion_point
   }
   #endif
   static const ::google::protobuf::Descriptor* descriptor();
-  static const NodeInfos& default_instance();
+  static const RaftNodeInfos& default_instance();
 
   static void InitAsDefaultInstance();  // FOR INTERNAL USE ONLY
-  static inline const NodeInfos* internal_default_instance() {
-    return reinterpret_cast<const NodeInfos*>(
-               &_NodeInfos_default_instance_);
+  static inline const RaftNodeInfos* internal_default_instance() {
+    return reinterpret_cast<const RaftNodeInfos*>(
+               &_RaftNodeInfos_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
     10;
 
-  void Swap(NodeInfos* other);
-  friend void swap(NodeInfos& a, NodeInfos& b) {
+  void Swap(RaftNodeInfos* other);
+  friend void swap(RaftNodeInfos& a, RaftNodeInfos& b) {
     a.Swap(&b);
   }
 
   // implements Message ----------------------------------------------
 
-  inline NodeInfos* New() const final {
-    return CreateMaybeMessage<NodeInfos>(NULL);
+  inline RaftNodeInfos* New() const final {
+    return CreateMaybeMessage<RaftNodeInfos>(NULL);
   }
 
-  NodeInfos* New(::google::protobuf::Arena* arena) const final {
-    return CreateMaybeMessage<NodeInfos>(arena);
+  RaftNodeInfos* New(::google::protobuf::Arena* arena) const final {
+    return CreateMaybeMessage<RaftNodeInfos>(arena);
   }
   void CopyFrom(const ::google::protobuf::Message& from) final;
   void MergeFrom(const ::google::protobuf::Message& from) final;
-  void CopyFrom(const NodeInfos& from);
-  void MergeFrom(const NodeInfos& from);
+  void CopyFrom(const RaftNodeInfos& from);
+  void MergeFrom(const RaftNodeInfos& from);
   void Clear() final;
   bool IsInitialized() const final;
 
@@ -1803,7 +1825,7 @@ class NodeInfos : public ::google::protobuf::Message /* @@protoc_insertion_point
   void SharedCtor();
   void SharedDtor();
   void SetCachedSize(int size) const final;
-  void InternalSwap(NodeInfos* other);
+  void InternalSwap(RaftNodeInfos* other);
   private:
   inline ::google::protobuf::Arena* GetArenaNoVirtual() const {
     return NULL;
@@ -1820,22 +1842,22 @@ class NodeInfos : public ::google::protobuf::Message /* @@protoc_insertion_point
 
   // accessors -------------------------------------------------------
 
-  // map<uint64, .meta.NodeInfo> nodes = 1;
+  // map<uint64, .meta.RaftNodeInfo> nodes = 1;
   int nodes_size() const;
   void clear_nodes();
   static const int kNodesFieldNumber = 1;
-  const ::google::protobuf::Map< ::google::protobuf::uint64, ::meta::NodeInfo >&
+  const ::google::protobuf::Map< ::google::protobuf::uint64, ::meta::RaftNodeInfo >&
       nodes() const;
-  ::google::protobuf::Map< ::google::protobuf::uint64, ::meta::NodeInfo >*
+  ::google::protobuf::Map< ::google::protobuf::uint64, ::meta::RaftNodeInfo >*
       mutable_nodes();
 
-  // @@protoc_insertion_point(class_scope:meta.NodeInfos)
+  // @@protoc_insertion_point(class_scope:meta.RaftNodeInfos)
  private:
 
   ::google::protobuf::internal::InternalMetadataWithArena _internal_metadata_;
   ::google::protobuf::internal::MapField<
-      NodeInfos_NodesEntry_DoNotUse,
-      ::google::protobuf::uint64, ::meta::NodeInfo,
+      RaftNodeInfos_NodesEntry_DoNotUse,
+      ::google::protobuf::uint64, ::meta::RaftNodeInfo,
       ::google::protobuf::internal::WireFormatLite::TYPE_UINT64,
       ::google::protobuf::internal::WireFormatLite::TYPE_MESSAGE,
       0 > nodes_;
@@ -3106,6 +3128,20 @@ inline void GraphDBMetaInfo::set_graph_id(::google::protobuf::uint32 value) {
   // @@protoc_insertion_point(field_set:meta.GraphDBMetaInfo.graph_id)
 }
 
+// bool enable_raft = 3;
+inline void GraphDBMetaInfo::clear_enable_raft() {
+  enable_raft_ = false;
+}
+inline bool GraphDBMetaInfo::enable_raft() const {
+  // @@protoc_insertion_point(field_get:meta.GraphDBMetaInfo.enable_raft)
+  return enable_raft_;
+}
+inline void GraphDBMetaInfo::set_enable_raft(bool value) {
+  
+  enable_raft_ = value;
+  // @@protoc_insertion_point(field_set:meta.GraphDBMetaInfo.enable_raft)
+}
+
 // -------------------------------------------------------------------
 
 // FullTextIndexUpdate
@@ -3565,152 +3601,205 @@ inline void RaftRequest::set_allocated_raw_data(::std::string* raw_data) {
 
 // -------------------------------------------------------------------
 
-// NodeInfo
+// RaftNodeInfo
 
 // uint64 node_id = 1;
-inline void NodeInfo::clear_node_id() {
+inline void RaftNodeInfo::clear_node_id() {
   node_id_ = GOOGLE_ULONGLONG(0);
 }
-inline ::google::protobuf::uint64 NodeInfo::node_id() const {
-  // @@protoc_insertion_point(field_get:meta.NodeInfo.node_id)
+inline ::google::protobuf::uint64 RaftNodeInfo::node_id() const {
+  // @@protoc_insertion_point(field_get:meta.RaftNodeInfo.node_id)
   return node_id_;
 }
-inline void NodeInfo::set_node_id(::google::protobuf::uint64 value) {
+inline void RaftNodeInfo::set_node_id(::google::protobuf::uint64 value) {
   
   node_id_ = value;
-  // @@protoc_insertion_point(field_set:meta.NodeInfo.node_id)
+  // @@protoc_insertion_point(field_set:meta.RaftNodeInfo.node_id)
 }
 
 // string ip = 2;
-inline void NodeInfo::clear_ip() {
+inline void RaftNodeInfo::clear_ip() {
   ip_.ClearToEmptyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
 }
-inline const ::std::string& NodeInfo::ip() const {
-  // @@protoc_insertion_point(field_get:meta.NodeInfo.ip)
+inline const ::std::string& RaftNodeInfo::ip() const {
+  // @@protoc_insertion_point(field_get:meta.RaftNodeInfo.ip)
   return ip_.GetNoArena();
 }
-inline void NodeInfo::set_ip(const ::std::string& value) {
+inline void RaftNodeInfo::set_ip(const ::std::string& value) {
   
   ip_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), value);
-  // @@protoc_insertion_point(field_set:meta.NodeInfo.ip)
+  // @@protoc_insertion_point(field_set:meta.RaftNodeInfo.ip)
 }
 #if LANG_CXX11
-inline void NodeInfo::set_ip(::std::string&& value) {
+inline void RaftNodeInfo::set_ip(::std::string&& value) {
   
   ip_.SetNoArena(
     &::google::protobuf::internal::GetEmptyStringAlreadyInited(), ::std::move(value));
-  // @@protoc_insertion_point(field_set_rvalue:meta.NodeInfo.ip)
+  // @@protoc_insertion_point(field_set_rvalue:meta.RaftNodeInfo.ip)
 }
 #endif
-inline void NodeInfo::set_ip(const char* value) {
+inline void RaftNodeInfo::set_ip(const char* value) {
   GOOGLE_DCHECK(value != NULL);
   
   ip_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), ::std::string(value));
-  // @@protoc_insertion_point(field_set_char:meta.NodeInfo.ip)
+  // @@protoc_insertion_point(field_set_char:meta.RaftNodeInfo.ip)
 }
-inline void NodeInfo::set_ip(const char* value, size_t size) {
+inline void RaftNodeInfo::set_ip(const char* value, size_t size) {
   
   ip_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(),
       ::std::string(reinterpret_cast<const char*>(value), size));
-  // @@protoc_insertion_point(field_set_pointer:meta.NodeInfo.ip)
+  // @@protoc_insertion_point(field_set_pointer:meta.RaftNodeInfo.ip)
 }
-inline ::std::string* NodeInfo::mutable_ip() {
+inline ::std::string* RaftNodeInfo::mutable_ip() {
   
-  // @@protoc_insertion_point(field_mutable:meta.NodeInfo.ip)
+  // @@protoc_insertion_point(field_mutable:meta.RaftNodeInfo.ip)
   return ip_.MutableNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
 }
-inline ::std::string* NodeInfo::release_ip() {
-  // @@protoc_insertion_point(field_release:meta.NodeInfo.ip)
+inline ::std::string* RaftNodeInfo::release_ip() {
+  // @@protoc_insertion_point(field_release:meta.RaftNodeInfo.ip)
   
   return ip_.ReleaseNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
 }
-inline void NodeInfo::set_allocated_ip(::std::string* ip) {
+inline void RaftNodeInfo::set_allocated_ip(::std::string* ip) {
   if (ip != NULL) {
     
   } else {
     
   }
   ip_.SetAllocatedNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), ip);
-  // @@protoc_insertion_point(field_set_allocated:meta.NodeInfo.ip)
+  // @@protoc_insertion_point(field_set_allocated:meta.RaftNodeInfo.ip)
 }
 
 // int32 bolt_port = 3;
-inline void NodeInfo::clear_bolt_port() {
+inline void RaftNodeInfo::clear_bolt_port() {
   bolt_port_ = 0;
 }
-inline ::google::protobuf::int32 NodeInfo::bolt_port() const {
-  // @@protoc_insertion_point(field_get:meta.NodeInfo.bolt_port)
+inline ::google::protobuf::int32 RaftNodeInfo::bolt_port() const {
+  // @@protoc_insertion_point(field_get:meta.RaftNodeInfo.bolt_port)
   return bolt_port_;
 }
-inline void NodeInfo::set_bolt_port(::google::protobuf::int32 value) {
+inline void RaftNodeInfo::set_bolt_port(::google::protobuf::int32 value) {
   
   bolt_port_ = value;
-  // @@protoc_insertion_point(field_set:meta.NodeInfo.bolt_port)
+  // @@protoc_insertion_point(field_set:meta.RaftNodeInfo.bolt_port)
 }
 
-// int32 bolt_raft_port = 4;
-inline void NodeInfo::clear_bolt_raft_port() {
-  bolt_raft_port_ = 0;
+// int32 raft_poft = 4;
+inline void RaftNodeInfo::clear_raft_poft() {
+  raft_poft_ = 0;
 }
-inline ::google::protobuf::int32 NodeInfo::bolt_raft_port() const {
-  // @@protoc_insertion_point(field_get:meta.NodeInfo.bolt_raft_port)
-  return bolt_raft_port_;
+inline ::google::protobuf::int32 RaftNodeInfo::raft_poft() const {
+  // @@protoc_insertion_point(field_get:meta.RaftNodeInfo.raft_poft)
+  return raft_poft_;
 }
-inline void NodeInfo::set_bolt_raft_port(::google::protobuf::int32 value) {
+inline void RaftNodeInfo::set_raft_poft(::google::protobuf::int32 value) {
   
-  bolt_raft_port_ = value;
-  // @@protoc_insertion_point(field_set:meta.NodeInfo.bolt_raft_port)
+  raft_poft_ = value;
+  // @@protoc_insertion_point(field_set:meta.RaftNodeInfo.raft_poft)
 }
 
 // bool is_leader = 5;
-inline void NodeInfo::clear_is_leader() {
+inline void RaftNodeInfo::clear_is_leader() {
   is_leader_ = false;
 }
-inline bool NodeInfo::is_leader() const {
-  // @@protoc_insertion_point(field_get:meta.NodeInfo.is_leader)
+inline bool RaftNodeInfo::is_leader() const {
+  // @@protoc_insertion_point(field_get:meta.RaftNodeInfo.is_leader)
   return is_leader_;
 }
-inline void NodeInfo::set_is_leader(bool value) {
+inline void RaftNodeInfo::set_is_leader(bool value) {
   
   is_leader_ = value;
-  // @@protoc_insertion_point(field_set:meta.NodeInfo.is_leader)
+  // @@protoc_insertion_point(field_set:meta.RaftNodeInfo.is_leader)
 }
 
 // bool is_learner = 6;
-inline void NodeInfo::clear_is_learner() {
+inline void RaftNodeInfo::clear_is_learner() {
   is_learner_ = false;
 }
-inline bool NodeInfo::is_learner() const {
-  // @@protoc_insertion_point(field_get:meta.NodeInfo.is_learner)
+inline bool RaftNodeInfo::is_learner() const {
+  // @@protoc_insertion_point(field_get:meta.RaftNodeInfo.is_learner)
   return is_learner_;
 }
-inline void NodeInfo::set_is_learner(bool value) {
+inline void RaftNodeInfo::set_is_learner(bool value) {
   
   is_learner_ = value;
-  // @@protoc_insertion_point(field_set:meta.NodeInfo.is_learner)
+  // @@protoc_insertion_point(field_set:meta.RaftNodeInfo.is_learner)
+}
+
+// string graph = 7;
+inline void RaftNodeInfo::clear_graph() {
+  graph_.ClearToEmptyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+}
+inline const ::std::string& RaftNodeInfo::graph() const {
+  // @@protoc_insertion_point(field_get:meta.RaftNodeInfo.graph)
+  return graph_.GetNoArena();
+}
+inline void RaftNodeInfo::set_graph(const ::std::string& value) {
+  
+  graph_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), value);
+  // @@protoc_insertion_point(field_set:meta.RaftNodeInfo.graph)
+}
+#if LANG_CXX11
+inline void RaftNodeInfo::set_graph(::std::string&& value) {
+  
+  graph_.SetNoArena(
+    &::google::protobuf::internal::GetEmptyStringAlreadyInited(), ::std::move(value));
+  // @@protoc_insertion_point(field_set_rvalue:meta.RaftNodeInfo.graph)
+}
+#endif
+inline void RaftNodeInfo::set_graph(const char* value) {
+  GOOGLE_DCHECK(value != NULL);
+  
+  graph_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), ::std::string(value));
+  // @@protoc_insertion_point(field_set_char:meta.RaftNodeInfo.graph)
+}
+inline void RaftNodeInfo::set_graph(const char* value, size_t size) {
+  
+  graph_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(),
+      ::std::string(reinterpret_cast<const char*>(value), size));
+  // @@protoc_insertion_point(field_set_pointer:meta.RaftNodeInfo.graph)
+}
+inline ::std::string* RaftNodeInfo::mutable_graph() {
+  
+  // @@protoc_insertion_point(field_mutable:meta.RaftNodeInfo.graph)
+  return graph_.MutableNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+}
+inline ::std::string* RaftNodeInfo::release_graph() {
+  // @@protoc_insertion_point(field_release:meta.RaftNodeInfo.graph)
+  
+  return graph_.ReleaseNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+}
+inline void RaftNodeInfo::set_allocated_graph(::std::string* graph) {
+  if (graph != NULL) {
+    
+  } else {
+    
+  }
+  graph_.SetAllocatedNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), graph);
+  // @@protoc_insertion_point(field_set_allocated:meta.RaftNodeInfo.graph)
 }
 
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------
 
-// NodeInfos
+// RaftNodeInfos
 
-// map<uint64, .meta.NodeInfo> nodes = 1;
-inline int NodeInfos::nodes_size() const {
+// map<uint64, .meta.RaftNodeInfo> nodes = 1;
+inline int RaftNodeInfos::nodes_size() const {
   return nodes_.size();
 }
-inline void NodeInfos::clear_nodes() {
+inline void RaftNodeInfos::clear_nodes() {
   nodes_.Clear();
 }
-inline const ::google::protobuf::Map< ::google::protobuf::uint64, ::meta::NodeInfo >&
-NodeInfos::nodes() const {
-  // @@protoc_insertion_point(field_map:meta.NodeInfos.nodes)
+inline const ::google::protobuf::Map< ::google::protobuf::uint64, ::meta::RaftNodeInfo >&
+RaftNodeInfos::nodes() const {
+  // @@protoc_insertion_point(field_map:meta.RaftNodeInfos.nodes)
   return nodes_.GetMap();
 }
-inline ::google::protobuf::Map< ::google::protobuf::uint64, ::meta::NodeInfo >*
-NodeInfos::mutable_nodes() {
-  // @@protoc_insertion_point(field_mutable_map:meta.NodeInfos.nodes)
+inline ::google::protobuf::Map< ::google::protobuf::uint64, ::meta::RaftNodeInfo >*
+RaftNodeInfos::mutable_nodes() {
+  // @@protoc_insertion_point(field_mutable_map:meta.RaftNodeInfos.nodes)
   return nodes_.MutableMap();
 }
 

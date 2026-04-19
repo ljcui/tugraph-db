@@ -22,10 +22,53 @@
 #include <filesystem>
 
 #include "common/exceptions.h"
+#include "common/flags.h"
 #include "common/logger.h"
 using namespace graphdb;
 using namespace boost::endian;
 namespace server {
+namespace {
+
+void ValidateRaftNodeInfos(const meta::RaftNodeInfos &node_infos,
+                           std::string_view graph_name) {
+  if (node_infos.nodes().empty()) {
+    THROW_CODE(InvalidParameter, "raft node infos should not be empty");
+  }
+  for (const auto &[node_id, node_info] : node_infos.nodes()) {
+    if (node_id == 0) {
+      THROW_CODE(InvalidParameter, "raft node_id should be greater than 0");
+    }
+    if (node_info.node_id() != node_id) {
+      THROW_CODE(InvalidParameter,
+                 "raft node info key [{}] does not match node_id [{}]", node_id,
+                 node_info.node_id());
+    }
+    if (node_info.ip().empty()) {
+      THROW_CODE(InvalidParameter, "raft node [{}] ip should not be empty",
+                 node_id);
+    }
+    if (node_info.bolt_port() <= 0) {
+      THROW_CODE(InvalidParameter,
+                 "raft node [{}] bolt_port should be greater than 0", node_id);
+    }
+    if (node_info.raft_poft() <= 0) {
+      THROW_CODE(InvalidParameter,
+                 "raft node [{}] raft_port should be greater than 0", node_id);
+    }
+    if (node_info.graph().empty()) {
+      THROW_CODE(InvalidParameter, "raft node [{}] graph should not be empty",
+                 node_id);
+    }
+    if (!graph_name.empty() && node_info.graph() != graph_name) {
+      THROW_CODE(InvalidParameter,
+                 "raft node [{}] graph [{}] does not match graph [{}]", node_id,
+                 node_info.graph(), graph_name);
+    }
+  }
+}
+
+}  // namespace
+
 std::unique_ptr<server::Galaxy> g_galaxy;
 Galaxy::~Galaxy() {
   graphs_.clear();
@@ -94,6 +137,36 @@ std::unique_ptr<Galaxy> Galaxy::Open(const std::string &path,
          .ft_writer_memory_budget_ = galaxy->options_.ft_writer_memory_budget,
          .vt_apply_interval_ = galaxy->options_.vt_apply_interval});
     graph_db->db_meta() = meta;
+    if (meta.enable_raft()) {
+      raft::LocalNodeConfig local_node;
+      local_node.graph = meta.graph_name();
+      local_node.ip = FLAGS_host;
+      local_node.bolt_port = static_cast<int32_t>(FLAGS_bolt_port);
+      local_node.raft_poft = static_cast<int32_t>(FLAGS_raft_port);
+
+      raft::RaftLogStoreConfig store_config;
+      store_config.path = graph_path + "/raft";
+      store_config.block_cache = 64;
+      store_config.total_threads = 2;
+      store_config.keep_logs = 100000;
+      store_config.gc_interval = 1;
+
+      raft::RaftConfig raft_config;
+      raft_config.tick_interval = 100;
+      raft_config.election_tick = 10;
+      raft_config.heartbeat_tick = 1;
+
+      auto raft_driver = std::make_unique<raft::RaftDriver>(
+          [](uint64_t, const meta::RaftRequest &) {}, 0, std::move(local_node),
+          store_config, raft_config);
+      auto err = raft_driver->Run();
+      if (err != nullptr) {
+        THROW_CODE(StorageEngineError,
+                   "failed to run raft driver for graph [{}]: {}",
+                   meta.graph_name(), err.String());
+      }
+      graph_db->SetRaftDriver(std::move(raft_driver));
+    }
     galaxy->graphs_.emplace(meta.graph_name(), std::move(graph_db));
   }
   if (galaxy->graphs_.empty()) {
@@ -113,6 +186,16 @@ std::shared_ptr<GraphDB> Galaxy::OpenGraph(const std::string &name) {
 }
 
 GraphDB *Galaxy::CreateGraph(const std::string &name) {
+  return CreateGraphInternal(name, nullptr);
+}
+
+GraphDB *Galaxy::CreateGraphWithRaft(const std::string &name,
+                                     const meta::RaftNodeInfos &node_infos) {
+  return CreateGraphInternal(name, &node_infos);
+}
+
+GraphDB *Galaxy::CreateGraphInternal(const std::string &name,
+                                     const meta::RaftNodeInfos *node_infos) {
   std::unique_lock<std::shared_mutex> write_lock(graphs_mutex_);
   auto iter = graphs_.find(name);
   if (iter != graphs_.end()) {
@@ -123,6 +206,7 @@ GraphDB *Galaxy::CreateGraph(const std::string &name) {
   uint64_t next = graph_id + 1;
   meta.set_graph_id(graph_id);
   meta.set_graph_name(name);
+  meta.set_enable_raft(node_infos != nullptr);
   std::string graph_path = path_ + "/graph" + std::to_string(meta.graph_id());
   auto graph_db = GraphDB::Open(
       graph_path, {.block_cache = block_cache_,
@@ -131,6 +215,47 @@ GraphDB *Galaxy::CreateGraph(const std::string &name) {
                    .ft_writer_threads_ = options_.ft_writer_threads,
                    .ft_writer_memory_budget_ = options_.ft_writer_memory_budget,
                    .vt_apply_interval_ = options_.vt_apply_interval});
+  graph_db->db_meta() = meta;
+  if (node_infos) {
+    ValidateRaftNodeInfos(*node_infos, name);
+    raft::LocalNodeConfig local_node;
+    local_node.graph = name;
+    local_node.ip = FLAGS_host;
+    local_node.bolt_port = static_cast<int32_t>(FLAGS_bolt_port);
+    local_node.raft_poft = static_cast<int32_t>(FLAGS_raft_port);
+
+    raft::RaftLogStoreConfig store_config;
+    store_config.path = graph_path + "/raft";
+    store_config.block_cache = 64;
+    store_config.total_threads = 2;
+    store_config.keep_logs = 100000;
+    store_config.gc_interval = 1;
+
+    raft::RaftConfig raft_config;
+    raft_config.tick_interval = 100;
+    raft_config.election_tick = 10;
+    raft_config.heartbeat_tick = 1;
+
+    std::vector<eraft::Peer> init_peers;
+    init_peers.reserve(node_infos->nodes_size());
+    for (const auto &[node_id, node_info] : node_infos->nodes()) {
+      eraft::Peer peer;
+      peer.id_ = node_id;
+      peer.context_ = node_info.SerializeAsString();
+      init_peers.emplace_back(std::move(peer));
+    }
+
+    auto raft_driver = std::make_unique<raft::RaftDriver>(
+        [](uint64_t, const meta::RaftRequest &) {}, 0, std::move(local_node),
+        std::move(init_peers), store_config, raft_config);
+    auto err = raft_driver->Run();
+    if (err != nullptr) {
+      THROW_CODE(StorageEngineError,
+                 "failed to run raft driver for graph [{}]: {}", name,
+                 err.String());
+    }
+    graph_db->SetRaftDriver(std::move(raft_driver));
+  }
   rocksdb::WriteOptions wo;
   rocksdb::WriteBatch wb;
   std::string key;
@@ -144,7 +269,6 @@ GraphDB *Galaxy::CreateGraph(const std::string &name) {
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   next_graph_id_ = next;
   LOG_INFO("Create graph:{}, path:{}", name, graph_path);
-  graph_db->db_meta() = meta;
   graphs_.emplace(meta.graph_name(), std::move(graph_db));
   return graphs_[name].get();
 }

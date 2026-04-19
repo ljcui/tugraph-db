@@ -47,6 +47,7 @@ DEFINE_uint32(log_flush_interval, 3,
 
 DEFINE_string(host, "0.0.0.0", "Host ip");
 DEFINE_uint32(bolt_port, 7687, "Bolt port");
+DEFINE_uint32(raft_port, 7688, "Raft port");
 DEFINE_uint32(bolt_io_thread_num, 2, "Number of Bolt io thread");
 
 DEFINE_uint64(block_cache, (uint64_t)8 * 1024 * 1024 * 1024,

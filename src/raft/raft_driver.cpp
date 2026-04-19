@@ -31,6 +31,75 @@ using boost::asio::ip::tcp;
 using namespace std::chrono;
 
 namespace raft {
+namespace {
+std::string LocalNodeIdentityString(const LocalNodeConfig& local_node) {
+  return fmt::format("graph={}, ip={}, bolt_port={}, raft_poft={}",
+                     local_node.graph, local_node.ip, local_node.bolt_port,
+                     local_node.raft_poft);
+}
+
+bool MatchLocalNode(const LocalNodeConfig& local_node,
+                    const meta::RaftNodeInfo& node_info) {
+  return node_info.graph() == local_node.graph &&
+         node_info.ip() == local_node.ip &&
+         node_info.bolt_port() == local_node.bolt_port &&
+         node_info.raft_poft() == local_node.raft_poft;
+}
+
+eraft::Error InferNodeIdFromNodeInfos(const LocalNodeConfig& local_node,
+                                      const meta::RaftNodeInfos& node_infos,
+                                      uint64_t* node_id) {
+  std::optional<uint64_t> matched;
+  for (const auto& [id, node_info] : node_infos.nodes()) {
+    if (!MatchLocalNode(local_node, node_info)) {
+      continue;
+    }
+    if (matched.has_value()) {
+      return eraft::Error(
+          fmt::format("multiple raft nodes match local identity [{}]",
+                      LocalNodeIdentityString(local_node)));
+    }
+    matched = id;
+  }
+  if (!matched.has_value()) {
+    return eraft::Error(
+        fmt::format("no raft node matches local identity [{}] in node infos",
+                    LocalNodeIdentityString(local_node)));
+  }
+  *node_id = matched.value();
+  return nullptr;
+}
+
+eraft::Error InferNodeIdFromInitPeers(const LocalNodeConfig& local_node,
+                                      const std::vector<eraft::Peer>& peers,
+                                      uint64_t* node_id) {
+  std::optional<uint64_t> matched;
+  for (const auto& peer : peers) {
+    meta::RaftNodeInfo node_info;
+    if (!node_info.ParseFromString(peer.context_)) {
+      return eraft::Error(fmt::format(
+          "failed to parse initial peer context for peer {}", peer.id_));
+    }
+    if (!MatchLocalNode(local_node, node_info)) {
+      continue;
+    }
+    if (matched.has_value()) {
+      return eraft::Error(
+          fmt::format("multiple initial peers match local identity [{}]",
+                      LocalNodeIdentityString(local_node)));
+    }
+    matched = peer.id_;
+  }
+  if (!matched.has_value()) {
+    return eraft::Error(
+        fmt::format("no initial peer matches local identity [{}]",
+                    LocalNodeIdentityString(local_node)));
+  }
+  *node_id = matched.value();
+  return nullptr;
+}
+}  // namespace
+
 void NodeClient::reconnect() {
   if (has_closed_) {
     return;
@@ -233,25 +302,62 @@ bool RaftLogStoreConfig::Check() {
   return true;
 }
 
+bool LocalNodeConfig::Check() {
+  if (graph.empty()) {
+    LOG_WARN("local node graph is empty.");
+    return false;
+  }
+  if (ip.empty()) {
+    LOG_WARN("local node ip is empty.");
+    return false;
+  }
+  if (bolt_port < 1) {
+    LOG_WARN("local node bolt_port should be greater than 0");
+    return false;
+  }
+  if (raft_poft < 1) {
+    LOG_WARN("local node raft_poft should be greater than 0");
+    return false;
+  }
+  return true;
+}
+
 RaftDriver::RaftDriver(
     std::function<void(uint64_t index, const meta::RaftRequest&)> apply,
-    uint64_t apply_id, int64_t node_id, std::vector<eraft::Peer> init_peers,
+    uint64_t apply_id, LocalNodeConfig local_node,
     const RaftLogStoreConfig& store_config, const RaftConfig& config)
     : apply_(std::move(apply)),
       apply_id_(apply_id),
-      node_id_(node_id),
+      local_node_(std::move(local_node)),
+      node_id_(0),
+      tick_interval_(config.tick_interval),
+      tick_timer_(timer_service_, tick_interval_),
+      compact_interval_(store_config.gc_interval * 60 * 1000),
+      compact_timer_(timer_service_, compact_interval_),
+      store_config_(store_config),
+      raft_config_(config) {}
+
+RaftDriver::RaftDriver(
+    std::function<void(uint64_t index, const meta::RaftRequest&)> apply,
+    uint64_t apply_id, LocalNodeConfig local_node,
+    std::vector<eraft::Peer> init_peers, const RaftLogStoreConfig& store_config,
+    const RaftConfig& config)
+    : apply_(std::move(apply)),
+      apply_id_(apply_id),
+      local_node_(std::move(local_node)),
+      node_id_(0),
       init_peers_(std::move(init_peers)),
       tick_interval_(config.tick_interval),
       tick_timer_(timer_service_, tick_interval_),
       compact_interval_(store_config.gc_interval * 60 * 1000),
       compact_timer_(timer_service_, compact_interval_),
-      id_generator_(node_id, duration_cast<milliseconds>(
-                                 steady_clock::now().time_since_epoch())
-                                 .count()),
       store_config_(store_config),
       raft_config_(config) {}
 
 eraft::Error RaftDriver::Run() {
+  if (!local_node_.Check()) {
+    return eraft::Error("invalid local node config");
+  }
   rocksdb::Options options;
   options.create_if_missing = true;
   options.create_missing_column_families = true;
@@ -287,12 +393,37 @@ eraft::Error RaftDriver::Run() {
   }
   for (auto& [id, node] : node_infos_.nodes()) {
     auto client = std::make_shared<NodeClient>(client_service_, node.ip(),
-                                               node.bolt_raft_port());
+                                               node.raft_poft());
     client->Connect();
     node_clients_.emplace(node.node_id(), std::move(client));
   }
   LOG_INFO("raft nodes info: {}", node_infos_.ShortDebugString());
   bool exist = storage_->Init();
+  eraft::Error err;
+  if (!node_infos_.nodes().empty()) {
+    err = InferNodeIdFromNodeInfos(local_node_, node_infos_, &node_id_);
+    if (err != nullptr) {
+      return err;
+    }
+  } else {
+    if (init_peers_.empty()) {
+      if (exist) {
+        return eraft::Error(
+            fmt::format("failed to infer local node id from empty node infos "
+                        "for [{}]",
+                        LocalNodeIdentityString(local_node_)));
+      }
+      return eraft::Error(
+          "initial peers are required for first raft bootstrap");
+    }
+    err = InferNodeIdFromInitPeers(local_node_, init_peers_, &node_id_);
+    if (err != nullptr) {
+      return err;
+    }
+  }
+  id_generator_.Reset(node_id_, duration_cast<milliseconds>(
+                                    steady_clock::now().time_since_epoch())
+                                    .count());
   eraft::Config config;
   config.id_ = node_id_;
   config.applied_ = applied;
@@ -305,18 +436,11 @@ eraft::Error RaftDriver::Run() {
   config.stepDownOnRemoval_ = true;
   config.preVote_ = true;
   config.checkQuorum_ = true;
-  eraft::Error err;
   std::tie(rn_, err) = eraft::NewRawNode(config);
   if (err != nullptr) {
     return err;
   }
   if (!exist) {
-    auto iter =
-        std::find_if(init_peers_.begin(), init_peers_.end(),
-                     [this](auto& peer) { return peer.id_ == node_id_; });
-    if (iter == init_peers_.end()) {
-      return eraft::Error(fmt::format("no id {} in initial peers", node_id_));
-    }
     err = rn_->Bootstrap(init_peers_);
     if (err != nullptr) {
       return err;
@@ -357,7 +481,9 @@ void RaftDriver::Stop() {
     t.join();
   }
   threads_.clear();
-  storage_->Close();
+  if (storage_) {
+    storage_->Close();
+  }
   LOG_INFO("bolt raft driver stopped");
 }
 
@@ -433,7 +559,7 @@ std::shared_ptr<PromiseContext> RaftDriver::ProposeRaftRequest(
   return Propose(request.id(), std::move(msg));
 }
 
-meta::NodeInfos RaftDriver::GetNodeInfosWithLeader() {
+meta::RaftNodeInfos RaftDriver::GetNodeInfosWithLeader() {
   std::promise<uint64_t> promise;
   auto future = promise.get_future();
   raft_service_.post(
@@ -441,7 +567,7 @@ meta::NodeInfos RaftDriver::GetNodeInfosWithLeader() {
   auto leader = future.get();
 
   std::shared_lock<std::shared_mutex> lock(nodes_mutex_);
-  meta::NodeInfos ret = node_infos_;
+  meta::RaftNodeInfos ret = node_infos_;
   if (ret.nodes().count(leader)) {
     ret.mutable_nodes()->at(leader).set_is_leader(true);
   }
@@ -586,7 +712,7 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
           LOG_FATAL("failed to parse ConfChange data");
         }
         auto confstate = rn_->ApplyConfChange(raftpb::ConfChangeWrap(cc));
-        meta::NodeInfo node_info;
+        meta::RaftNodeInfo node_info;
         node_info.ParseFromString(cc.context());
         switch (cc.type()) {
           case raftpb::ConfChangeType::ConfChangeAddLearnerNode:
@@ -601,7 +727,7 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
               node_infos_.mutable_nodes()->insert(
                   {node_info.node_id(), node_info});
               auto client = std::make_shared<NodeClient>(
-                  client_service_, node_info.ip(), node_info.bolt_raft_port());
+                  client_service_, node_info.ip(), node_info.raft_poft());
               client->Connect();
               node_clients_.emplace(node_info.node_id(), std::move(client));
             } else {

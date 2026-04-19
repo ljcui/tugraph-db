@@ -21,6 +21,8 @@
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 
+#include <limits>
+
 #include "common/flags.h"
 #include "common/logger.h"
 
@@ -141,6 +143,12 @@ std::vector<Procedure> global_procedures = {
         Procedure::SIG_SPEC{{"graph_name", {0, ProcedureResultType::Value}}},
         Procedure::SIG_SPEC{}),
     Procedure(
+        "dbms.graph.createGraphWithRaft",
+        BuiltinProcedure::DbmsGraphCreateGraphWithRaft,
+        Procedure::SIG_SPEC{{"graph_name", {0, ProcedureResultType::Value}},
+                            {"members", {1, ProcedureResultType::Value}}},
+        Procedure::SIG_SPEC{}),
+    Procedure(
         "dbms.graph.deleteGraph", BuiltinProcedure::DbmsGraphDeleteGraph,
         Procedure::SIG_SPEC{{"graph_name", {0, ProcedureResultType::Value}}},
         Procedure::SIG_SPEC{}),
@@ -178,6 +186,103 @@ std::vector<std::string> ParseStringArrayArgument(const Value &value,
     values.push_back(item.AsString());
   }
   return values;
+}
+
+const Value &GetRequiredMapField(
+    const std::unordered_map<std::string, Value> &map, const std::string &key,
+    const std::string &field_name) {
+  auto iter = map.find(key);
+  CYPHER_ARG_CHECK(iter != map.end(), fmt::format("{} is required", field_name))
+  return iter->second;
+}
+
+std::string ParseRequiredStringField(
+    const std::unordered_map<std::string, Value> &map, const std::string &key,
+    const std::string &field_name) {
+  const auto &value = GetRequiredMapField(map, key, field_name);
+  CYPHER_ARG_CHECK(value.IsString(),
+                   fmt::format("{} type should be String", field_name))
+  return value.AsString();
+}
+
+int32_t ParseRequiredPositiveInt32Field(
+    const std::unordered_map<std::string, Value> &map, const std::string &key,
+    const std::string &field_name) {
+  const auto &value = GetRequiredMapField(map, key, field_name);
+  CYPHER_ARG_CHECK(value.IsInteger(),
+                   fmt::format("{} type should be Integer", field_name))
+  auto integer = value.AsInteger();
+  CYPHER_ARG_CHECK(
+      integer > 0 && integer <= std::numeric_limits<int32_t>::max(),
+      fmt::format("{} should be in range [1, {}]", field_name,
+                  std::numeric_limits<int32_t>::max()))
+  return static_cast<int32_t>(integer);
+}
+
+uint64_t ParseRequiredPositiveUInt64Field(
+    const std::unordered_map<std::string, Value> &map, const std::string &key,
+    const std::string &field_name) {
+  const auto &value = GetRequiredMapField(map, key, field_name);
+  CYPHER_ARG_CHECK(value.IsInteger(),
+                   fmt::format("{} type should be Integer", field_name))
+  auto integer = value.AsInteger();
+  CYPHER_ARG_CHECK(integer > 0,
+                   fmt::format("{} should be greater than 0", field_name))
+  return static_cast<uint64_t>(integer);
+}
+
+bool ParseOptionalBoolField(const std::unordered_map<std::string, Value> &map,
+                            const std::string &key,
+                            const std::string &field_name, bool default_value) {
+  auto iter = map.find(key);
+  if (iter == map.end()) {
+    return default_value;
+  }
+  CYPHER_ARG_CHECK(iter->second.IsBool(),
+                   fmt::format("{} type should be Bool", field_name))
+  return iter->second.AsBool();
+}
+
+meta::RaftNodeInfos ParseRaftMembersArgument(const Value &value,
+                                             const std::string &graph_name) {
+  CYPHER_ARG_CHECK(value.IsArray(), "members type should be Array")
+  const auto &members = value.AsArray();
+  CYPHER_ARG_CHECK(!members.empty(), "members should not be empty")
+
+  meta::RaftNodeInfos node_infos;
+  for (size_t i = 0; i < members.size(); ++i) {
+    const auto &member = members[i];
+    std::string member_name = fmt::format("members[{}]", i);
+    CYPHER_ARG_CHECK(member.IsMap(),
+                     fmt::format("{} type should be Map", member_name))
+    const auto &member_map = member.AsMap();
+    auto node_id = ParseRequiredPositiveUInt64Field(member_map, "node_id",
+                                                    member_name + ".node_id");
+    CYPHER_ARG_CHECK(
+        node_infos.nodes().find(node_id) == node_infos.nodes().end(),
+        fmt::format("duplicate raft node_id {}", node_id))
+    auto ip = ParseRequiredStringField(member_map, "ip", member_name + ".ip");
+    auto bolt_port = ParseRequiredPositiveInt32Field(
+        member_map, "bolt_port", member_name + ".bolt_port");
+    auto raft_port = ParseRequiredPositiveInt32Field(
+        member_map, "raft_port", member_name + ".raft_port");
+    auto member_graph =
+        ParseRequiredStringField(member_map, "graph", member_name + ".graph");
+    CYPHER_ARG_CHECK(member_graph == graph_name,
+                     fmt::format("{}.graph should be equal to graph_name [{}]",
+                                 member_name, graph_name))
+
+    meta::RaftNodeInfo node_info;
+    node_info.set_node_id(node_id);
+    node_info.set_ip(ip);
+    node_info.set_bolt_port(bolt_port);
+    node_info.set_raft_poft(raft_port);
+    node_info.set_is_learner(ParseOptionalBoolField(
+        member_map, "is_learner", member_name + ".is_learner", false));
+    node_info.set_graph(member_graph);
+    (*node_infos.mutable_nodes())[node_id] = std::move(node_info);
+  }
+  return node_infos;
 }
 
 }  // namespace
@@ -755,6 +860,27 @@ void BuiltinProcedure::DbmsGraphCreateGraph(
   auto name = args[0].constant.AsString();
   LOG_INFO("Create graph {}", name);
   server::g_galaxy->CreateGraph(name);
+}
+
+void BuiltinProcedure::DbmsGraphCreateGraphWithRaft(
+    RTContext *ctx, const Record *record, const VEC_EXPR &args,
+    const VEC_STR &yield_items,
+    std::vector<std::vector<ProcedureResult>> *records) {
+  CYPHER_ARG_CHECK(
+      args.size() == 2,
+      fmt::format(
+          "Function requires 2 arguments, but {} are given. Usage: "
+          "dbms.graph.createGraphWithRaft("
+          "'graph1', "
+          "[{{node_id: 1, ip: '127.0.0.1', bolt_port: 7687, raft_port: 7688, "
+          "graph: 'graph1'}}])",
+          args.size()))
+  CYPHER_ARG_CHECK(args[0].IsString(), "graph_name type should be String")
+  auto name = args[0].constant.AsString();
+  auto node_infos = ParseRaftMembersArgument(args[1].constant, name);
+  LOG_INFO("Create graph with raft {}, members:{}", name,
+           node_infos.ShortDebugString());
+  server::g_galaxy->CreateGraphWithRaft(name, node_infos);
 }
 
 void BuiltinProcedure::DbmsGraphDeleteGraph(

@@ -65,9 +65,10 @@ struct Generator {
   static const int cntLen = 8;
   static const int suffixLen = tsLen + cntLen;
 
-  Generator(uint64_t id, uint64_t time) {
+  Generator() = default;
+  void Reset(uint64_t id, uint64_t time) {
     prefix = id << suffixLen;
-    suffix = lowbit(time, tsLen) << cntLen;
+    suffix.store(lowbit(time, tsLen) << cntLen);
   }
   uint64_t prefix = 0;
   std::atomic<uint64_t> suffix{0};
@@ -110,18 +111,31 @@ struct RaftLogStoreConfig {
   bool Check();
 };
 
+struct LocalNodeConfig {
+  std::string graph;
+  std::string ip;
+  int32_t bolt_port = 0;
+  int32_t raft_poft = 0;
+  bool Check();
+};
+
 class RaftDriver {
  public:
   RaftDriver(
       std::function<void(uint64_t index, const meta::RaftRequest&)> apply,
-      uint64_t apply_id, int64_t node_id, std::vector<eraft::Peer> init_peers,
+      uint64_t apply_id, LocalNodeConfig local_node,
+      const RaftLogStoreConfig& store_config, const RaftConfig& config);
+  RaftDriver(
+      std::function<void(uint64_t index, const meta::RaftRequest&)> apply,
+      uint64_t apply_id, LocalNodeConfig local_node,
+      std::vector<eraft::Peer> init_peers,
       const RaftLogStoreConfig& store_config, const RaftConfig& config);
   eraft::Error Run();
   void Stop();
   void Step(raftpb::Message msg);
   std::shared_ptr<PromiseContext> ProposeRaftRequest(meta::RaftRequest request);
   std::shared_ptr<PromiseContext> ProposeConfChange(raftpb::ConfChange& cc);
-  meta::NodeInfos GetNodeInfosWithLeader();
+  meta::RaftNodeInfos GetNodeInfosWithLeader();
   RaftStatus GetRaftStatus();
 
  private:
@@ -138,6 +152,7 @@ class RaftDriver {
   boost::asio::io_service client_service_;
   std::function<void(uint64_t, const meta::RaftRequest&)> apply_;
   uint64_t apply_id_;
+  LocalNodeConfig local_node_;
   uint64_t node_id_;
   std::vector<eraft::Peer> init_peers_;
   boost::posix_time::millisec tick_interval_;
@@ -147,7 +162,7 @@ class RaftDriver {
   std::shared_ptr<eraft::RawNode> rn_;
   std::shared_ptr<RaftLogStorage> storage_;
   std::shared_mutex nodes_mutex_;
-  meta::NodeInfos node_infos_;
+  meta::RaftNodeInfos node_infos_;
   std::unordered_map<uint64_t, std::shared_ptr<NodeClient>> node_clients_;
   Generator id_generator_;
   std::mutex promise_mutex_;

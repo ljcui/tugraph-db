@@ -133,6 +133,10 @@ class BuiltinProcedure {
       RTContext *ctx, const Record *record, const VEC_EXPR &args,
       const VEC_STR &yield_items,
       std::vector<std::vector<ProcedureResult>> *records);
+  static void DbmsGraphCreateGraphWithRaft(
+      RTContext *ctx, const Record *record, const VEC_EXPR &args,
+      const VEC_STR &yield_items,
+      std::vector<std::vector<ProcedureResult>> *records);
   static void DbmsGraphDeleteGraph(
       RTContext *ctx, const Record *record, const VEC_EXPR &args,
       const VEC_STR &yield_items,

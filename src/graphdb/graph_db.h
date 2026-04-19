@@ -23,6 +23,7 @@
 
 #include <boost/asio.hpp>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 
 #include "common/value.h"
@@ -30,6 +31,7 @@
 #include "id_generator.h"
 #include "meta_info.h"
 #include "proto/meta.pb.h"
+#include "raft/raft_driver.h"
 
 namespace txn {
 class Transaction;
@@ -80,6 +82,8 @@ class GraphDB {
   MetaInfo& meta_info() { return meta_info_; }
   meta::GraphDBMetaInfo& db_meta() { return db_meta_; }
   const std::string& path() { return path_; }
+  raft::RaftDriver* raft_driver() const;
+  void SetRaftDriver(std::unique_ptr<raft::RaftDriver> raft_driver);
   bool& drop_on_close() { return drop_on_close_; }
   std::mutex& property_index_commit_mutex() {
     return property_index_commit_mutex_;
@@ -114,6 +118,8 @@ class GraphDB {
   meta::GraphDBMetaInfo db_meta_;
   std::vector<std::thread> service_threads_;
   GraphDBOptions options_;
+  mutable std::shared_mutex raft_mutex_;
+  std::unique_ptr<raft::RaftDriver> raft_driver_;
   bool drop_on_close_ = false;
   std::mutex clear_data_mutex_;
   std::mutex index_ddl_mutex_;
