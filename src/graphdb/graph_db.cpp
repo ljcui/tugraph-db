@@ -267,14 +267,6 @@ std::unique_ptr<GraphDB> GraphDB::Open(const std::string& path,
   graph_db->graph_cf_.index = cf_handles[7];
   graph_db->graph_cf_.wal = cf_handles[8];
   graph_db->cf_handles_ = std::move(cf_handles);
-  graph_db->cf_handles_by_name_.reserve(
-      graph_db->cf_handles_.size());
-  for (auto* handle : graph_db->cf_handles_) {
-    if (handle) {
-      graph_db->cf_handles_by_name_.emplace(handle->GetName(),
-                                                       handle);
-    }
-  }
   graph_db->options_ = graph_options;
   auto* self = graph_db.get();
   graph_db->service_threads_.emplace_back([self]() {
@@ -345,17 +337,6 @@ raft::RaftDriver* GraphDB::raft_driver() const {
 void GraphDB::SetRaftDriver(std::unique_ptr<raft::RaftDriver> raft_driver) {
   std::unique_lock<std::shared_mutex> lock(raft_mutex_);
   raft_driver_ = std::move(raft_driver);
-}
-
-rocksdb::ColumnFamilyHandle* GraphDB::GetCFHandle(
-    const std::string& column_family) const {
-  auto iter = cf_handles_by_name_.find(column_family);
-  if (iter != cf_handles_by_name_.end()) {
-    return iter->second;
-  }
-  THROW_CODE(StorageEngineError, "unknown column family [{}] for graph [{}]",
-             column_family, db_meta_.graph_name());
-  return nullptr;
 }
 
 uint64_t GraphDB::GetRaftApplyIndex() const {

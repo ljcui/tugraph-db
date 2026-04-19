@@ -13,11 +13,13 @@
  */
 
 #include <gtest/gtest.h>
+#include <rocksdb/write_batch.h>
 
 #include <filesystem>
 
 #include "common/value.h"
 #include "graphdb/graph_db.h"
+#include "proto/meta.pb.h"
 #include "test_util.h"
 #include "transaction/transaction.h"
 using namespace graphdb;
@@ -32,6 +34,19 @@ static std::unordered_map<std::string, Value> properties = {
     {"property6", Value::IntegerArray({1, 2, 3})},
     {"property7", Value::StringArray({"string1", "string2"})},
     {"property8", Value::DoubleArray({11.11, 22.22})}};
+
+TEST(Transaction, raftRequestCarriesWbData) {
+  rocksdb::WriteBatch wb;
+  ASSERT_TRUE(wb.Put("vertex", "alice").ok());
+  ASSERT_TRUE(wb.Delete("stale").ok());
+
+  meta::RaftRequest request;
+  request.set_wb_data(wb.Data());
+
+  rocksdb::WriteBatch restored(request.wb_data());
+  EXPECT_EQ(restored.Data(), wb.Data());
+  EXPECT_EQ(restored.Count(), wb.Count());
+}
 
 TEST(Transaction, commitAndRollback) {
   fs::remove_all(testdb);

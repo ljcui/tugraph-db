@@ -69,40 +69,7 @@ void ValidateRaftNodeInfos(const meta::RaftNodeInfos &node_infos,
 
 void ApplyRaftRequest(GraphDB *graph_db, uint64_t index,
                       const meta::RaftRequest &request) {
-  rocksdb::WriteBatch wb;
-  if (request.has_kv_batch()) {
-    for (const auto &cf_batch : request.kv_batch().cf_batches()) {
-      auto *cf = graph_db->ResolveColumnFHandle(cf_batch.cf());
-      for (const auto &operation : cf_batch.operations()) {
-        rocksdb::Status s;
-        switch (operation.type()) {
-          case meta::PUT:
-            s = wb.Put(cf, operation.key(), operation.value());
-            break;
-          case meta::DELETE:
-            s = wb.Delete(cf, operation.key());
-            break;
-          case meta::SINGLE_DELETE:
-            s = wb.SingleDelete(cf, operation.key());
-            break;
-          case meta::DELETE_RANGE:
-            s = wb.DeleteRange(cf, operation.key(), operation.end_key());
-            break;
-          default:
-            THROW_CODE(StorageEngineError,
-                       "unknown raft apply operation type [{}] at index {}",
-                       static_cast<int>(operation.type()), index);
-        }
-        if (!s.ok()) {
-          THROW_CODE(StorageEngineError,
-                     "failed to append raft apply operation to batch, graph "
-                     "[{}], index {}, cf [{}], error: {}",
-                     graph_db->db_meta().graph_name(), index, cf_batch.cf(),
-                     s.ToString());
-        }
-      }
-    }
-  }
+  rocksdb::WriteBatch wb(request.wb_data());
 
   auto s = graph_db->SetRaftApplyIndex(index, &wb);
   if (!s.ok()) {
