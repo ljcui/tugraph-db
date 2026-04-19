@@ -25,6 +25,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include <unordered_map>
 
 #include "common/value.h"
 #include "graph_cf.h"
@@ -84,6 +85,11 @@ class GraphDB {
   const std::string& path() { return path_; }
   raft::RaftDriver* raft_driver() const;
   void SetRaftDriver(std::unique_ptr<raft::RaftDriver> raft_driver);
+  rocksdb::ColumnFamilyHandle* GetCFHandle(
+      const std::string& column_family) const;
+  uint64_t GetRaftApplyIndex() const;
+  rocksdb::Status SetRaftApplyIndex(uint64_t apply_index,
+                                    rocksdb::WriteBatch* wb) const;
   bool& drop_on_close() { return drop_on_close_; }
   std::mutex& property_index_commit_mutex() {
     return property_index_commit_mutex_;
@@ -112,6 +118,8 @@ class GraphDB {
   std::string path_;
   rocksdb::TransactionDB* db_ = nullptr;
   std::vector<rocksdb::ColumnFamilyHandle*> cf_handles_;
+  std::unordered_map<std::string, rocksdb::ColumnFamilyHandle*>
+      cf_handles_by_name_;
   boost::asio::io_service assistant_;
   GraphCF graph_cf_;
   MetaInfo meta_info_;

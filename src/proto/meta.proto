@@ -110,10 +110,32 @@ message PropertyIndexUpdate {
     repeated bytes values   = 3;
 }
 
+enum WriteOperationType {
+    PUT = 0;
+    DELETE = 1;
+    SINGLE_DELETE = 2;
+    DELETE_RANGE = 3;
+}
+
+message WriteOperation {
+    WriteOperationType type = 1;
+    bytes key = 2;
+    bytes value = 3;
+    bytes end_key = 4;
+}
+
+message CFWriteBatch {
+    string cf = 1;
+    repeated WriteOperation operations = 2;
+}
+
+message WriteBatch {
+    repeated CFWriteBatch cf_batches = 1;
+}
+
 message RaftRequest {
-    uint64 id      = 1;
-    string user    = 2;
-    bytes raw_data = 3;
+    uint64 id = 1;
+    WriteBatch kv_batch = 3;
 }
 
 message RaftNodeInfo {

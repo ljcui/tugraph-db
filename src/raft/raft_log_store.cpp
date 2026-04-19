@@ -18,6 +18,7 @@
 
 #include <boost/endian/conversion.hpp>
 
+#include "common/byte_utils.h"
 #include "common/logger.h"
 
 namespace raft {
@@ -187,8 +188,8 @@ std::optional<std::string> RaftLogStorage::GetNodeInfos() {
 
 eraft::Error RaftLogStorage::SetApplyIndex(uint64_t apply_index,
                                            rocksdb::WriteBatch &batch) {
-  std::string val;
-  batch.Put(meta_cf_, raft_applyindex_key, std::to_string(apply_index));
+  batch.Put(meta_cf_, raft_applyindex_key,
+            rocksdb::Slice(common::AsChars(apply_index), sizeof(apply_index)));
   return nullptr;
 }
 
@@ -198,7 +199,11 @@ uint64_t RaftLogStorage::GetApplyIndex() {
   auto s =
       db_->Get(rocksdb::ReadOptions(), meta_cf_, raft_applyindex_key, &val);
   if (s.ok()) {
-    apply_index = std::stoull(val);
+    if (val.size() != sizeof(apply_index)) {
+      LOG_FATAL("invalid raft apply index size, expect:{}, actual:{}",
+                sizeof(apply_index), val.size());
+    }
+    apply_index = common::ReadValue<uint64_t>(val.data());
   } else if (!s.IsNotFound()) {
     LOG_FATAL("failed to get apply index: {}", s.ToString());
   }

@@ -67,6 +67,66 @@ void ValidateRaftNodeInfos(const meta::RaftNodeInfos &node_infos,
   }
 }
 
+void ApplyRaftRequest(GraphDB *graph_db, uint64_t index,
+                      const meta::RaftRequest &request) {
+  rocksdb::WriteBatch wb;
+  if (request.has_kv_batch()) {
+    for (const auto &cf_batch : request.kv_batch().cf_batches()) {
+      auto *cf = graph_db->ResolveColumnFHandle(cf_batch.cf());
+      for (const auto &operation : cf_batch.operations()) {
+        rocksdb::Status s;
+        switch (operation.type()) {
+          case meta::PUT:
+            s = wb.Put(cf, operation.key(), operation.value());
+            break;
+          case meta::DELETE:
+            s = wb.Delete(cf, operation.key());
+            break;
+          case meta::SINGLE_DELETE:
+            s = wb.SingleDelete(cf, operation.key());
+            break;
+          case meta::DELETE_RANGE:
+            s = wb.DeleteRange(cf, operation.key(), operation.end_key());
+            break;
+          default:
+            THROW_CODE(StorageEngineError,
+                       "unknown raft apply operation type [{}] at index {}",
+                       static_cast<int>(operation.type()), index);
+        }
+        if (!s.ok()) {
+          THROW_CODE(StorageEngineError,
+                     "failed to append raft apply operation to batch, graph "
+                     "[{}], index {}, cf [{}], error: {}",
+                     graph_db->db_meta().graph_name(), index, cf_batch.cf(),
+                     s.ToString());
+        }
+      }
+    }
+  }
+
+  auto s = graph_db->SetRaftApplyIndex(index, &wb);
+  if (!s.ok()) {
+    THROW_CODE(StorageEngineError,
+               "failed to persist raft apply index for graph [{}] at index {}: "
+               "{}",
+               graph_db->db_meta().graph_name(), index, s.ToString());
+  }
+
+  auto *base_db = graph_db->raw_db()->GetBaseDB();
+  if (!base_db) {
+    THROW_CODE(StorageEngineError,
+               "failed to access base rocksdb::DB for graph [{}]",
+               graph_db->db_meta().graph_name());
+  }
+
+  s = base_db->Write({}, &wb);
+  if (!s.ok()) {
+    THROW_CODE(StorageEngineError,
+               "failed to apply raft request for graph [{}] at index {}: {}",
+               graph_db->db_meta().graph_name(), index, s.ToString());
+  }
+}
+
 }  // namespace
 
 std::unique_ptr<server::Galaxy> g_galaxy;
@@ -156,9 +216,13 @@ std::unique_ptr<Galaxy> Galaxy::Open(const std::string &path,
       raft_config.election_tick = 10;
       raft_config.heartbeat_tick = 1;
 
+      auto *graph_db_ptr = graph_db.get();
+      auto apply_id = graph_db->GetRaftApplyIndex();
       auto raft_driver = std::make_unique<raft::RaftDriver>(
-          [](uint64_t, const meta::RaftRequest &) {}, 0, std::move(local_node),
-          store_config, raft_config);
+          [graph_db_ptr](uint64_t index, const meta::RaftRequest &request) {
+            ApplyRaftRequest(graph_db_ptr, index, request);
+          },
+          apply_id, std::move(local_node), store_config, raft_config);
       auto err = raft_driver->Run();
       if (err != nullptr) {
         THROW_CODE(StorageEngineError,
@@ -245,9 +309,14 @@ GraphDB *Galaxy::CreateGraphInternal(const std::string &name,
       init_peers.emplace_back(std::move(peer));
     }
 
+    auto *graph_db_ptr = graph_db.get();
+    auto apply_id = graph_db->GetRaftApplyIndex();
     auto raft_driver = std::make_unique<raft::RaftDriver>(
-        [](uint64_t, const meta::RaftRequest &) {}, 0, std::move(local_node),
-        std::move(init_peers), store_config, raft_config);
+        [graph_db_ptr](uint64_t index, const meta::RaftRequest &request) {
+          ApplyRaftRequest(graph_db_ptr, index, request);
+        },
+        apply_id, std::move(local_node), std::move(init_peers), store_config,
+        raft_config);
     auto err = raft_driver->Run();
     if (err != nullptr) {
       THROW_CODE(StorageEngineError,
