@@ -17,11 +17,13 @@
 #pragma once
 #include <boost/asio.hpp>
 #include <boost/endian/conversion.hpp>
+#include <cstring>
 #include <deque>
 #include <utility>
 
 #include "common/logger.h"
 #include "etcd-raft-cpp/raftpb/raft.pb.h"
+#include "proto/meta.pb.h"
 
 namespace raft {
 
@@ -53,7 +55,7 @@ class RaftConnection : public Connection,
                        public std::enable_shared_from_this<RaftConnection> {
  public:
   RaftConnection(boost::asio::io_service& io_service,
-                 std::function<void(raftpb::Message)> handler)
+                 std::function<void(std::string, raftpb::Message)> handler)
       : Connection(io_service), handler_(std::move(handler)) {}
   void Start() override;
 
@@ -67,7 +69,7 @@ class RaftConnection : public Connection,
 
   uint32_t msg_size_ = 0;
   std::vector<char> msg_body_;
-  std::function<void(raftpb::Message)> handler_;
+  std::function<void(std::string, raftpb::Message)> handler_;
   const uint8_t magic_code_[4] = {0x17, 0xB0, 0x60, 0x60};
   uint8_t buffer4_[4] = {0};
 };
@@ -140,14 +142,24 @@ inline void RaftConnection::read_msg_body_done(
     Close();
     return;
   }
-  raftpb::Message msg;
-  auto ret = msg.ParseFromArray(msg_body_.data(), (int)msg_body_.size());
-  if (!ret) {
-    LOG_WARN("failed to parse raft msg, close connection");
+  meta::RaftMessage envelope;
+  if (!envelope.ParseFromArray(msg_body_.data(),
+                               static_cast<int>(msg_body_.size()))) {
+    LOG_WARN("failed to parse raft message envelope, close connection");
     Close();
     return;
   }
-  handler_(std::move(msg));
+  if (envelope.graph().empty()) {
+    LOG_WARN("receive raft message with empty graph");
+    Close();
+    return;
+  }
+  if (!envelope.has_raft_message()) {
+    LOG_WARN("receive raft message without raft payload");
+    Close();
+    return;
+  }
+  handler_(envelope.graph(), std::move(*envelope.mutable_raft_message()));
   read_msg_size();
 }
 

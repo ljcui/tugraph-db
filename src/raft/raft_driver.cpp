@@ -252,13 +252,18 @@ void NodeClient::Connect() {
   });
 }
 
-std::string MessageToNetString(const google::protobuf::Message& msg) {
-  uint32_t msg_size = msg.ByteSizeLong();
+std::string MessageToNetString(const std::string& graph,
+                               const raftpb::Message& msg) {
+  meta::RaftMessage envelope;
+  envelope.set_graph(graph);
+  envelope.mutable_raft_message()->CopyFrom(msg);
+
+  uint32_t msg_size = envelope.ByteSizeLong();
   std::string str;
   str.reserve(msg_size + sizeof(uint32_t));
   boost::endian::native_to_big_inplace(msg_size);
   str.append(reinterpret_cast<const char*>(&msg_size), sizeof(msg_size));
-  str.append(msg.SerializeAsString());
+  str.append(envelope.SerializeAsString());
   return str;
 }
 
@@ -639,7 +644,7 @@ void RaftDriver::CheckReady() {
       auto iter = node_clients_.find(msg.to());
       if (iter != node_clients_.end()) {
         if (iter->second->connected()) {
-          iter->second->Send(MessageToNetString(msg));
+          iter->second->Send(MessageToNetString(local_node_.graph, msg));
           if (mark_unreachable_.count(msg.to())) {
             mark_unreachable_.erase(msg.to());
           }

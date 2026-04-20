@@ -19,6 +19,7 @@
 #include <sys/resource.h>
 
 #include <cstdint>
+#include <stdexcept>
 #include <tabulate/table.hpp>
 
 #include "bolt/bolt_server.h"
@@ -26,6 +27,7 @@
 #include "common/logger.h"
 #include "common/version.h"
 #include "server/galaxy.h"
+#include "server/raft_server.h"
 #include "service.h"
 
 std::unordered_set<std::string> inner_flags = {"flagfile",
@@ -136,6 +138,7 @@ void ShutDownHandler(int sig) {
   LOG_INFO("Received signal {}, shutdown", strsignal(sig));
   spdlog::default_logger()->flush();
   BoltServer::Instance().Stop();
+  RaftServer::Instance().Stop();
   spdlog::default_logger()->flush();
 }
 void CrashHandler(int sig) {
@@ -192,12 +195,17 @@ class LGraphDaemon : public Service {
            .ft_writer_threads = FLAGS_ft_writer_threads,
            .ft_writer_memory_budget = FLAGS_ft_writer_memory_budget,
            .vt_apply_interval = FLAGS_vt_apply_interval});
+      if (!RaftServer::Instance().Start(g_galaxy.get(), FLAGS_raft_port)) {
+        throw std::runtime_error("failed to start raft server");
+      }
       BoltServer::Instance().Start(FLAGS_bolt_port, FLAGS_bolt_io_thread_num,
                                    g_bolt_handler);
+      RaftServer::Instance().Stop();
       g_galaxy.reset();
       spdlog::shutdown();
       return 0;
     } catch (const std::exception& e) {
+      RaftServer::Instance().Stop();
       LOG_ERROR(e.what());
       return -1;
     }
