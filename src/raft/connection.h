@@ -154,12 +154,12 @@ inline void RaftConnection::read_msg_body_done(
     Close();
     return;
   }
-  if (!envelope.has_raft_message()) {
+  if (!envelope.has_message()) {
     LOG_WARN("receive raft message without raft payload");
     Close();
     return;
   }
-  handler_(envelope.graph(), std::move(*envelope.mutable_raft_message()));
+  handler_(envelope.graph(), std::move(*envelope.mutable_message()));
   read_msg_size();
 }
 

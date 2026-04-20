@@ -1663,24 +1663,24 @@ class RaftMessage : public ::google::protobuf::Message /* @@protoc_insertion_poi
   ::std::string* release_graph();
   void set_allocated_graph(::std::string* graph);
 
-  // .raftpb.Message raft_message = 2;
-  bool has_raft_message() const;
-  void clear_raft_message();
-  static const int kRaftMessageFieldNumber = 2;
+  // .raftpb.Message message = 2;
+  bool has_message() const;
+  void clear_message();
+  static const int kMessageFieldNumber = 2;
   private:
-  const ::raftpb::Message& _internal_raft_message() const;
+  const ::raftpb::Message& _internal_message() const;
   public:
-  const ::raftpb::Message& raft_message() const;
-  ::raftpb::Message* release_raft_message();
-  ::raftpb::Message* mutable_raft_message();
-  void set_allocated_raft_message(::raftpb::Message* raft_message);
+  const ::raftpb::Message& message() const;
+  ::raftpb::Message* release_message();
+  ::raftpb::Message* mutable_message();
+  void set_allocated_message(::raftpb::Message* message);
 
   // @@protoc_insertion_point(class_scope:meta.RaftMessage)
  private:
 
   ::google::protobuf::internal::InternalMetadataWithArena _internal_metadata_;
   ::google::protobuf::internal::ArenaStringPtr graph_;
-  ::raftpb::Message* raft_message_;
+  ::raftpb::Message* message_;
   mutable ::google::protobuf::internal::CachedSize _cached_size_;
   friend struct ::protobuf_meta_2eproto::TableStruct;
 };
@@ -3717,52 +3717,52 @@ inline void RaftMessage::set_allocated_graph(::std::string* graph) {
   // @@protoc_insertion_point(field_set_allocated:meta.RaftMessage.graph)
 }
 
-// .raftpb.Message raft_message = 2;
-inline bool RaftMessage::has_raft_message() const {
-  return this != internal_default_instance() && raft_message_ != NULL;
+// .raftpb.Message message = 2;
+inline bool RaftMessage::has_message() const {
+  return this != internal_default_instance() && message_ != NULL;
 }
-inline const ::raftpb::Message& RaftMessage::_internal_raft_message() const {
-  return *raft_message_;
+inline const ::raftpb::Message& RaftMessage::_internal_message() const {
+  return *message_;
 }
-inline const ::raftpb::Message& RaftMessage::raft_message() const {
-  const ::raftpb::Message* p = raft_message_;
-  // @@protoc_insertion_point(field_get:meta.RaftMessage.raft_message)
+inline const ::raftpb::Message& RaftMessage::message() const {
+  const ::raftpb::Message* p = message_;
+  // @@protoc_insertion_point(field_get:meta.RaftMessage.message)
   return p != NULL ? *p : *reinterpret_cast<const ::raftpb::Message*>(
       &::raftpb::_Message_default_instance_);
 }
-inline ::raftpb::Message* RaftMessage::release_raft_message() {
-  // @@protoc_insertion_point(field_release:meta.RaftMessage.raft_message)
+inline ::raftpb::Message* RaftMessage::release_message() {
+  // @@protoc_insertion_point(field_release:meta.RaftMessage.message)
   
-  ::raftpb::Message* temp = raft_message_;
-  raft_message_ = NULL;
+  ::raftpb::Message* temp = message_;
+  message_ = NULL;
   return temp;
 }
-inline ::raftpb::Message* RaftMessage::mutable_raft_message() {
+inline ::raftpb::Message* RaftMessage::mutable_message() {
   
-  if (raft_message_ == NULL) {
+  if (message_ == NULL) {
     auto* p = CreateMaybeMessage<::raftpb::Message>(GetArenaNoVirtual());
-    raft_message_ = p;
+    message_ = p;
   }
-  // @@protoc_insertion_point(field_mutable:meta.RaftMessage.raft_message)
-  return raft_message_;
+  // @@protoc_insertion_point(field_mutable:meta.RaftMessage.message)
+  return message_;
 }
-inline void RaftMessage::set_allocated_raft_message(::raftpb::Message* raft_message) {
+inline void RaftMessage::set_allocated_message(::raftpb::Message* message) {
   ::google::protobuf::Arena* message_arena = GetArenaNoVirtual();
   if (message_arena == NULL) {
-    delete reinterpret_cast< ::google::protobuf::MessageLite*>(raft_message_);
+    delete reinterpret_cast< ::google::protobuf::MessageLite*>(message_);
   }
-  if (raft_message) {
+  if (message) {
     ::google::protobuf::Arena* submessage_arena = NULL;
     if (message_arena != submessage_arena) {
-      raft_message = ::google::protobuf::internal::GetOwnedMessage(
-          message_arena, raft_message, submessage_arena);
+      message = ::google::protobuf::internal::GetOwnedMessage(
+          message_arena, message, submessage_arena);
     }
     
   } else {
     
   }
-  raft_message_ = raft_message;
-  // @@protoc_insertion_point(field_set_allocated:meta.RaftMessage.raft_message)
+  message_ = message;
+  // @@protoc_insertion_point(field_set_allocated:meta.RaftMessage.message)
 }
 
 // -------------------------------------------------------------------

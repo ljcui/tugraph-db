@@ -377,7 +377,7 @@ const ::google::protobuf::uint32 TableStruct::offsets[] GOOGLE_PROTOBUF_ATTRIBUT
   ~0u,  // no _oneof_case_
   ~0u,  // no _weak_field_map_
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::RaftMessage, graph_),
-  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::RaftMessage, raft_message_),
+  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::RaftMessage, message_),
   ~0u,  // no _has_bits_
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::RaftNodeInfo, _internal_metadata_),
   ~0u,  // no _extensions_
@@ -490,24 +490,24 @@ void AddDescriptorsImpl() {
       "(\003\022\016\n\006vector\030\003 \003(\002\"R\n\023PropertyIndexUpdat"
       "e\022\036\n\004type\030\001 \001(\0162\020.meta.UpdateType\022\013\n\003vid"
       "\030\002 \001(\003\022\016\n\006values\030\003 \003(\014\"*\n\013RaftRequest\022\n\n"
-      "\002id\030\001 \001(\004\022\017\n\007wb_data\030\003 \001(\014\"C\n\013RaftMessag"
-      "e\022\r\n\005graph\030\001 \001(\t\022%\n\014raft_message\030\002 \001(\0132\017"
-      ".raftpb.Message\"\207\001\n\014RaftNodeInfo\022\017\n\007node"
-      "_id\030\001 \001(\004\022\n\n\002ip\030\002 \001(\t\022\021\n\tbolt_port\030\003 \001(\005"
-      "\022\021\n\traft_poft\030\004 \001(\005\022\021\n\tis_leader\030\005 \001(\010\022\022"
-      "\n\nis_learner\030\006 \001(\010\022\r\n\005graph\030\007 \001(\t\"\200\001\n\rRa"
-      "ftNodeInfos\022-\n\005nodes\030\001 \003(\0132\036.meta.RaftNo"
-      "deInfos.NodesEntry\032@\n\nNodesEntry\022\013\n\003key\030"
-      "\001 \001(\004\022!\n\005value\030\002 \001(\0132\022.meta.RaftNodeInfo"
-      ":\0028\001*0\n\022VectorDistanceType\022\006\n\002L2\020\000\022\006\n\002IP"
-      "\020\001\022\n\n\006COSINE\020\002*)\n\017VectorIndexType\022\010\n\004HNS"
-      "W\020\000\022\014\n\010IVF_FLAT\020\001*G\n\017IndexBuildState\022\014\n\010"
-      "BUILDING\020\000\022\017\n\013CATCHING_UP\020\001\022\t\n\005READY\020\002\022\n"
-      "\n\006FAILED\020\003*!\n\nUpdateType\022\007\n\003Add\020\000\022\n\n\006Del"
-      "ete\020\001b\006proto3"
+      "\002id\030\001 \001(\004\022\017\n\007wb_data\030\003 \001(\014\">\n\013RaftMessag"
+      "e\022\r\n\005graph\030\001 \001(\t\022 \n\007message\030\002 \001(\0132\017.raft"
+      "pb.Message\"\207\001\n\014RaftNodeInfo\022\017\n\007node_id\030\001"
+      " \001(\004\022\n\n\002ip\030\002 \001(\t\022\021\n\tbolt_port\030\003 \001(\005\022\021\n\tr"
+      "aft_poft\030\004 \001(\005\022\021\n\tis_leader\030\005 \001(\010\022\022\n\nis_"
+      "learner\030\006 \001(\010\022\r\n\005graph\030\007 \001(\t\"\200\001\n\rRaftNod"
+      "eInfos\022-\n\005nodes\030\001 \003(\0132\036.meta.RaftNodeInf"
+      "os.NodesEntry\032@\n\nNodesEntry\022\013\n\003key\030\001 \001(\004"
+      "\022!\n\005value\030\002 \001(\0132\022.meta.RaftNodeInfo:\0028\001*"
+      "0\n\022VectorDistanceType\022\006\n\002L2\020\000\022\006\n\002IP\020\001\022\n\n"
+      "\006COSINE\020\002*)\n\017VectorIndexType\022\010\n\004HNSW\020\000\022\014"
+      "\n\010IVF_FLAT\020\001*G\n\017IndexBuildState\022\014\n\010BUILD"
+      "ING\020\000\022\017\n\013CATCHING_UP\020\001\022\t\n\005READY\020\002\022\n\n\006FAI"
+      "LED\020\003*!\n\nUpdateType\022\007\n\003Add\020\000\022\n\n\006Delete\020\001"
+      "b\006proto3"
   };
   ::google::protobuf::DescriptorPool::InternalAddGeneratedFile(
-      descriptor, 1893);
+      descriptor, 1888);
   ::google::protobuf::MessageFactory::InternalRegisterGeneratedFile(
     "meta.proto", &protobuf_RegisterTypes);
   ::protobuf_raft_2eproto::AddDescriptors();
@@ -4501,18 +4501,18 @@ void RaftRequest::InternalSwap(RaftRequest* other) {
 // ===================================================================
 
 void RaftMessage::InitAsDefaultInstance() {
-  ::meta::_RaftMessage_default_instance_._instance.get_mutable()->raft_message_ = const_cast< ::raftpb::Message*>(
+  ::meta::_RaftMessage_default_instance_._instance.get_mutable()->message_ = const_cast< ::raftpb::Message*>(
       ::raftpb::Message::internal_default_instance());
 }
-void RaftMessage::clear_raft_message() {
-  if (GetArenaNoVirtual() == NULL && raft_message_ != NULL) {
-    delete raft_message_;
+void RaftMessage::clear_message() {
+  if (GetArenaNoVirtual() == NULL && message_ != NULL) {
+    delete message_;
   }
-  raft_message_ = NULL;
+  message_ = NULL;
 }
 #if !defined(_MSC_VER) || _MSC_VER >= 1900
 const int RaftMessage::kGraphFieldNumber;
-const int RaftMessage::kRaftMessageFieldNumber;
+const int RaftMessage::kMessageFieldNumber;
 #endif  // !defined(_MSC_VER) || _MSC_VER >= 1900
 
 RaftMessage::RaftMessage()
@@ -4530,17 +4530,17 @@ RaftMessage::RaftMessage(const RaftMessage& from)
   if (from.graph().size() > 0) {
     graph_.AssignWithDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), from.graph_);
   }
-  if (from.has_raft_message()) {
-    raft_message_ = new ::raftpb::Message(*from.raft_message_);
+  if (from.has_message()) {
+    message_ = new ::raftpb::Message(*from.message_);
   } else {
-    raft_message_ = NULL;
+    message_ = NULL;
   }
   // @@protoc_insertion_point(copy_constructor:meta.RaftMessage)
 }
 
 void RaftMessage::SharedCtor() {
   graph_.UnsafeSetDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
-  raft_message_ = NULL;
+  message_ = NULL;
 }
 
 RaftMessage::~RaftMessage() {
@@ -4550,7 +4550,7 @@ RaftMessage::~RaftMessage() {
 
 void RaftMessage::SharedDtor() {
   graph_.DestroyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
-  if (this != internal_default_instance()) delete raft_message_;
+  if (this != internal_default_instance()) delete message_;
 }
 
 void RaftMessage::SetCachedSize(int size) const {
@@ -4574,10 +4574,10 @@ void RaftMessage::Clear() {
   (void) cached_has_bits;
 
   graph_.ClearToEmptyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
-  if (GetArenaNoVirtual() == NULL && raft_message_ != NULL) {
-    delete raft_message_;
+  if (GetArenaNoVirtual() == NULL && message_ != NULL) {
+    delete message_;
   }
-  raft_message_ = NULL;
+  message_ = NULL;
   _internal_metadata_.Clear();
 }
 
@@ -4607,12 +4607,12 @@ bool RaftMessage::MergePartialFromCodedStream(
         break;
       }
 
-      // .raftpb.Message raft_message = 2;
+      // .raftpb.Message message = 2;
       case 2: {
         if (static_cast< ::google::protobuf::uint8>(tag) ==
             static_cast< ::google::protobuf::uint8>(18u /* 18 & 0xFF */)) {
           DO_(::google::protobuf::internal::WireFormatLite::ReadMessage(
-               input, mutable_raft_message()));
+               input, mutable_message()));
         } else {
           goto handle_unusual;
         }
@@ -4655,10 +4655,10 @@ void RaftMessage::SerializeWithCachedSizes(
       1, this->graph(), output);
   }
 
-  // .raftpb.Message raft_message = 2;
-  if (this->has_raft_message()) {
+  // .raftpb.Message message = 2;
+  if (this->has_message()) {
     ::google::protobuf::internal::WireFormatLite::WriteMessageMaybeToArray(
-      2, this->_internal_raft_message(), output);
+      2, this->_internal_message(), output);
   }
 
   if ((_internal_metadata_.have_unknown_fields() &&  ::google::protobuf::internal::GetProto3PreserveUnknownsDefault())) {
@@ -4686,11 +4686,11 @@ void RaftMessage::SerializeWithCachedSizes(
         1, this->graph(), target);
   }
 
-  // .raftpb.Message raft_message = 2;
-  if (this->has_raft_message()) {
+  // .raftpb.Message message = 2;
+  if (this->has_message()) {
     target = ::google::protobuf::internal::WireFormatLite::
       InternalWriteMessageToArray(
-        2, this->_internal_raft_message(), deterministic, target);
+        2, this->_internal_message(), deterministic, target);
   }
 
   if ((_internal_metadata_.have_unknown_fields() &&  ::google::protobuf::internal::GetProto3PreserveUnknownsDefault())) {
@@ -4717,11 +4717,11 @@ size_t RaftMessage::ByteSizeLong() const {
         this->graph());
   }
 
-  // .raftpb.Message raft_message = 2;
-  if (this->has_raft_message()) {
+  // .raftpb.Message message = 2;
+  if (this->has_message()) {
     total_size += 1 +
       ::google::protobuf::internal::WireFormatLite::MessageSize(
-        *raft_message_);
+        *message_);
   }
 
   int cached_size = ::google::protobuf::internal::ToCachedSize(total_size);
@@ -4755,8 +4755,8 @@ void RaftMessage::MergeFrom(const RaftMessage& from) {
 
     graph_.AssignWithDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), from.graph_);
   }
-  if (from.has_raft_message()) {
-    mutable_raft_message()->::raftpb::Message::MergeFrom(from.raft_message());
+  if (from.has_message()) {
+    mutable_message()->::raftpb::Message::MergeFrom(from.message());
   }
 }
 
@@ -4786,7 +4786,7 @@ void RaftMessage::InternalSwap(RaftMessage* other) {
   using std::swap;
   graph_.Swap(&other->graph_, &::google::protobuf::internal::GetEmptyStringAlreadyInited(),
     GetArenaNoVirtual());
-  swap(raft_message_, other->raft_message_);
+  swap(message_, other->message_);
   _internal_metadata_.Swap(&other->_internal_metadata_);
 }
 

@@ -256,7 +256,7 @@ std::string MessageToNetString(const std::string& graph,
                                const raftpb::Message& msg) {
   meta::RaftMessage envelope;
   envelope.set_graph(graph);
-  envelope.mutable_raft_message()->CopyFrom(msg);
+  envelope.mutable_message()->CopyFrom(msg);
 
   uint32_t msg_size = envelope.ByteSizeLong();
   std::string str;

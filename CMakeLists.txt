@@ -35,9 +35,11 @@ set(PROTOBUF_INCLUDE_DIRS_LOCAL ${PROTOBUF_INCLUDE_DIR} ${Protobuf_INCLUDE_DIR}
                                 ${Protobuf_INCLUDE_DIRS}
 )
 
-set(COMMON_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/deps
-                        ${PROJECT_SOURCE_DIR}/deps/etcd-raft-cpp/raftpb
-                        ${PROJECT_SOURCE_DIR}/deps/geax-front-end/include
+set(COMMON_INCLUDE_DIRS
+    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/deps
+    ${PROJECT_SOURCE_DIR}/deps/etcd-raft-cpp/raftpb
+    ${PROJECT_SOURCE_DIR}/deps/geax-front-end/include
 )
 
 add_library(project_common INTERFACE)
@@ -322,11 +324,7 @@ set(DEPS_SOURCES deps/geax-front-end/src/geax-front-end/isogql/GEAXErrorCode.cpp
 
 set(TRANSACTION_SOURCES src/transaction/transaction.cpp)
 
-set(SERVER_SOURCES
-    src/server/galaxy.cpp
-    src/server/bolt_handler.cpp
-    src/server/raft_server.cpp
-)
+set(SERVER_SOURCES src/server/galaxy.cpp src/server/bolt_handler.cpp src/server/raft_server.cpp)
 
 set(PROTO_SOURCES src/proto/meta.pb.cc)
 

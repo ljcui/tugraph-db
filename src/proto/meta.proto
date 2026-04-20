@@ -119,7 +119,7 @@ message RaftRequest {
 
 message RaftMessage {
     string graph = 1;
-    raftpb.Message raft_message = 2;
+    raftpb.Message message = 2;
 }
 
 message RaftNodeInfo {
