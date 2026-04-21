@@ -113,29 +113,7 @@ inline void CleanupTestDataDirectories() {
 
 inline void ApplyRaftRequest(graphdb::GraphDB* graph_db, uint64_t index,
                              const meta::RaftRequest& request) {
-  rocksdb::WriteBatch wb(request.wb_data());
-
-  auto s = graph_db->SetRaftApplyIndex(index, &wb);
-  if (!s.ok()) {
-    THROW_CODE(StorageEngineError,
-               "failed to persist raft apply index for graph [{}] at index {}: "
-               "{}",
-               graph_db->db_meta().graph_name(), index, s.ToString());
-  }
-
-  auto* base_db = graph_db->raw_db()->GetBaseDB();
-  if (!base_db) {
-    THROW_CODE(StorageEngineError,
-               "failed to access base rocksdb::DB for graph [{}]",
-               graph_db->db_meta().graph_name());
-  }
-
-  s = base_db->Write({}, &wb);
-  if (!s.ok()) {
-    THROW_CODE(StorageEngineError,
-               "failed to apply raft request for graph [{}] at index {}: {}",
-               graph_db->db_meta().graph_name(), index, s.ToString());
-  }
+  graph_db->ApplyRaftRequest(index, request);
 }
 
 inline std::unique_ptr<raft::RaftDriver> NewSingleNodeRaftDriver(

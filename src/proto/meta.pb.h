@@ -193,6 +193,28 @@ inline bool UpdateType_Parse(
   return ::google::protobuf::internal::ParseNamedEnum<UpdateType>(
     UpdateType_descriptor(), name, value);
 }
+enum WriteBatchKind {
+  UNKNOWN = 0,
+  GRAPH_WRITE = 1,
+  ID_GENERATOR = 2,
+  WriteBatchKind_INT_MIN_SENTINEL_DO_NOT_USE_ = ::google::protobuf::kint32min,
+  WriteBatchKind_INT_MAX_SENTINEL_DO_NOT_USE_ = ::google::protobuf::kint32max
+};
+bool WriteBatchKind_IsValid(int value);
+const WriteBatchKind WriteBatchKind_MIN = UNKNOWN;
+const WriteBatchKind WriteBatchKind_MAX = ID_GENERATOR;
+const int WriteBatchKind_ARRAYSIZE = WriteBatchKind_MAX + 1;
+
+const ::google::protobuf::EnumDescriptor* WriteBatchKind_descriptor();
+inline const ::std::string& WriteBatchKind_Name(WriteBatchKind value) {
+  return ::google::protobuf::internal::NameOfEnum(
+    WriteBatchKind_descriptor(), value);
+}
+inline bool WriteBatchKind_Parse(
+    const ::std::string& name, WriteBatchKind* value) {
+  return ::google::protobuf::internal::ParseNamedEnum<WriteBatchKind>(
+    WriteBatchKind_descriptor(), name, value);
+}
 // ===================================================================
 
 class VertexPropertyIndex : public ::google::protobuf::Message /* @@protoc_insertion_point(class_definition:meta.VertexPropertyIndex) */ {
@@ -1551,12 +1573,19 @@ class RaftRequest : public ::google::protobuf::Message /* @@protoc_insertion_poi
   ::google::protobuf::uint64 id() const;
   void set_id(::google::protobuf::uint64 value);
 
+  // .meta.WriteBatchKind wb_kind = 2;
+  void clear_wb_kind();
+  static const int kWbKindFieldNumber = 2;
+  ::meta::WriteBatchKind wb_kind() const;
+  void set_wb_kind(::meta::WriteBatchKind value);
+
   // @@protoc_insertion_point(class_scope:meta.RaftRequest)
  private:
 
   ::google::protobuf::internal::InternalMetadataWithArena _internal_metadata_;
   ::google::protobuf::internal::ArenaStringPtr wb_data_;
   ::google::protobuf::uint64 id_;
+  int wb_kind_;
   mutable ::google::protobuf::internal::CachedSize _cached_size_;
   friend struct ::protobuf_meta_2eproto::TableStruct;
 };
@@ -3607,6 +3636,20 @@ inline void RaftRequest::set_id(::google::protobuf::uint64 value) {
   // @@protoc_insertion_point(field_set:meta.RaftRequest.id)
 }
 
+// .meta.WriteBatchKind wb_kind = 2;
+inline void RaftRequest::clear_wb_kind() {
+  wb_kind_ = 0;
+}
+inline ::meta::WriteBatchKind RaftRequest::wb_kind() const {
+  // @@protoc_insertion_point(field_get:meta.RaftRequest.wb_kind)
+  return static_cast< ::meta::WriteBatchKind >(wb_kind_);
+}
+inline void RaftRequest::set_wb_kind(::meta::WriteBatchKind value) {
+  
+  wb_kind_ = value;
+  // @@protoc_insertion_point(field_set:meta.RaftRequest.wb_kind)
+}
+
 // bytes wb_data = 3;
 inline void RaftRequest::clear_wb_data() {
   wb_data_.ClearToEmptyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
@@ -4021,6 +4064,11 @@ template <> struct is_proto_enum< ::meta::UpdateType> : ::std::true_type {};
 template <>
 inline const EnumDescriptor* GetEnumDescriptor< ::meta::UpdateType>() {
   return ::meta::UpdateType_descriptor();
+}
+template <> struct is_proto_enum< ::meta::WriteBatchKind> : ::std::true_type {};
+template <>
+inline const EnumDescriptor* GetEnumDescriptor< ::meta::WriteBatchKind>() {
+  return ::meta::WriteBatchKind_descriptor();
 }
 
 }  // namespace protobuf

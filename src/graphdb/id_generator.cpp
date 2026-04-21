@@ -27,6 +27,7 @@
 #include "raft/raft_driver.h"
 using namespace boost::endian;
 using common::AsChars;
+using common::ReadValue;
 namespace graphdb {
 namespace {
 
@@ -43,6 +44,13 @@ std::string EntityIdKey(MetaDataType type) {
 
 const std::string kRaftApplyIndexKey(
     1, static_cast<char>(MetaDataType::RaftApplyIndex));
+
+template <typename T>
+void StoreMax(std::atomic<T> *target, T value) {
+  T current = target->load();
+  while (current < value && !target->compare_exchange_weak(current, value)) {
+  }
+}
 
 }  // namespace
 
@@ -69,6 +77,97 @@ void IdGenerator::LoadToken(MetaDataType type, const std::string &name,
   } else {
     THROW_CODE(InvalidParameter, "unsupported token metadata type {}",
                static_cast<int>(type));
+  }
+}
+
+void IdGenerator::ApplyMetaRecord(MetaDataType type,
+                                  const rocksdb::Slice &key_suffix,
+                                  const rocksdb::Slice &value) {
+  switch (type) {
+    case MetaDataType::VertexLabel: {
+      if (value.size() != sizeof(uint32_t)) {
+        THROW_CODE(StorageEngineError,
+                   "vertex label metadata has invalid size, expect {}, actual "
+                   "{}",
+                   sizeof(uint32_t), value.size());
+      }
+      uint32_t id = ReadValue<uint32_t>(value.data());
+      uint32_t native_id = big_to_native(id);
+      std::string name(key_suffix.data(), key_suffix.size());
+      std::unique_lock write_lock(vertex_labels_mutex_);
+      vertex_labels_name_to_id_[name] = id;
+      vertex_labels_id_to_name_[id] = name;
+      StoreMax(&label_next_lid_, native_id + 1);
+      return;
+    }
+    case MetaDataType::EdgeType: {
+      if (value.size() != sizeof(uint32_t)) {
+        THROW_CODE(StorageEngineError,
+                   "edge type metadata has invalid size, expect {}, actual {}",
+                   sizeof(uint32_t), value.size());
+      }
+      uint32_t id = ReadValue<uint32_t>(value.data());
+      uint32_t native_id = big_to_native(id);
+      std::string name(key_suffix.data(), key_suffix.size());
+      std::unique_lock write_lock(edge_types_mutex_);
+      edge_types_name_to_id_[name] = id;
+      edge_types_id_to_name_[id] = name;
+      StoreMax(&label_next_tid_, native_id + 1);
+      return;
+    }
+    case MetaDataType::Property: {
+      if (value.size() != sizeof(uint32_t)) {
+        THROW_CODE(StorageEngineError,
+                   "property metadata has invalid size, expect {}, actual {}",
+                   sizeof(uint32_t), value.size());
+      }
+      uint32_t id = ReadValue<uint32_t>(value.data());
+      uint32_t native_id = big_to_native(id);
+      std::string name(key_suffix.data(), key_suffix.size());
+      std::unique_lock write_lock(properties_mutex_);
+      properties_name_to_id_[name] = id;
+      properties_id_to_name_[id] = name;
+      StoreMax(&label_next_pid_, native_id + 1);
+      return;
+    }
+    case MetaDataType::NextVertexId: {
+      if (value.size() != sizeof(int64_t)) {
+        THROW_CODE(StorageEngineError,
+                   "next vertex id metadata has invalid size, expect {}, "
+                   "actual {}",
+                   sizeof(int64_t), value.size());
+      }
+      int64_t next_vid = big_to_native(ReadValue<int64_t>(value.data()));
+      if (next_vid < 1) {
+        THROW_CODE(StorageEngineError,
+                   "next vertex id metadata must be positive");
+      }
+      std::lock_guard<std::mutex> refill_lock(vid_refill_mutex_);
+      StoreMax(&persisted_next_vid_, next_vid);
+      StoreMax(&next_vid_, next_vid);
+      StoreMax(&vid_range_end_, next_vid);
+      return;
+    }
+    case MetaDataType::NextEdgeId: {
+      if (value.size() != sizeof(int64_t)) {
+        THROW_CODE(StorageEngineError,
+                   "next edge id metadata has invalid size, expect {}, actual "
+                   "{}",
+                   sizeof(int64_t), value.size());
+      }
+      int64_t next_eid = big_to_native(ReadValue<int64_t>(value.data()));
+      if (next_eid < 1) {
+        THROW_CODE(StorageEngineError,
+                   "next edge id metadata must be positive");
+      }
+      std::lock_guard<std::mutex> refill_lock(eid_refill_mutex_);
+      StoreMax(&persisted_next_eid_, next_eid);
+      StoreMax(&next_eid_, next_eid);
+      StoreMax(&eid_range_end_, next_eid);
+      return;
+    }
+    default:
+      return;
   }
 }
 
@@ -137,6 +236,7 @@ void IdGenerator::ProposeAndApply(rocksdb::WriteBatch *wb) {
   }
 
   meta::RaftRequest request;
+  request.set_wb_kind(meta::WriteBatchKind::ID_GENERATOR);
   request.set_wb_data(wb->Data());
   auto context = raft_driver_->ProposeRaftRequest(std::move(request));
   auto commit_result = context->commited.get_future().get();

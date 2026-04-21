@@ -452,6 +452,7 @@ void Transaction::Commit() {
         if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
       } else {
         meta::RaftRequest request;
+        request.set_wb_kind(meta::WriteBatchKind::GRAPH_WRITE);
         request.set_wb_data(write_batch->Data());
         auto context = raft_driver->ProposeRaftRequest(std::move(request));
         auto commit_result = context->commited.get_future().get();

@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <vector>
 
+#include "common/byte_utils.h"
 #include "common/logger.h"
 #include "common/value.h"
 #include "graphdb/graph_db.h"
@@ -243,6 +244,67 @@ TEST(GraphDB, raftIdGeneratorPersistsStateAndApplyIndex) {
   EXPECT_GT(big_to_native(next_vid), big_to_native(vid));
   EXPECT_GT(big_to_native(next_eid), big_to_native(eid));
   EXPECT_GT(graphDB->GetRaftApplyIndex(), apply_index);
+}
+
+TEST(GraphDB, raftApplyUpdatesIdGeneratorCacheWithoutRestart) {
+  const std::string raft_testdb = "testdb_raft_apply_id_generator_cache";
+  fs::remove_all(raft_testdb);
+  auto graphDB = GraphDB::Open(raft_testdb, {});
+  graphDB->db_meta().set_graph_name("id_generator_graph");
+
+  constexpr uint32_t kLabelId = 7;
+  constexpr uint32_t kPropertyId = 9;
+  constexpr uint32_t kEdgeTypeId = 11;
+  constexpr int64_t kNextVid = 1025;
+  constexpr int64_t kNextEid = 2049;
+
+  uint32_t lid = boost::endian::native_to_big(kLabelId);
+  uint32_t pid = boost::endian::native_to_big(kPropertyId);
+  uint32_t tid = boost::endian::native_to_big(kEdgeTypeId);
+  int64_t next_vid = boost::endian::native_to_big(kNextVid);
+  int64_t next_eid = boost::endian::native_to_big(kNextEid);
+
+  rocksdb::WriteBatch wb;
+  auto s = wb.Put(
+      graphDB->graph_cf().meta_info,
+      std::string(1, static_cast<char>(MetaDataType::VertexLabel)) + "person",
+      std::string(common::AsChars(lid), sizeof(lid)));
+  ASSERT_TRUE(s.ok());
+  s = wb.Put(graphDB->graph_cf().meta_info,
+             std::string(1, static_cast<char>(MetaDataType::Property)) + "name",
+             std::string(common::AsChars(pid), sizeof(pid)));
+  ASSERT_TRUE(s.ok());
+  s = wb.Put(
+      graphDB->graph_cf().meta_info,
+      std::string(1, static_cast<char>(MetaDataType::EdgeType)) + "knows",
+      std::string(common::AsChars(tid), sizeof(tid)));
+  ASSERT_TRUE(s.ok());
+  s = wb.Put(graphDB->graph_cf().meta_info,
+             std::string(1, static_cast<char>(MetaDataType::NextVertexId)),
+             std::string(common::AsChars(next_vid), sizeof(next_vid)));
+  ASSERT_TRUE(s.ok());
+  s = wb.Put(graphDB->graph_cf().meta_info,
+             std::string(1, static_cast<char>(MetaDataType::NextEdgeId)),
+             std::string(common::AsChars(next_eid), sizeof(next_eid)));
+  ASSERT_TRUE(s.ok());
+
+  meta::RaftRequest request;
+  request.set_wb_kind(meta::WriteBatchKind::ID_GENERATOR);
+  request.set_wb_data(wb.Data());
+  graphDB->ApplyRaftRequest(1, request);
+
+  EXPECT_EQ(graphDB->GetRaftApplyIndex(), 1U);
+  EXPECT_EQ(graphDB->id_generator().GetLid("person"), lid);
+  EXPECT_EQ(graphDB->id_generator().GetPid("name"), pid);
+  EXPECT_EQ(graphDB->id_generator().GetTid("knows"), tid);
+  EXPECT_EQ(graphDB->id_generator().GetOrCreateLid("company"),
+            boost::endian::native_to_big(kLabelId + 1));
+  EXPECT_EQ(graphDB->id_generator().GetOrCreatePid("age"),
+            boost::endian::native_to_big(kPropertyId + 1));
+  EXPECT_EQ(graphDB->id_generator().GetOrCreateTid("likes"),
+            boost::endian::native_to_big(kEdgeTypeId + 1));
+  EXPECT_EQ(big_to_native(graphDB->id_generator().GetNextVid()), kNextVid);
+  EXPECT_EQ(big_to_native(graphDB->id_generator().GetNextEid()), kNextEid);
 }
 
 TEST(GraphDB, updateProperty) {

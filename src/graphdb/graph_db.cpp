@@ -52,6 +52,46 @@ std::string BuildMetaKey(MetaDataType type, const std::string& name) {
 const std::string kRaftApplyIndexKey(
     1, static_cast<char>(MetaDataType::RaftApplyIndex));
 
+class IdGeneratorMetaBatchHandler : public rocksdb::WriteBatch::Handler {
+ public:
+  explicit IdGeneratorMetaBatchHandler(GraphDB* graph_db)
+      : id_generator_(graph_db->id_generator()),
+        meta_info_cf_id_(graph_db->graph_cf().meta_info->GetID()) {}
+
+  rocksdb::Status PutCF(uint32_t column_family_id, const rocksdb::Slice& key,
+                        const rocksdb::Slice& value) override {
+    if (column_family_id != meta_info_cf_id_ || key.empty()) {
+      return rocksdb::Status::OK();
+    }
+    auto type = static_cast<MetaDataType>(key.data()[0]);
+    rocksdb::Slice key_suffix(key.data() + 1, key.size() - 1);
+    id_generator_.ApplyMetaRecord(type, key_suffix, value);
+    return rocksdb::Status::OK();
+  }
+
+  rocksdb::Status DeleteCF(uint32_t, const rocksdb::Slice&) override {
+    return rocksdb::Status::OK();
+  }
+
+  rocksdb::Status SingleDeleteCF(uint32_t, const rocksdb::Slice&) override {
+    return rocksdb::Status::OK();
+  }
+
+  rocksdb::Status DeleteRangeCF(uint32_t, const rocksdb::Slice&,
+                                const rocksdb::Slice&) override {
+    return rocksdb::Status::OK();
+  }
+
+  rocksdb::Status MergeCF(uint32_t, const rocksdb::Slice&,
+                          const rocksdb::Slice&) override {
+    return rocksdb::Status::OK();
+  }
+
+ private:
+  IdGenerator& id_generator_;
+  uint32_t meta_info_cf_id_;
+};
+
 uint64_t LoadVisibleMaxWalId(rocksdb::TransactionDB* db, GraphCF* graph_cf,
                              uint32_t index_id,
                              const rocksdb::Snapshot* snapshot) {
@@ -358,10 +398,66 @@ uint64_t GraphDB::GetRaftApplyIndex() const {
   return ReadValue<uint64_t>(val.data());
 }
 
+void GraphDB::ApplyRaftRequest(uint64_t index,
+                               const meta::RaftRequest& request) {
+  rocksdb::WriteBatch wb(request.wb_data());
+
+  auto s = SetRaftApplyIndex(index, &wb);
+  if (!s.ok()) {
+    THROW_CODE(StorageEngineError,
+               "failed to persist raft apply index for graph [{}] at index {}: "
+               "{}",
+               db_meta_.graph_name(), index, s.ToString());
+  }
+
+  auto* base_db = db_->GetBaseDB();
+  if (!base_db) {
+    THROW_CODE(StorageEngineError,
+               "failed to access base rocksdb::DB for graph [{}]",
+               db_meta_.graph_name());
+  }
+
+  s = base_db->Write({}, &wb);
+  if (!s.ok()) {
+    THROW_CODE(StorageEngineError,
+               "failed to apply raft request for graph [{}] at index {}: {}",
+               db_meta_.graph_name(), index, s.ToString());
+  }
+
+  switch (request.wb_kind()) {
+    case meta::WriteBatchKind::GRAPH_WRITE:
+      return;
+    case meta::WriteBatchKind::ID_GENERATOR:
+      SyncIdGeneratorFromRaftBatch(wb);
+      return;
+    case meta::WriteBatchKind::UNKNOWN:
+      THROW_CODE(InvalidParameter,
+                 "write batch kind must be specified for graph [{}] at index "
+                 "{}",
+                 db_meta_.graph_name(), index);
+    default:
+      THROW_CODE(InvalidParameter,
+                 "unsupported write batch kind {} for graph [{}] at index {}",
+                 static_cast<int>(request.wb_kind()), db_meta_.graph_name(),
+                 index);
+  }
+}
+
 rocksdb::Status GraphDB::SetRaftApplyIndex(uint64_t apply_index,
                                            rocksdb::WriteBatch* wb) const {
   return wb->Put(graph_cf_.meta_info, kRaftApplyIndexKey,
                  std::string(AsChars(apply_index), sizeof(apply_index)));
+}
+
+void GraphDB::SyncIdGeneratorFromRaftBatch(const rocksdb::WriteBatch& wb) {
+  IdGeneratorMetaBatchHandler handler(this);
+  auto s = wb.Iterate(&handler);
+  if (!s.ok()) {
+    THROW_CODE(StorageEngineError,
+               "failed to sync id generator cache from raft batch for graph "
+               "[{}]: {}",
+               db_meta_.graph_name(), s.ToString());
+  }
 }
 
 void GraphDB::PersistVertexPropertyIndexMeta(

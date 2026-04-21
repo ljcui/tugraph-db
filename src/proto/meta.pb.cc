@@ -275,7 +275,7 @@ void InitDefaults() {
 }
 
 ::google::protobuf::Metadata file_level_metadata[12];
-const ::google::protobuf::EnumDescriptor* file_level_enum_descriptors[4];
+const ::google::protobuf::EnumDescriptor* file_level_enum_descriptors[5];
 
 const ::google::protobuf::uint32 TableStruct::offsets[] GOOGLE_PROTOBUF_ATTRIBUTE_SECTION_VARIABLE(protodesc_cold) = {
   ~0u,  // no _has_bits_
@@ -370,6 +370,7 @@ const ::google::protobuf::uint32 TableStruct::offsets[] GOOGLE_PROTOBUF_ATTRIBUT
   ~0u,  // no _oneof_case_
   ~0u,  // no _weak_field_map_
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::RaftRequest, id_),
+  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::RaftRequest, wb_kind_),
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::RaftRequest, wb_data_),
   ~0u,  // no _has_bits_
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::RaftMessage, _internal_metadata_),
@@ -415,10 +416,10 @@ static const ::google::protobuf::internal::MigrationSchema schemas[] GOOGLE_PROT
   { 70, -1, sizeof(::meta::VectorIndexUpdate)},
   { 78, -1, sizeof(::meta::PropertyIndexUpdate)},
   { 86, -1, sizeof(::meta::RaftRequest)},
-  { 93, -1, sizeof(::meta::RaftMessage)},
-  { 100, -1, sizeof(::meta::RaftNodeInfo)},
-  { 112, 119, sizeof(::meta::RaftNodeInfos_NodesEntry_DoNotUse)},
-  { 121, -1, sizeof(::meta::RaftNodeInfos)},
+  { 94, -1, sizeof(::meta::RaftMessage)},
+  { 101, -1, sizeof(::meta::RaftNodeInfo)},
+  { 113, 120, sizeof(::meta::RaftNodeInfos_NodesEntry_DoNotUse)},
+  { 122, -1, sizeof(::meta::RaftNodeInfos)},
 };
 
 static ::google::protobuf::Message const * const file_default_instances[] = {
@@ -489,25 +490,27 @@ void AddDescriptorsImpl() {
       "\004type\030\001 \001(\0162\020.meta.UpdateType\022\013\n\003vid\030\002 \001"
       "(\003\022\016\n\006vector\030\003 \003(\002\"R\n\023PropertyIndexUpdat"
       "e\022\036\n\004type\030\001 \001(\0162\020.meta.UpdateType\022\013\n\003vid"
-      "\030\002 \001(\003\022\016\n\006values\030\003 \003(\014\"*\n\013RaftRequest\022\n\n"
-      "\002id\030\001 \001(\004\022\017\n\007wb_data\030\003 \001(\014\">\n\013RaftMessag"
-      "e\022\r\n\005graph\030\001 \001(\t\022 \n\007message\030\002 \001(\0132\017.raft"
-      "pb.Message\"\207\001\n\014RaftNodeInfo\022\017\n\007node_id\030\001"
-      " \001(\004\022\n\n\002ip\030\002 \001(\t\022\021\n\tbolt_port\030\003 \001(\005\022\021\n\tr"
-      "aft_poft\030\004 \001(\005\022\021\n\tis_leader\030\005 \001(\010\022\022\n\nis_"
-      "learner\030\006 \001(\010\022\r\n\005graph\030\007 \001(\t\"\200\001\n\rRaftNod"
-      "eInfos\022-\n\005nodes\030\001 \003(\0132\036.meta.RaftNodeInf"
-      "os.NodesEntry\032@\n\nNodesEntry\022\013\n\003key\030\001 \001(\004"
-      "\022!\n\005value\030\002 \001(\0132\022.meta.RaftNodeInfo:\0028\001*"
-      "0\n\022VectorDistanceType\022\006\n\002L2\020\000\022\006\n\002IP\020\001\022\n\n"
-      "\006COSINE\020\002*)\n\017VectorIndexType\022\010\n\004HNSW\020\000\022\014"
-      "\n\010IVF_FLAT\020\001*G\n\017IndexBuildState\022\014\n\010BUILD"
-      "ING\020\000\022\017\n\013CATCHING_UP\020\001\022\t\n\005READY\020\002\022\n\n\006FAI"
-      "LED\020\003*!\n\nUpdateType\022\007\n\003Add\020\000\022\n\n\006Delete\020\001"
-      "b\006proto3"
+      "\030\002 \001(\003\022\016\n\006values\030\003 \003(\014\"Q\n\013RaftRequest\022\n\n"
+      "\002id\030\001 \001(\004\022%\n\007wb_kind\030\002 \001(\0162\024.meta.WriteB"
+      "atchKind\022\017\n\007wb_data\030\003 \001(\014\">\n\013RaftMessage"
+      "\022\r\n\005graph\030\001 \001(\t\022 \n\007message\030\002 \001(\0132\017.raftp"
+      "b.Message\"\207\001\n\014RaftNodeInfo\022\017\n\007node_id\030\001 "
+      "\001(\004\022\n\n\002ip\030\002 \001(\t\022\021\n\tbolt_port\030\003 \001(\005\022\021\n\tra"
+      "ft_poft\030\004 \001(\005\022\021\n\tis_leader\030\005 \001(\010\022\022\n\nis_l"
+      "earner\030\006 \001(\010\022\r\n\005graph\030\007 \001(\t\"\200\001\n\rRaftNode"
+      "Infos\022-\n\005nodes\030\001 \003(\0132\036.meta.RaftNodeInfo"
+      "s.NodesEntry\032@\n\nNodesEntry\022\013\n\003key\030\001 \001(\004\022"
+      "!\n\005value\030\002 \001(\0132\022.meta.RaftNodeInfo:\0028\001*0"
+      "\n\022VectorDistanceType\022\006\n\002L2\020\000\022\006\n\002IP\020\001\022\n\n\006"
+      "COSINE\020\002*)\n\017VectorIndexType\022\010\n\004HNSW\020\000\022\014\n"
+      "\010IVF_FLAT\020\001*G\n\017IndexBuildState\022\014\n\010BUILDI"
+      "NG\020\000\022\017\n\013CATCHING_UP\020\001\022\t\n\005READY\020\002\022\n\n\006FAIL"
+      "ED\020\003*!\n\nUpdateType\022\007\n\003Add\020\000\022\n\n\006Delete\020\001*"
+      "@\n\016WriteBatchKind\022\013\n\007UNKNOWN\020\000\022\017\n\013GRAPH_"
+      "WRITE\020\001\022\020\n\014ID_GENERATOR\020\002b\006proto3"
   };
   ::google::protobuf::DescriptorPool::InternalAddGeneratedFile(
-      descriptor, 1888);
+      descriptor, 1993);
   ::google::protobuf::MessageFactory::InternalRegisterGeneratedFile(
     "meta.proto", &protobuf_RegisterTypes);
   ::protobuf_raft_2eproto::AddDescriptors();
@@ -578,6 +581,21 @@ bool UpdateType_IsValid(int value) {
   switch (value) {
     case 0:
     case 1:
+      return true;
+    default:
+      return false;
+  }
+}
+
+const ::google::protobuf::EnumDescriptor* WriteBatchKind_descriptor() {
+  protobuf_meta_2eproto::protobuf_AssignDescriptorsOnce();
+  return protobuf_meta_2eproto::file_level_enum_descriptors[4];
+}
+bool WriteBatchKind_IsValid(int value) {
+  switch (value) {
+    case 0:
+    case 1:
+    case 2:
       return true;
     default:
       return false;
@@ -4235,6 +4253,7 @@ void RaftRequest::InitAsDefaultInstance() {
 }
 #if !defined(_MSC_VER) || _MSC_VER >= 1900
 const int RaftRequest::kIdFieldNumber;
+const int RaftRequest::kWbKindFieldNumber;
 const int RaftRequest::kWbDataFieldNumber;
 #endif  // !defined(_MSC_VER) || _MSC_VER >= 1900
 
@@ -4253,13 +4272,17 @@ RaftRequest::RaftRequest(const RaftRequest& from)
   if (from.wb_data().size() > 0) {
     wb_data_.AssignWithDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), from.wb_data_);
   }
-  id_ = from.id_;
+  ::memcpy(&id_, &from.id_,
+    static_cast<size_t>(reinterpret_cast<char*>(&wb_kind_) -
+    reinterpret_cast<char*>(&id_)) + sizeof(wb_kind_));
   // @@protoc_insertion_point(copy_constructor:meta.RaftRequest)
 }
 
 void RaftRequest::SharedCtor() {
   wb_data_.UnsafeSetDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
-  id_ = GOOGLE_ULONGLONG(0);
+  ::memset(&id_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&wb_kind_) -
+      reinterpret_cast<char*>(&id_)) + sizeof(wb_kind_));
 }
 
 RaftRequest::~RaftRequest() {
@@ -4292,7 +4315,9 @@ void RaftRequest::Clear() {
   (void) cached_has_bits;
 
   wb_data_.ClearToEmptyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
-  id_ = GOOGLE_ULONGLONG(0);
+  ::memset(&id_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&wb_kind_) -
+      reinterpret_cast<char*>(&id_)) + sizeof(wb_kind_));
   _internal_metadata_.Clear();
 }
 
@@ -4314,6 +4339,21 @@ bool RaftRequest::MergePartialFromCodedStream(
           DO_((::google::protobuf::internal::WireFormatLite::ReadPrimitive<
                    ::google::protobuf::uint64, ::google::protobuf::internal::WireFormatLite::TYPE_UINT64>(
                  input, &id_)));
+        } else {
+          goto handle_unusual;
+        }
+        break;
+      }
+
+      // .meta.WriteBatchKind wb_kind = 2;
+      case 2: {
+        if (static_cast< ::google::protobuf::uint8>(tag) ==
+            static_cast< ::google::protobuf::uint8>(16u /* 16 & 0xFF */)) {
+          int value;
+          DO_((::google::protobuf::internal::WireFormatLite::ReadPrimitive<
+                   int, ::google::protobuf::internal::WireFormatLite::TYPE_ENUM>(
+                 input, &value)));
+          set_wb_kind(static_cast< ::meta::WriteBatchKind >(value));
         } else {
           goto handle_unusual;
         }
@@ -4363,6 +4403,12 @@ void RaftRequest::SerializeWithCachedSizes(
     ::google::protobuf::internal::WireFormatLite::WriteUInt64(1, this->id(), output);
   }
 
+  // .meta.WriteBatchKind wb_kind = 2;
+  if (this->wb_kind() != 0) {
+    ::google::protobuf::internal::WireFormatLite::WriteEnum(
+      2, this->wb_kind(), output);
+  }
+
   // bytes wb_data = 3;
   if (this->wb_data().size() > 0) {
     ::google::protobuf::internal::WireFormatLite::WriteBytesMaybeAliased(
@@ -4386,6 +4432,12 @@ void RaftRequest::SerializeWithCachedSizes(
   // uint64 id = 1;
   if (this->id() != 0) {
     target = ::google::protobuf::internal::WireFormatLite::WriteUInt64ToArray(1, this->id(), target);
+  }
+
+  // .meta.WriteBatchKind wb_kind = 2;
+  if (this->wb_kind() != 0) {
+    target = ::google::protobuf::internal::WireFormatLite::WriteEnumToArray(
+      2, this->wb_kind(), target);
   }
 
   // bytes wb_data = 3;
@@ -4426,6 +4478,12 @@ size_t RaftRequest::ByteSizeLong() const {
         this->id());
   }
 
+  // .meta.WriteBatchKind wb_kind = 2;
+  if (this->wb_kind() != 0) {
+    total_size += 1 +
+      ::google::protobuf::internal::WireFormatLite::EnumSize(this->wb_kind());
+  }
+
   int cached_size = ::google::protobuf::internal::ToCachedSize(total_size);
   SetCachedSize(cached_size);
   return total_size;
@@ -4460,6 +4518,9 @@ void RaftRequest::MergeFrom(const RaftRequest& from) {
   if (from.id() != 0) {
     set_id(from.id());
   }
+  if (from.wb_kind() != 0) {
+    set_wb_kind(from.wb_kind());
+  }
 }
 
 void RaftRequest::CopyFrom(const ::google::protobuf::Message& from) {
@@ -4489,6 +4550,7 @@ void RaftRequest::InternalSwap(RaftRequest* other) {
   wb_data_.Swap(&other->wb_data_, &::google::protobuf::internal::GetEmptyStringAlreadyInited(),
     GetArenaNoVirtual());
   swap(id_, other->id_);
+  swap(wb_kind_, other->wb_kind_);
   _internal_metadata_.Swap(&other->_internal_metadata_);
 }
 

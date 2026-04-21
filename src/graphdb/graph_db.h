@@ -85,6 +85,7 @@ class GraphDB {
   raft::RaftDriver* raft_driver() const;
   void SetRaftDriver(std::unique_ptr<raft::RaftDriver> raft_driver);
   uint64_t GetRaftApplyIndex() const;
+  void ApplyRaftRequest(uint64_t index, const meta::RaftRequest& request);
   rocksdb::Status SetRaftApplyIndex(uint64_t apply_index,
                                     rocksdb::WriteBatch* wb) const;
   bool& drop_on_close() { return drop_on_close_; }
@@ -105,6 +106,7 @@ class GraphDB {
       const std::shared_ptr<VertexFullTextIndex>& index);
   void PersistVertexVectorIndexMeta(
       const std::shared_ptr<VertexVectorIndex>& index);
+  void SyncIdGeneratorFromRaftBatch(const rocksdb::WriteBatch& wb);
   void ScheduleVertexPropertyIndexBuild(
       const std::shared_ptr<VertexPropertyIndex>& index, bool reset_existing);
   void ScheduleVertexFullTextIndexBuild(

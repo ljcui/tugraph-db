@@ -41,11 +41,13 @@ TEST(Transaction, raftRequestCarriesWbData) {
   ASSERT_TRUE(wb.Delete("stale").ok());
 
   meta::RaftRequest request;
+  request.set_wb_kind(meta::WriteBatchKind::GRAPH_WRITE);
   request.set_wb_data(wb.Data());
 
   rocksdb::WriteBatch restored(request.wb_data());
   EXPECT_EQ(restored.Data(), wb.Data());
   EXPECT_EQ(restored.Count(), wb.Count());
+  EXPECT_EQ(request.wb_kind(), meta::WriteBatchKind::GRAPH_WRITE);
 }
 
 TEST(Transaction, commitAndRollback) {

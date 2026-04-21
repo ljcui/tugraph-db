@@ -17,6 +17,7 @@
 //
 
 #pragma once
+#include <rocksdb/slice.h>
 #include <rocksdb/utilities/transaction_db.h>
 
 #include <atomic>
@@ -58,6 +59,8 @@ class IdGenerator {
   void Bind(rocksdb::TransactionDB* db, GraphCF* graph_cf);
   void SetRaftDriver(raft::RaftDriver* raft_driver);
   void LoadToken(MetaDataType type, const std::string& name, uint32_t id);
+  void ApplyMetaRecord(MetaDataType type, const rocksdb::Slice& key_suffix,
+                       const rocksdb::Slice& value);
   void SetMaxIds(uint32_t max_lid, uint32_t max_pid, uint32_t max_tid,
                  uint32_t max_index_id);
   void SetNextEntityIds(int64_t next_vid, int64_t next_eid);

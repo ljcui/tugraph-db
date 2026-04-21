@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <shared_mutex>
 
+#include "common/exceptions.h"
 #include "common/logger.h"
 
 using boost::asio::async_write;
@@ -557,6 +558,9 @@ std::shared_ptr<PromiseContext> RaftDriver::ProposeConfChange(
 
 std::shared_ptr<PromiseContext> RaftDriver::ProposeRaftRequest(
     meta::RaftRequest request) {
+  if (request.wb_kind() == meta::WriteBatchKind::UNKNOWN) {
+    THROW_CODE(InvalidParameter, "write batch kind must be specified");
+  }
   request.set_id(id_generator_.Next());
   raftpb::Message msg;
   auto entry = msg.add_entries();
