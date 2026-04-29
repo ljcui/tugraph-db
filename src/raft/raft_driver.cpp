@@ -17,11 +17,13 @@
 #include "raft/raft_driver.h"
 
 #include <gflags/gflags.h>
+#include <pthread.h>
 
 #include <boost/asio.hpp>
 #include <boost/endian/conversion.hpp>
 #include <boost/lexical_cast.hpp>
 #include <filesystem>
+#include <future>
 #include <shared_mutex>
 
 #include "common/exceptions.h"
@@ -124,11 +126,17 @@ void NodeClient::reconnect() {
 }
 
 void NodeClient::Close() {
-  has_closed_ = true;
+  if (has_closed_.exchange(true)) {
+    return;
+  }
+  connected_ = false;
   io_service_.post([this, self = shared_from_this()]() {
     boost::system::error_code ec;
     socket_.close(ec);
     timer_.cancel(ec);
+    connected_ = false;
+    msg_queue_.clear();
+    send_buffers_.clear();
   });
 }
 
@@ -253,6 +261,178 @@ void NodeClient::Connect() {
   });
 }
 
+TransportClient::~TransportClient() {
+  if (transport_) {
+    transport_->Release(key_);
+  }
+}
+
+void TransportClient::Send(std::string str) {
+  if (client_) {
+    client_->Send(std::move(str));
+  }
+}
+
+bool TransportClient::connected() const {
+  return client_ != nullptr && client_->connected();
+}
+
+std::string RaftTransport::BuildKey(const std::string& ip, int port) {
+  return ip + ":" + std::to_string(port);
+}
+
+std::shared_ptr<TransportClient> RaftTransport::Acquire(const std::string& ip,
+                                                        int port) {
+  auto key = BuildKey(ip, port);
+  std::shared_ptr<NodeClient> client;
+  {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto& entry = clients_[key];
+    if (!entry.client) {
+      entry.client = std::make_shared<NodeClient>(client_service_, ip, port);
+      entry.client->Connect();
+    }
+    ++entry.refs;
+    client = entry.client;
+  }
+  return std::shared_ptr<TransportClient>(new TransportClient(
+      shared_from_this(), std::move(key), std::move(client)));
+}
+
+void RaftTransport::Release(const std::string& key) {
+  std::shared_ptr<NodeClient> client_to_close;
+  {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto iter = clients_.find(key);
+    if (iter == clients_.end()) {
+      return;
+    }
+    if (iter->second.refs > 0) {
+      --iter->second.refs;
+    }
+    if (iter->second.refs == 0) {
+      client_to_close = std::move(iter->second.client);
+      clients_.erase(iter);
+    }
+  }
+  if (client_to_close) {
+    client_to_close->Close();
+  }
+}
+
+void RaftTransport::CloseAll() {
+  std::vector<std::shared_ptr<NodeClient>> clients;
+  {
+    std::lock_guard<std::mutex> guard(mutex_);
+    clients.reserve(clients_.size());
+    for (auto& [_, entry] : clients_) {
+      if (entry.client) {
+        clients.emplace_back(std::move(entry.client));
+      }
+    }
+    clients_.clear();
+  }
+  for (auto& client : clients) {
+    client->Close();
+  }
+}
+
+RaftManager::ServiceRunner::ServiceRunner(std::string thread_name,
+                                          size_t thread_num)
+    : thread_name(std::move(thread_name)),
+      work(std::make_unique<boost::asio::io_service::work>(service)) {
+  if (thread_num == 0) {
+    thread_num = 1;
+  }
+  threads.reserve(thread_num);
+  for (size_t i = 0; i < thread_num; ++i) {
+    threads.emplace_back([this, i]() {
+      auto name = fmt::format("{}{}", this->thread_name, i);
+      pthread_setname_np(pthread_self(), name.c_str());
+      service.run();
+    });
+  }
+}
+
+RaftManager::ServiceRunner::~ServiceRunner() { Stop(); }
+
+void RaftManager::ServiceRunner::Stop() {
+  if (stopped.exchange(true)) {
+    return;
+  }
+  work.reset();
+  service.stop();
+  for (auto& thread : threads) {
+    if (thread.joinable()) {
+      thread.join();
+    }
+  }
+  threads.clear();
+}
+
+void RaftManager::ServiceRunner::WaitForIdle() {
+  if (stopped.load()) {
+    return;
+  }
+  std::promise<void> promise;
+  auto future = promise.get_future();
+  service.post([&promise]() { promise.set_value(); });
+  future.wait();
+}
+
+std::shared_ptr<RaftManager> RaftManager::Instance() {
+  static std::weak_ptr<RaftManager> weak_manager;
+  static std::mutex mutex;
+  std::lock_guard<std::mutex> guard(mutex);
+  auto manager = weak_manager.lock();
+  if (!manager) {
+    manager = std::shared_ptr<RaftManager>(new RaftManager());
+    weak_manager = manager;
+  }
+  return manager;
+}
+
+RaftManager::RaftManager()
+    : raft_runner_("raft-mgr-", 1),
+      timer_runner_("raft-tmr-", 1),
+      apply_runner_("raft-app-", 1),
+      client_runner_("raft-cli-", 1) {
+  transport_ = std::make_shared<RaftTransport>(client_runner_.service);
+}
+
+RaftManager::~RaftManager() {
+  if (transport_) {
+    transport_->CloseAll();
+  }
+}
+
+boost::asio::io_service& RaftManager::raft_service() {
+  return raft_runner_.service;
+}
+
+boost::asio::io_service& RaftManager::timer_service() {
+  return timer_runner_.service;
+}
+
+boost::asio::io_service& RaftManager::apply_service() {
+  return apply_runner_.service;
+}
+
+boost::asio::io_service& RaftManager::client_service() {
+  return client_runner_.service;
+}
+
+std::shared_ptr<TransportClient> RaftManager::AcquireClient(
+    const std::string& ip, int port) {
+  return transport_->Acquire(ip, port);
+}
+
+void RaftManager::WaitForRaftService() { raft_runner_.WaitForIdle(); }
+
+void RaftManager::WaitForTimerService() { timer_runner_.WaitForIdle(); }
+
+void RaftManager::WaitForApplyService() { apply_runner_.WaitForIdle(); }
+
 std::string MessageToNetString(const std::string& graph,
                                const raftpb::Message& msg) {
   meta::RaftMessage envelope;
@@ -350,14 +530,16 @@ RaftDriver::RaftDriver(
     std::function<void(uint64_t index, const meta::RaftRequest&)> apply,
     uint64_t apply_id, LocalNodeConfig local_node,
     const RaftLogStoreConfig& store_config, const RaftConfig& config)
-    : apply_(std::move(apply)),
+    : manager_(RaftManager::Instance()),
+      callback_alive_(std::make_shared<std::atomic<bool>>(false)),
+      apply_(std::move(apply)),
       apply_id_(apply_id),
       local_node_(std::move(local_node)),
       node_id_(0),
       tick_interval_(config.tick_interval),
-      tick_timer_(timer_service_, tick_interval_),
+      tick_timer_(manager_->timer_service(), tick_interval_),
       compact_interval_(store_config.gc_interval * 60 * 1000),
-      compact_timer_(timer_service_, compact_interval_),
+      compact_timer_(manager_->timer_service(), compact_interval_),
       store_config_(store_config),
       raft_config_(config) {}
 
@@ -366,20 +548,23 @@ RaftDriver::RaftDriver(
     uint64_t apply_id, LocalNodeConfig local_node,
     std::vector<eraft::Peer> init_peers, const RaftLogStoreConfig& store_config,
     const RaftConfig& config)
-    : apply_(std::move(apply)),
+    : manager_(RaftManager::Instance()),
+      callback_alive_(std::make_shared<std::atomic<bool>>(false)),
+      apply_(std::move(apply)),
       apply_id_(apply_id),
       local_node_(std::move(local_node)),
       node_id_(0),
       init_peers_(std::move(init_peers)),
       tick_interval_(config.tick_interval),
-      tick_timer_(timer_service_, tick_interval_),
+      tick_timer_(manager_->timer_service(), tick_interval_),
       compact_interval_(store_config.gc_interval * 60 * 1000),
-      compact_timer_(timer_service_, compact_interval_),
+      compact_timer_(manager_->timer_service(), compact_interval_),
       store_config_(store_config),
       raft_config_(config) {}
 
 eraft::Error RaftDriver::Run() {
   stopped_.store(false);
+  callback_alive_->store(true);
   if (!local_node_.Check()) {
     return eraft::Error("invalid local node config");
   }
@@ -417,9 +602,7 @@ eraft::Error RaftDriver::Run() {
     node_infos_.ParseFromString(nodes.value());
   }
   for (auto& [id, node] : node_infos_.nodes()) {
-    auto client = std::make_shared<NodeClient>(client_service_, node.ip(),
-                                               node.raft_poft());
-    client->Connect();
+    auto client = manager_->AcquireClient(node.ip(), node.raft_poft());
     node_clients_.emplace(node.node_id(), std::move(client));
   }
   LOG_INFO("raft nodes info: {}", node_infos_.ShortDebugString());
@@ -476,41 +659,24 @@ eraft::Error RaftDriver::Run() {
   }
   Tick();
   CheckAndCompactLog();
-
-  threads_.emplace_back([this]() {
-    pthread_setname_np(pthread_self(), "raft_service");
-    boost::asio::io_service::work holder(raft_service_);
-    raft_service_.run();
-  });
-  threads_.emplace_back([this]() {
-    pthread_setname_np(pthread_self(), "timer_service");
-    boost::asio::io_service::work holder(timer_service_);
-    timer_service_.run();
-  });
-  threads_.emplace_back([this]() {
-    pthread_setname_np(pthread_self(), "apply_service");
-    boost::asio::io_service::work holder(apply_service_);
-    apply_service_.run();
-  });
-  threads_.emplace_back([this]() {
-    pthread_setname_np(pthread_self(), "client_service");
-    boost::asio::io_service::work holder(client_service_);
-    client_service_.run();
-  });
   return {};
 }
 
 void RaftDriver::Stop() {
-  stopped_.store(true);
-  RejectPendingPromises(eraft::Error("raft driver stopped"));
-  client_service_.stop();
-  timer_service_.stop();
-  raft_service_.stop();
-  apply_service_.stop();
-  for (auto& t : threads_) {
-    t.join();
+  if (stopped_.exchange(true)) {
+    return;
   }
-  threads_.clear();
+  callback_alive_->store(false);
+  RejectPendingPromises(eraft::Error("raft driver stopped"));
+  manager_->timer_service().post([this]() {
+    boost::system::error_code ec;
+    tick_timer_.cancel(ec);
+    compact_timer_.cancel(ec);
+  });
+  manager_->WaitForTimerService();
+  manager_->WaitForRaftService();
+  manager_->WaitForApplyService();
+  node_clients_.clear();
   if (storage_) {
     storage_->Close();
   }
@@ -518,7 +684,14 @@ void RaftDriver::Stop() {
 }
 
 void RaftDriver::Step(raftpb::Message msg) {
-  raft_service_.post([this, msg = std::move(msg)]() mutable {
+  if (stopped_.load()) {
+    return;
+  }
+  auto alive = callback_alive_;
+  manager_->raft_service().post([this, alive, msg = std::move(msg)]() mutable {
+    if (!alive->load() || stopped_.load()) {
+      return;
+    }
     auto err = rn_->Step(std::move(msg));
     if (err != nullptr) {
       LOG_WARN("failed to step message, err: {}", err.String());
@@ -567,45 +740,47 @@ std::shared_ptr<PromiseContext> RaftDriver::Propose(uint64_t uuid,
     pending_proposal_bytes_ += proposal_bytes;
     context->proposal_accounted = true;
   }
-  raft_service_.post([this, uuid, context, msg = std::move(msg)]() mutable {
-    eraft::Error err = nullptr;
-    bool should_reject = false;
-    {
-      std::lock_guard<std::mutex> guard(promise_mutex_);
-      auto iter = pending_promise_.find(uuid);
-      if (iter == pending_promise_.end() || iter->second != context) {
-        return;
-      }
-      if (stopped_.load()) {
-        err = eraft::Error("raft driver stopped");
-        ReleaseProposalAccountingLocked(iter->second);
-        pending_promise_.erase(iter);
-        should_reject = true;
-      } else if (rn_->raft_->id_ != rn_->raft_->lead_) {
-        err = eraft::Error("not leader");
-        ReleaseProposalAccountingLocked(iter->second);
-        pending_promise_.erase(iter);
-        should_reject = true;
-      } else {
-        msg.set_from(rn_->raft_->id_);
-        err = rn_->raft_->Step(std::move(msg));
-        if (err != nullptr) {
-          ReleaseProposalAccountingLocked(iter->second);
-          pending_promise_.erase(iter);
-          should_reject = true;
+  auto alive = callback_alive_;
+  manager_->raft_service().post(
+      [this, alive, uuid, context, msg = std::move(msg)]() mutable {
+        eraft::Error err = nullptr;
+        bool should_reject = false;
+        {
+          std::lock_guard<std::mutex> guard(promise_mutex_);
+          auto iter = pending_promise_.find(uuid);
+          if (iter == pending_promise_.end() || iter->second != context) {
+            return;
+          }
+          if (!alive->load() || stopped_.load()) {
+            err = eraft::Error("raft driver stopped");
+            ReleaseProposalAccountingLocked(iter->second);
+            pending_promise_.erase(iter);
+            should_reject = true;
+          } else if (rn_->raft_->id_ != rn_->raft_->lead_) {
+            err = eraft::Error("not leader");
+            ReleaseProposalAccountingLocked(iter->second);
+            pending_promise_.erase(iter);
+            should_reject = true;
+          } else {
+            msg.set_from(rn_->raft_->id_);
+            err = rn_->raft_->Step(std::move(msg));
+            if (err != nullptr) {
+              ReleaseProposalAccountingLocked(iter->second);
+              pending_promise_.erase(iter);
+              should_reject = true;
+            }
+          }
         }
-      }
-    }
-    if (should_reject) {
-      if (err.String() != "not leader" &&
-          err.String() != "raft driver stopped") {
-        LOG_WARN("failed to step raft message, err: {}", err.String());
-      }
-      context->SetError(std::move(err));
-      return;
-    }
-    CheckReady();
-  });
+        if (should_reject) {
+          if (err.String() != "not leader" &&
+              err.String() != "raft driver stopped") {
+            LOG_WARN("failed to step raft message, err: {}", err.String());
+          }
+          context->SetError(std::move(err));
+          return;
+        }
+        CheckReady();
+      });
   return context;
 }
 
@@ -660,14 +835,23 @@ void RaftDriver::RejectPendingPromises(const eraft::Error& err) {
 }
 
 void RaftDriver::Tick() {
-  raft_service_.post([this]() mutable {
+  auto alive = callback_alive_;
+  manager_->raft_service().post([this, alive]() mutable {
+    if (!alive->load() || stopped_.load()) {
+      return;
+    }
     rn_->Tick();
     CheckReady();
   });
   tick_timer_.expires_at(tick_timer_.expires_at() + tick_interval_);
-  tick_timer_.async_wait([this](const boost::system::error_code& ec) {
+  tick_timer_.async_wait([this, alive](const boost::system::error_code& ec) {
+    if (!alive->load() || stopped_.load()) {
+      return;
+    }
     if (ec) {
-      LOG_WARN("tick_timer async_wait error: {}", ec.message());
+      if (ec != boost::asio::error::operation_aborted) {
+        LOG_WARN("tick_timer async_wait error: {}", ec.message());
+      }
       return;
     }
     Tick();
@@ -733,8 +917,14 @@ std::shared_ptr<PromiseContext> RaftDriver::ProposeRaftRequest(
 meta::RaftNodeInfos RaftDriver::GetNodeInfosWithLeader() {
   std::promise<uint64_t> promise;
   auto future = promise.get_future();
-  raft_service_.post(
-      [this, &promise]() { promise.set_value(rn_->raft_->lead_); });
+  auto alive = callback_alive_;
+  manager_->raft_service().post([this, alive, &promise]() {
+    if (!alive->load() || stopped_.load()) {
+      promise.set_value(0);
+      return;
+    }
+    promise.set_value(rn_->raft_->lead_);
+  });
   auto leader = future.get();
 
   std::shared_lock<std::shared_mutex> lock(nodes_mutex_);
@@ -748,8 +938,13 @@ meta::RaftNodeInfos RaftDriver::GetNodeInfosWithLeader() {
 RaftStatus RaftDriver::GetRaftStatus() {
   std::promise<RaftStatus> promise;
   auto future = promise.get_future();
-  raft_service_.post([this, &promise]() {
+  auto alive = callback_alive_;
+  manager_->raft_service().post([this, alive, &promise]() {
     RaftStatus rs;
+    if (!alive->load() || stopped_.load()) {
+      promise.set_value(rs);
+      return;
+    }
     rs.s = rn_->GetStatus();
     rs.first_log = storage_->FirstIndex().first - 1;
     rs.last_log = storage_->LastIndex().first;
@@ -759,7 +954,11 @@ RaftStatus RaftDriver::GetRaftStatus() {
 }
 
 void RaftDriver::CheckAndCompactLog() {
-  raft_service_.post([this]() mutable {
+  auto alive = callback_alive_;
+  manager_->raft_service().post([this, alive]() mutable {
+    if (!alive->load() || stopped_.load()) {
+      return;
+    }
     auto first = storage_->FirstIndex().first;
     auto applied = apply_id_.load();
     if (applied > first) {
@@ -772,9 +971,14 @@ void RaftDriver::CheckAndCompactLog() {
     }
   });
   compact_timer_.expires_at(compact_timer_.expires_at() + compact_interval_);
-  compact_timer_.async_wait([this](const boost::system::error_code& ec) {
+  compact_timer_.async_wait([this, alive](const boost::system::error_code& ec) {
+    if (!alive->load() || stopped_.load()) {
+      return;
+    }
     if (ec) {
-      LOG_WARN("compact_timer async_wait error: {}", ec.message());
+      if (ec != boost::asio::error::operation_aborted) {
+        LOG_WARN("compact_timer async_wait error: {}", ec.message());
+      }
       return;
     }
     CheckAndCompactLog();
@@ -842,8 +1046,13 @@ void RaftDriver::CheckReady() {
       }
     }
     if (!has_confchange) {
-      apply_service_.post(
-          [this, committedEntries = std::move(ready.committedEntries_)]() {
+      auto alive = callback_alive_;
+      manager_->apply_service().post(
+          [this, alive,
+           committedEntries = std::move(ready.committedEntries_)]() {
+            if (!alive->load() || stopped_.load()) {
+              return;
+            }
             Apply(committedEntries);
           });
     } else {
@@ -919,9 +1128,8 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
             if (!node_infos_.nodes().count(node_info.node_id())) {
               node_infos_.mutable_nodes()->insert(
                   {node_info.node_id(), node_info});
-              auto client = std::make_shared<NodeClient>(
-                  client_service_, node_info.ip(), node_info.raft_poft());
-              client->Connect();
+              auto client = manager_->AcquireClient(node_info.ip(),
+                                                    node_info.raft_poft());
               node_clients_.emplace(node_info.node_id(), std::move(client));
             } else {
               LOG_ERROR("node id {} has already existed", node_info.node_id());
@@ -932,7 +1140,6 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
             LOG_INFO("remove node: {}", node_info.node_id());
             std::unique_lock<std::shared_mutex> lock(nodes_mutex_);
             if (node_infos_.nodes().count(node_info.node_id())) {
-              node_clients_.at(node_info.node_id())->Close();
               node_clients_.erase(node_info.node_id());
               node_infos_.mutable_nodes()->erase(node_info.node_id());
             } else {

@@ -21,9 +21,17 @@
 #include <boost/asio.hpp>
 #include <deque>
 #include <future>
+#include <memory>
+#include <mutex>
 #include <shared_mutex>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <vector>
 
+#include "common/type_traits.h"
 #include "proto/meta.pb.h"
 #include "raft/raft_log_store.h"
 
@@ -62,6 +70,90 @@ class NodeClient : public std::enable_shared_from_this<NodeClient> {
   std::atomic<bool> connected_ = false;
   const uint8_t magic_code[4] = {0x17, 0xB0, 0x60, 0x60};
   uint8_t buffer4_[4] = {0};
+};
+
+class RaftTransport;
+
+class TransportClient {
+ public:
+  ~TransportClient();
+  void Send(std::string str);
+  bool connected() const;
+
+ private:
+  friend class RaftTransport;
+  TransportClient(std::shared_ptr<RaftTransport> transport, std::string key,
+                  std::shared_ptr<NodeClient> client)
+      : transport_(std::move(transport)),
+        key_(std::move(key)),
+        client_(std::move(client)) {}
+
+  std::shared_ptr<RaftTransport> transport_;
+  std::string key_;
+  std::shared_ptr<NodeClient> client_;
+};
+
+class RaftTransport : public std::enable_shared_from_this<RaftTransport> {
+ public:
+  explicit RaftTransport(boost::asio::io_service& client_service)
+      : client_service_(client_service) {}
+
+  std::shared_ptr<TransportClient> Acquire(const std::string& ip, int port);
+  void CloseAll();
+
+ private:
+  friend class TransportClient;
+  struct ClientEntry {
+    std::shared_ptr<NodeClient> client;
+    size_t refs = 0;
+  };
+
+  static std::string BuildKey(const std::string& ip, int port);
+  void Release(const std::string& key);
+
+  boost::asio::io_service& client_service_;
+  std::mutex mutex_;
+  std::unordered_map<std::string, ClientEntry> clients_;
+};
+
+class RaftManager : public std::enable_shared_from_this<RaftManager> {
+ public:
+  static std::shared_ptr<RaftManager> Instance();
+  ~RaftManager();
+  DISABLE_COPY(RaftManager);
+  DISABLE_MOVE(RaftManager);
+
+  boost::asio::io_service& raft_service();
+  boost::asio::io_service& timer_service();
+  boost::asio::io_service& apply_service();
+  boost::asio::io_service& client_service();
+  std::shared_ptr<TransportClient> AcquireClient(const std::string& ip,
+                                                 int port);
+  void WaitForRaftService();
+  void WaitForTimerService();
+  void WaitForApplyService();
+
+ private:
+  struct ServiceRunner {
+    ServiceRunner(std::string thread_name, size_t thread_num);
+    ~ServiceRunner();
+    void Stop();
+    void WaitForIdle();
+
+    std::string thread_name;
+    boost::asio::io_service service;
+    std::unique_ptr<boost::asio::io_service::work> work;
+    std::vector<std::thread> threads;
+    std::atomic<bool> stopped{false};
+  };
+
+  RaftManager();
+
+  ServiceRunner raft_runner_;
+  ServiceRunner timer_runner_;
+  ServiceRunner apply_runner_;
+  ServiceRunner client_runner_;
+  std::shared_ptr<RaftTransport> transport_;
 };
 
 struct Generator {
@@ -192,11 +284,8 @@ class RaftDriver {
   void CheckReady();
   void Apply(const std::vector<raftpb::Entry>& entries);
 
-  std::vector<std::thread> threads_;
-  boost::asio::io_service raft_service_;
-  boost::asio::io_service timer_service_;
-  boost::asio::io_service apply_service_;
-  boost::asio::io_service client_service_;
+  std::shared_ptr<RaftManager> manager_;
+  std::shared_ptr<std::atomic<bool>> callback_alive_;
   std::function<void(uint64_t, const meta::RaftRequest&)> apply_;
   std::atomic<uint64_t> apply_id_;
   LocalNodeConfig local_node_;
@@ -210,7 +299,7 @@ class RaftDriver {
   std::shared_ptr<RaftLogStorage> storage_;
   std::shared_mutex nodes_mutex_;
   meta::RaftNodeInfos node_infos_;
-  std::unordered_map<uint64_t, std::shared_ptr<NodeClient>> node_clients_;
+  std::unordered_map<uint64_t, std::shared_ptr<TransportClient>> node_clients_;
   Generator id_generator_;
   std::mutex promise_mutex_;
   std::unordered_map<uint64_t, std::shared_ptr<PromiseContext>>
