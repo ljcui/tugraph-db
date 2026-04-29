@@ -17,6 +17,7 @@
 #pragma once
 #include <rocksdb/write_batch.h>
 
+#include <atomic>
 #include <boost/asio.hpp>
 #include <deque>
 #include <shared_mutex>
@@ -160,7 +161,7 @@ class RaftDriver {
   boost::asio::io_service apply_service_;
   boost::asio::io_service client_service_;
   std::function<void(uint64_t, const meta::RaftRequest&)> apply_;
-  uint64_t apply_id_;
+  std::atomic<uint64_t> apply_id_;
   LocalNodeConfig local_node_;
   uint64_t node_id_;
   std::vector<eraft::Peer> init_peers_;

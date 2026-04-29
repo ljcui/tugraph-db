@@ -392,7 +392,7 @@ eraft::Error RaftDriver::Run() {
     return eraft::Error("failed to open raft db, error: " + s.ToString());
   }
   storage_ = std::make_shared<RaftLogStorage>(db, cf_handles[0], cf_handles[1]);
-  auto applied = std::max(apply_id_, storage_->GetApplyIndex());
+  auto applied = std::max(apply_id_.load(), storage_->GetApplyIndex());
   auto nodes = storage_->GetNodeInfos();
   if (nodes.has_value()) {
     node_infos_.ParseFromString(nodes.value());
@@ -613,7 +613,7 @@ RaftStatus RaftDriver::GetRaftStatus() {
 void RaftDriver::CheckAndCompactLog() {
   raft_service_.post([this]() mutable {
     auto first = storage_->FirstIndex().first;
-    auto applied = rn_->raft_->raftLog_->applied_;
+    auto applied = apply_id_.load();
     if (applied > first) {
       if (applied - first >= store_config_.keep_logs + 100000) {
         auto compacted = applied - store_config_.keep_logs;
@@ -731,6 +731,9 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
           apply_err = eraft::Error(e.what());
         } catch (...) {
           apply_err = eraft::Error("unknown error");
+        }
+        if (apply_err == nullptr) {
+          apply_id_.store(entry.index());
         }
         if (context) {
           context->applied.set_value(
