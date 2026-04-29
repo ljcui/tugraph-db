@@ -42,9 +42,6 @@ std::string EntityIdKey(MetaDataType type) {
   return std::string(1, static_cast<char>(type));
 }
 
-const std::string kRaftApplyIndexKey(
-    1, static_cast<char>(MetaDataType::RaftApplyIndex));
-
 template <typename T>
 void StoreMax(std::atomic<T> *target, T value) {
   T current = target->load();
@@ -142,7 +139,6 @@ void IdGenerator::ApplyMetaRecord(MetaDataType type,
         THROW_CODE(StorageEngineError,
                    "next vertex id metadata must be positive");
       }
-      std::lock_guard<std::mutex> refill_lock(vid_refill_mutex_);
       StoreMax(&persisted_next_vid_, next_vid);
       StoreMax(&next_vid_, next_vid);
       StoreMax(&vid_range_end_, next_vid);
@@ -160,7 +156,6 @@ void IdGenerator::ApplyMetaRecord(MetaDataType type,
         THROW_CODE(StorageEngineError,
                    "next edge id metadata must be positive");
       }
-      std::lock_guard<std::mutex> refill_lock(eid_refill_mutex_);
       StoreMax(&persisted_next_eid_, next_eid);
       StoreMax(&next_eid_, next_eid);
       StoreMax(&eid_range_end_, next_eid);
@@ -235,33 +230,10 @@ void IdGenerator::ProposeAndApply(rocksdb::WriteBatch *wb) {
     return;
   }
 
-  meta::RaftRequest request;
-  request.set_wb_kind(meta::WriteBatchKind::ID_GENERATOR);
-  request.set_wb_data(wb->Data());
-  auto context = raft_driver_->ProposeRaftRequest(std::move(request));
-  auto commit_result = context->commited.get_future().get();
-  if (commit_result.err != nullptr) {
-    THROW_CODE(StorageEngineError, commit_result.err.String());
-  }
-
-  auto s = wb->Put(
-      graph_cf_->meta_info, kRaftApplyIndexKey,
-      std::string(AsChars(commit_result.index), sizeof(commit_result.index)));
-  if (!s.ok()) {
-    context->applied.set_value();
-    LOG_FATAL("failed to persist raft apply index before local apply: {}",
-              s.ToString());
-  }
-  auto *base_db = db_->GetBaseDB();
-  if (!base_db) {
-    context->applied.set_value();
-    LOG_FATAL("failed to access base rocksdb::DB for id generator raft apply");
-  }
-  s = base_db->Write({}, wb);
-  context->applied.set_value();
-  if (!s.ok()) {
-    LOG_FATAL("raft commit succeeded but id generator local write failed: {}",
-              s.ToString());
+  auto apply_result =
+      raft_driver_->ProposeWriteBatch(meta::WriteBatchKind::ID_GENERATOR, *wb);
+  if (apply_result.err != nullptr) {
+    THROW_CODE(StorageEngineError, apply_result.err.String());
   }
 }
 
@@ -380,18 +352,22 @@ uint32_t IdGenerator::GetOrCreateLid(const std::string &name) {
       return iter->second;
     }
   }
+  std::lock_guard create_lock(vertex_label_create_mutex_);
   {
-    std::unique_lock write_lock(vertex_labels_mutex_);
+    std::shared_lock read_lock(vertex_labels_mutex_);
     auto iter = vertex_labels_name_to_id_.find(name);
     if (iter != vertex_labels_name_to_id_.end()) {
       return iter->second;
     }
-    uint32_t bigendian_lid = native_to_big(label_next_lid_++);
-    PersistToken(MetaDataType::VertexLabel, name, bigendian_lid);
+  }
+  uint32_t bigendian_lid = native_to_big(label_next_lid_++);
+  PersistToken(MetaDataType::VertexLabel, name, bigendian_lid);
+  {
+    std::unique_lock write_lock(vertex_labels_mutex_);
     vertex_labels_name_to_id_[name] = bigendian_lid;
     vertex_labels_id_to_name_[bigendian_lid] = name;
-    return bigendian_lid;
   }
+  return bigendian_lid;
 }
 
 uint32_t IdGenerator::GetOrCreateTid(const std::string &name) {
@@ -405,18 +381,22 @@ uint32_t IdGenerator::GetOrCreateTid(const std::string &name) {
       return iter->second;
     }
   }
+  std::lock_guard create_lock(edge_type_create_mutex_);
   {
-    std::unique_lock write_lock(edge_types_mutex_);
+    std::shared_lock read_lock(edge_types_mutex_);
     auto iter = edge_types_name_to_id_.find(name);
     if (iter != edge_types_name_to_id_.end()) {
       return iter->second;
     }
-    uint32_t bigendian_tid = native_to_big(label_next_tid_++);
-    PersistToken(MetaDataType::EdgeType, name, bigendian_tid);
+  }
+  uint32_t bigendian_tid = native_to_big(label_next_tid_++);
+  PersistToken(MetaDataType::EdgeType, name, bigendian_tid);
+  {
+    std::unique_lock write_lock(edge_types_mutex_);
     edge_types_name_to_id_[name] = bigendian_tid;
     edge_types_id_to_name_[bigendian_tid] = name;
-    return bigendian_tid;
   }
+  return bigendian_tid;
 }
 
 uint32_t IdGenerator::GetOrCreatePid(const std::string &name) {
@@ -430,18 +410,22 @@ uint32_t IdGenerator::GetOrCreatePid(const std::string &name) {
       return iter->second;
     }
   }
+  std::lock_guard create_lock(property_create_mutex_);
   {
-    std::unique_lock write_lock(properties_mutex_);
+    std::shared_lock read_lock(properties_mutex_);
     auto iter = properties_name_to_id_.find(name);
     if (iter != properties_name_to_id_.end()) {
       return iter->second;
     }
-    uint32_t bigendian_pid = native_to_big(label_next_pid_++);
-    PersistToken(MetaDataType::Property, name, bigendian_pid);
+  }
+  uint32_t bigendian_pid = native_to_big(label_next_pid_++);
+  PersistToken(MetaDataType::Property, name, bigendian_pid);
+  {
+    std::unique_lock write_lock(properties_mutex_);
     properties_name_to_id_[name] = bigendian_pid;
     properties_id_to_name_[bigendian_pid] = name;
-    return bigendian_pid;
   }
+  return bigendian_pid;
 }
 
 std::unordered_set<std::string> IdGenerator::GetProperties() {

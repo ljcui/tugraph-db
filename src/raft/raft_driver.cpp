@@ -511,14 +511,17 @@ std::shared_ptr<PromiseContext> RaftDriver::Propose(uint64_t uuid,
     if (rn_->raft_->id_ != rn_->raft_->lead_) {
       context->commited.set_value(
           PromiseContext::CommitResult{eraft::Error("not leader"), 0});
+      context->applied.set_value(
+          PromiseContext::ApplyResult{eraft::Error("not leader"), 0});
       return;
     }
     msg.set_from(rn_->raft_->id_);
     auto err = rn_->raft_->Step(std::move(msg));
     if (err != nullptr) {
       LOG_WARN("failed to step raft message, err: {}", err.String());
-      context->commited.set_value(
-          PromiseContext::CommitResult{std::move(err), 0});
+      context->commited.set_value(PromiseContext::CommitResult{err, 0});
+      context->applied.set_value(
+          PromiseContext::ApplyResult{std::move(err), 0});
       return;
     }
     {
@@ -554,6 +557,15 @@ std::shared_ptr<PromiseContext> RaftDriver::ProposeConfChange(
   entry->set_data(cc.SerializeAsString());
   msg.set_type(raftpb::MessageType::MsgProp);
   return Propose(cc.id(), std::move(msg));
+}
+
+PromiseContext::ApplyResult RaftDriver::ProposeWriteBatch(
+    meta::WriteBatchKind kind, const rocksdb::WriteBatch& wb) {
+  meta::RaftRequest request;
+  request.set_wb_kind(kind);
+  request.set_wb_data(wb.Data());
+  auto context = ProposeRaftRequest(std::move(request));
+  return context->applied.get_future().get();
 }
 
 std::shared_ptr<PromiseContext> RaftDriver::ProposeRaftRequest(
@@ -711,9 +723,22 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
         if (context) {
           context->commited.set_value(
               PromiseContext::CommitResult{nullptr, entry.index()});
-          context->applied.get_future().wait();
-        } else {
+        }
+        eraft::Error apply_err = nullptr;
+        try {
           apply_(entry.index(), request);
+        } catch (const std::exception& e) {
+          apply_err = eraft::Error(e.what());
+        } catch (...) {
+          apply_err = eraft::Error("unknown error");
+        }
+        if (context) {
+          context->applied.set_value(
+              PromiseContext::ApplyResult{apply_err, entry.index()});
+        }
+        if (apply_err != nullptr) {
+          LOG_FATAL("failed to apply committed raft request at index {}: {}",
+                    entry.index(), apply_err.String());
         }
         break;
       }
@@ -786,7 +811,8 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
         if (context) {
           context->commited.set_value(
               PromiseContext::CommitResult{nullptr, entry.index()});
-          context->applied.set_value();
+          context->applied.set_value(
+              PromiseContext::ApplyResult{nullptr, entry.index()});
         }
         break;
       }

@@ -15,6 +15,8 @@
 // written by botu.wzy
 
 #pragma once
+#include <rocksdb/write_batch.h>
+
 #include <boost/asio.hpp>
 #include <deque>
 #include <shared_mutex>
@@ -83,13 +85,15 @@ struct Generator {
 };
 
 struct PromiseContext {
-  struct CommitResult {
+  struct Result {
     eraft::Error err;
     uint64_t index = 0;
   };
+  using CommitResult = Result;
+  using ApplyResult = Result;
 
   std::promise<CommitResult> commited;
-  std::promise<void> applied;
+  std::promise<ApplyResult> applied;
 };
 
 struct RaftStatus {
@@ -136,6 +140,8 @@ class RaftDriver {
   eraft::Error Run();
   void Stop();
   void Step(raftpb::Message msg);
+  PromiseContext::ApplyResult ProposeWriteBatch(meta::WriteBatchKind kind,
+                                                const rocksdb::WriteBatch& wb);
   std::shared_ptr<PromiseContext> ProposeRaftRequest(meta::RaftRequest request);
   std::shared_ptr<PromiseContext> ProposeConfChange(raftpb::ConfChange& cc);
   meta::RaftNodeInfos GetNodeInfosWithLeader();

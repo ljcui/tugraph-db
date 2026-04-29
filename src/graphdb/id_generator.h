@@ -112,6 +112,9 @@ class IdGenerator {
   raft::RaftDriver* raft_driver_ = nullptr;
   std::mutex vid_refill_mutex_;
   std::mutex eid_refill_mutex_;
+  std::mutex vertex_label_create_mutex_;
+  std::mutex edge_type_create_mutex_;
+  std::mutex property_create_mutex_;
   std::shared_mutex vertex_labels_mutex_;
   std::shared_mutex edge_types_mutex_;
   std::shared_mutex properties_mutex_;

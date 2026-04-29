@@ -451,39 +451,19 @@ void Transaction::Commit() {
         auto s = txn_->Commit();
         if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
       } else {
-        meta::RaftRequest request;
-        request.set_wb_kind(meta::WriteBatchKind::GRAPH_WRITE);
-        request.set_wb_data(write_batch->Data());
-        auto context = raft_driver->ProposeRaftRequest(std::move(request));
-        auto commit_result = context->commited.get_future().get();
-        if (commit_result.err != nullptr) {
+        auto apply_result = raft_driver->ProposeWriteBatch(
+            meta::WriteBatchKind::GRAPH_WRITE, *write_batch);
+        if (apply_result.err != nullptr) {
           auto rollback_status = txn_->Rollback();
           if (!rollback_status.ok()) {
             LOG_WARN(
                 "transaction rollback after raft commit failure failed: {}",
                 rollback_status.ToString());
           }
-          THROW_CODE(StorageEngineError, commit_result.err.String());
-        }
-        auto s = db_->SetRaftApplyIndex(commit_result.index, write_batch);
-        if (!s.ok()) {
-          context->applied.set_value();
-          LOG_FATAL("failed to persist raft apply index before local apply: {}",
-                    s.ToString());
-        }
-        auto* base_db = db_->raw_db()->GetBaseDB();
-        if (!base_db) {
-          context->applied.set_value();
-          LOG_FATAL("failed to access base rocksdb::DB for raft commit");
-        }
-        s = base_db->Write({}, write_batch);
-        context->applied.set_value();
-        if (!s.ok()) {
-          LOG_FATAL("raft commit succeeded but local write failed: {}",
-                    s.ToString());
+          THROW_CODE(StorageEngineError, apply_result.err.String());
         }
         write_batch_with_index->Clear();
-        s = txn_->Commit();
+        auto s = txn_->Commit();
         if (!s.ok()) {
           LOG_FATAL("raft commit succeeded but transaction cleanup failed: {}",
                     s.ToString());
