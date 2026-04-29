@@ -95,6 +95,8 @@ struct PromiseContext {
   using ApplyResult = Result;
 
   uint64_t id = 0;
+  uint64_t proposal_bytes = 0;
+  bool proposal_accounted = false;
   std::promise<CommitResult> commited;
   std::promise<ApplyResult> applied;
   std::atomic<bool> commited_ready = false;
@@ -129,6 +131,9 @@ struct RaftConfig {
   int64_t election_tick = 0;
   int64_t heartbeat_tick = 0;
   int64_t proposal_timeout = 10000;
+  uint64_t max_proposal_bytes = 64 * 1024 * 1024;
+  uint64_t max_pending_proposals = 1024;
+  uint64_t max_pending_proposal_bytes = 256 * 1024 * 1024;
   bool Check();
 };
 
@@ -171,9 +176,14 @@ class RaftDriver {
   RaftStatus GetRaftStatus();
 
  private:
-  std::shared_ptr<PromiseContext> Propose(uint64_t uuid, raftpb::Message msg);
+  std::shared_ptr<PromiseContext> Propose(uint64_t uuid, raftpb::Message msg,
+                                          uint64_t proposal_bytes);
   bool RemovePendingPromise(uint64_t uuid,
                             const std::shared_ptr<PromiseContext>& context);
+  void ReleaseProposalAccounting(
+      const std::shared_ptr<PromiseContext>& context);
+  void ReleaseProposalAccountingLocked(
+      const std::shared_ptr<PromiseContext>& context);
   void RejectPendingPromises(const eraft::Error& err);
   void Tick();
   void CheckAndCompactLog();
@@ -203,6 +213,8 @@ class RaftDriver {
   std::mutex promise_mutex_;
   std::unordered_map<uint64_t, std::shared_ptr<PromiseContext>>
       pending_promise_;
+  uint64_t pending_proposals_ = 0;
+  uint64_t pending_proposal_bytes_ = 0;
   std::unordered_set<uint64_t> mark_unreachable_;
   RaftLogStoreConfig store_config_;
   RaftConfig raft_config_;

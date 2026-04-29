@@ -285,6 +285,20 @@ bool RaftConfig::Check() {
     LOG_WARN("proposal_timeout should be greater than 0");
     return false;
   }
+  if (max_proposal_bytes == 0) {
+    LOG_WARN("max_proposal_bytes should be greater than 0");
+    return false;
+  }
+  if (max_pending_proposals == 0) {
+    LOG_WARN("max_pending_proposals should be greater than 0");
+    return false;
+  }
+  if (max_pending_proposal_bytes < max_proposal_bytes) {
+    LOG_WARN(
+        "max_pending_proposal_bytes should be greater than or equal to "
+        "max_proposal_bytes");
+    return false;
+  }
   return true;
 }
 
@@ -443,7 +457,7 @@ eraft::Error RaftDriver::Run() {
   config.storage_ = storage_;
   config.maxSizePerMsg_ = 1024 * 1024;
   config.maxInflightMsgs_ = 256;
-  config.maxUncommittedEntriesSize_ = 1 << 30;
+  config.maxUncommittedEntriesSize_ = raft_config_.max_pending_proposal_bytes;
   config.stepDownOnRemoval_ = true;
   config.preVote_ = true;
   config.checkQuorum_ = true;
@@ -512,16 +526,43 @@ void RaftDriver::Step(raftpb::Message msg) {
 }
 
 std::shared_ptr<PromiseContext> RaftDriver::Propose(uint64_t uuid,
-                                                    raftpb::Message msg) {
+                                                    raftpb::Message msg,
+                                                    uint64_t proposal_bytes) {
   auto context = std::make_shared<PromiseContext>();
   context->id = uuid;
+  context->proposal_bytes = proposal_bytes;
   {
     std::lock_guard<std::mutex> guard(promise_mutex_);
     if (stopped_.load()) {
       context->SetError(eraft::Error("raft driver stopped"));
       return context;
     }
+    if (proposal_bytes > raft_config_.max_proposal_bytes) {
+      context->SetError(eraft::Error(fmt::format(
+          "raft proposal {} is too large: {} bytes exceeds limit {} bytes",
+          uuid, proposal_bytes, raft_config_.max_proposal_bytes)));
+      return context;
+    }
+    if (pending_proposals_ >= raft_config_.max_pending_proposals) {
+      context->SetError(eraft::Error(fmt::format(
+          "raft proposal backpressure: pending proposals {} reaches limit {}",
+          pending_proposals_, raft_config_.max_pending_proposals)));
+      return context;
+    }
+    if (pending_proposal_bytes_ > raft_config_.max_pending_proposal_bytes ||
+        proposal_bytes >
+            raft_config_.max_pending_proposal_bytes - pending_proposal_bytes_) {
+      context->SetError(eraft::Error(fmt::format(
+          "raft proposal backpressure: pending proposal bytes {} + {} exceeds "
+          "limit {}",
+          pending_proposal_bytes_, proposal_bytes,
+          raft_config_.max_pending_proposal_bytes)));
+      return context;
+    }
     pending_promise_.emplace(uuid, context);
+    ++pending_proposals_;
+    pending_proposal_bytes_ += proposal_bytes;
+    context->proposal_accounted = true;
   }
   raft_service_.post([this, uuid, context, msg = std::move(msg)]() mutable {
     eraft::Error err = nullptr;
@@ -534,16 +575,19 @@ std::shared_ptr<PromiseContext> RaftDriver::Propose(uint64_t uuid,
       }
       if (stopped_.load()) {
         err = eraft::Error("raft driver stopped");
+        ReleaseProposalAccountingLocked(iter->second);
         pending_promise_.erase(iter);
         should_reject = true;
       } else if (rn_->raft_->id_ != rn_->raft_->lead_) {
         err = eraft::Error("not leader");
+        ReleaseProposalAccountingLocked(iter->second);
         pending_promise_.erase(iter);
         should_reject = true;
       } else {
         msg.set_from(rn_->raft_->id_);
         err = rn_->raft_->Step(std::move(msg));
         if (err != nullptr) {
+          ReleaseProposalAccountingLocked(iter->second);
           pending_promise_.erase(iter);
           should_reject = true;
         }
@@ -569,8 +613,31 @@ bool RaftDriver::RemovePendingPromise(
   if (iter == pending_promise_.end() || iter->second != context) {
     return false;
   }
+  ReleaseProposalAccountingLocked(iter->second);
   pending_promise_.erase(iter);
   return true;
+}
+
+void RaftDriver::ReleaseProposalAccounting(
+    const std::shared_ptr<PromiseContext>& context) {
+  std::lock_guard<std::mutex> guard(promise_mutex_);
+  ReleaseProposalAccountingLocked(context);
+}
+
+void RaftDriver::ReleaseProposalAccountingLocked(
+    const std::shared_ptr<PromiseContext>& context) {
+  if (!context->proposal_accounted) {
+    return;
+  }
+  context->proposal_accounted = false;
+  if (pending_proposals_ > 0) {
+    --pending_proposals_;
+  }
+  if (pending_proposal_bytes_ >= context->proposal_bytes) {
+    pending_proposal_bytes_ -= context->proposal_bytes;
+  } else {
+    pending_proposal_bytes_ = 0;
+  }
 }
 
 void RaftDriver::RejectPendingPromises(const eraft::Error& err) {
@@ -579,6 +646,7 @@ void RaftDriver::RejectPendingPromises(const eraft::Error& err) {
     std::lock_guard<std::mutex> guard(promise_mutex_);
     contexts.reserve(pending_promise_.size());
     for (auto& [_, context] : pending_promise_) {
+      ReleaseProposalAccountingLocked(context);
       contexts.emplace_back(std::move(context));
     }
     pending_promise_.clear();
@@ -611,7 +679,8 @@ std::shared_ptr<PromiseContext> RaftDriver::ProposeConfChange(
   entry->set_type(raftpb::EntryType::EntryConfChange);
   entry->set_data(cc.SerializeAsString());
   msg.set_type(raftpb::MessageType::MsgProp);
-  return Propose(cc.id(), std::move(msg));
+  auto proposal_bytes = msg.ByteSizeLong();
+  return Propose(cc.id(), std::move(msg), proposal_bytes);
 }
 
 PromiseContext::ApplyResult RaftDriver::ProposeWriteBatch(
@@ -649,7 +718,8 @@ std::shared_ptr<PromiseContext> RaftDriver::ProposeRaftRequest(
   entry->set_type(raftpb::EntryType::EntryNormal);
   entry->set_data(request.SerializeAsString());
   msg.set_type(raftpb::MessageType::MsgProp);
-  return Propose(request.id(), std::move(msg));
+  auto proposal_bytes = msg.ByteSizeLong();
+  return Propose(request.id(), std::move(msg), proposal_bytes);
 }
 
 meta::RaftNodeInfos RaftDriver::GetNodeInfosWithLeader() {
@@ -813,6 +883,7 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
         if (context) {
           context->SetApplied(
               PromiseContext::ApplyResult{apply_err, entry.index()});
+          ReleaseProposalAccounting(context);
         }
         if (apply_err != nullptr) {
           LOG_FATAL("failed to apply committed raft request at index {}: {}",
@@ -891,6 +962,7 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
               PromiseContext::CommitResult{nullptr, entry.index()});
           context->SetApplied(
               PromiseContext::ApplyResult{nullptr, entry.index()});
+          ReleaseProposalAccounting(context);
         }
         break;
       }

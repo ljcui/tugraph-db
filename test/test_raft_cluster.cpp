@@ -20,6 +20,7 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -371,6 +372,194 @@ TEST(RaftDriver, proposeWriteBatchTimesOutWhenApplyStalls) {
   EXPECT_NE(result.err.String().find("timed out"), std::string::npos);
   EXPECT_TRUE(WaitUntil([&applied_index]() { return applied_index.load() > 0; },
                         std::chrono::seconds(2)));
+
+  driver.Stop();
+  fs::remove_all(raft_path);
+}
+
+TEST(RaftDriver, rejectOversizedWriteBatch) {
+  raft::LocalNodeConfig local_node;
+  local_node.graph = "oversized_proposal_graph";
+  local_node.ip = "127.0.0.1";
+  local_node.bolt_port = 1;
+  local_node.raft_poft = 1;
+
+  raft::RaftConfig raft_config;
+  raft_config.max_proposal_bytes = 32;
+
+  raft::RaftDriver driver([](uint64_t, const meta::RaftRequest&) {}, 0,
+                          std::move(local_node), {}, raft_config);
+
+  rocksdb::WriteBatch wb;
+  ASSERT_TRUE(wb.Put("k", std::string(1024, 'v')).ok());
+  auto result = driver.ProposeWriteBatch(meta::WriteBatchKind::GRAPH_WRITE, wb);
+  EXPECT_NE(result.err, nullptr);
+  EXPECT_NE(result.err.String().find("too large"), std::string::npos);
+}
+
+TEST(RaftDriver, rejectWriteBatchWhenPendingQueueIsFull) {
+  const std::string raft_path = "testdb_raft_proposal_backpressure";
+  fs::remove_all(raft_path);
+
+  raft::LocalNodeConfig local_node;
+  local_node.graph = "proposal_backpressure_graph";
+  local_node.ip = "127.0.0.1";
+  local_node.bolt_port = AllocateFreePort();
+  local_node.raft_poft = AllocateFreePort();
+
+  raft::RaftLogStoreConfig store_config;
+  store_config.path = raft_path;
+  store_config.block_cache = 64;
+  store_config.total_threads = 2;
+  store_config.keep_logs = 100000;
+  store_config.gc_interval = 1;
+
+  raft::RaftConfig raft_config;
+  raft_config.tick_interval = 100;
+  raft_config.election_tick = 10;
+  raft_config.heartbeat_tick = 1;
+  raft_config.max_pending_proposals = 1;
+
+  meta::RaftNodeInfo node_info;
+  node_info.set_node_id(1);
+  node_info.set_graph(local_node.graph);
+  node_info.set_ip(local_node.ip);
+  node_info.set_bolt_port(local_node.bolt_port);
+  node_info.set_raft_poft(local_node.raft_poft);
+
+  std::vector<eraft::Peer> init_peers;
+  eraft::Peer peer;
+  peer.id_ = 1;
+  peer.context_ = node_info.SerializeAsString();
+  init_peers.emplace_back(std::move(peer));
+
+  raft::RaftDriver driver(
+      [](uint64_t, const meta::RaftRequest&) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      },
+      0, std::move(local_node), std::move(init_peers), store_config,
+      raft_config);
+
+  auto err = driver.Run();
+  if (err != nullptr) {
+    driver.Stop();
+    FAIL() << err.String();
+  }
+  if (!WaitUntil(
+          [&driver]() {
+            auto status = driver.GetRaftStatus();
+            return status.s.basicStatus_.softState_.lead_ == 1 &&
+                   status.s.basicStatus_.softState_.raftState_ ==
+                       eraft::StateLeader;
+          },
+          std::chrono::seconds(5))) {
+    auto status = driver.GetRaftStatus();
+    driver.Stop();
+    FAIL() << "raft driver did not become leader, lead="
+           << status.s.basicStatus_.softState_.lead_;
+  }
+
+  rocksdb::WriteBatch wb;
+  ASSERT_TRUE(wb.Put("k", "v").ok());
+  meta::RaftRequest first_request;
+  first_request.set_wb_kind(meta::WriteBatchKind::GRAPH_WRITE);
+  first_request.set_wb_data(wb.Data());
+  auto first_context = driver.ProposeRaftRequest(std::move(first_request));
+
+  auto second_result =
+      driver.ProposeWriteBatch(meta::WriteBatchKind::GRAPH_WRITE, wb);
+  EXPECT_NE(second_result.err, nullptr);
+  EXPECT_NE(second_result.err.String().find("backpressure"), std::string::npos);
+
+  auto first_future = first_context->applied.get_future();
+  ASSERT_EQ(first_future.wait_for(std::chrono::seconds(2)),
+            std::future_status::ready);
+  EXPECT_EQ(first_future.get().err, nullptr);
+
+  driver.Stop();
+  fs::remove_all(raft_path);
+}
+
+TEST(RaftDriver, rejectWriteBatchWhenPendingBytesAreFull) {
+  const std::string raft_path = "testdb_raft_proposal_bytes_backpressure";
+  fs::remove_all(raft_path);
+
+  raft::LocalNodeConfig local_node;
+  local_node.graph = "proposal_bytes_backpressure_graph";
+  local_node.ip = "127.0.0.1";
+  local_node.bolt_port = AllocateFreePort();
+  local_node.raft_poft = AllocateFreePort();
+
+  raft::RaftLogStoreConfig store_config;
+  store_config.path = raft_path;
+  store_config.block_cache = 64;
+  store_config.total_threads = 2;
+  store_config.keep_logs = 100000;
+  store_config.gc_interval = 1;
+
+  raft::RaftConfig raft_config;
+  raft_config.tick_interval = 100;
+  raft_config.election_tick = 10;
+  raft_config.heartbeat_tick = 1;
+  raft_config.max_proposal_bytes = 700 * 1024;
+  raft_config.max_pending_proposal_bytes = 800 * 1024;
+
+  meta::RaftNodeInfo node_info;
+  node_info.set_node_id(1);
+  node_info.set_graph(local_node.graph);
+  node_info.set_ip(local_node.ip);
+  node_info.set_bolt_port(local_node.bolt_port);
+  node_info.set_raft_poft(local_node.raft_poft);
+
+  std::vector<eraft::Peer> init_peers;
+  eraft::Peer peer;
+  peer.id_ = 1;
+  peer.context_ = node_info.SerializeAsString();
+  init_peers.emplace_back(std::move(peer));
+
+  raft::RaftDriver driver(
+      [](uint64_t, const meta::RaftRequest&) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      },
+      0, std::move(local_node), std::move(init_peers), store_config,
+      raft_config);
+
+  auto err = driver.Run();
+  if (err != nullptr) {
+    driver.Stop();
+    FAIL() << err.String();
+  }
+  if (!WaitUntil(
+          [&driver]() {
+            auto status = driver.GetRaftStatus();
+            return status.s.basicStatus_.softState_.lead_ == 1 &&
+                   status.s.basicStatus_.softState_.raftState_ ==
+                       eraft::StateLeader;
+          },
+          std::chrono::seconds(5))) {
+    auto status = driver.GetRaftStatus();
+    driver.Stop();
+    FAIL() << "raft driver did not become leader, lead="
+           << status.s.basicStatus_.softState_.lead_;
+  }
+
+  rocksdb::WriteBatch wb;
+  ASSERT_TRUE(wb.Put("k", std::string(512 * 1024, 'v')).ok());
+  meta::RaftRequest first_request;
+  first_request.set_wb_kind(meta::WriteBatchKind::GRAPH_WRITE);
+  first_request.set_wb_data(wb.Data());
+  auto first_context = driver.ProposeRaftRequest(std::move(first_request));
+
+  auto second_result =
+      driver.ProposeWriteBatch(meta::WriteBatchKind::GRAPH_WRITE, wb);
+  EXPECT_NE(second_result.err, nullptr);
+  EXPECT_NE(second_result.err.String().find("pending proposal bytes"),
+            std::string::npos);
+
+  auto first_future = first_context->applied.get_future();
+  ASSERT_EQ(first_future.wait_for(std::chrono::seconds(2)),
+            std::future_status::ready);
+  EXPECT_EQ(first_future.get().err, nullptr);
 
   driver.Stop();
   fs::remove_all(raft_path);
