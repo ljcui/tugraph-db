@@ -22,10 +22,16 @@
 
 #include <boost/endian/conversion.hpp>
 #include <iostream>
+#include <mutex>
 using namespace boost::endian;
 namespace bolt {
 
 Marker markers[0x100];
+namespace {
+
+std::once_flag markers_init_once;
+
+}  // namespace
 
 void Packer::ListHeader(int ll, uint8_t shortOffset, uint8_t longOffset) {
   auto l = int64_t(ll);
@@ -96,6 +102,7 @@ void Packer::Bytes(const std::string &b) {
 }
 
 void Unpacker::Reset(std::string_view buffer) {
+  MarkersInit();
   buf_ = buffer;
   off_ = 0;
   len_ = buf_.size();
@@ -241,60 +248,63 @@ uint32_t Unpacker::ReadLen(uint32_t n) {
 }
 
 void MarkersInit() {
-  int i = 0;
-  // Tiny int
-  for (; i < 0x80; i++) {
-    markers[i] = Marker{.typ = PackType::Integer, .shortlen = int8_t(i)};
-  }
-  // Tiny string
-  for (; i < 0x90; i++) {
-    markers[i] = Marker{.typ = PackType::String, .shortlen = int8_t(i - 0x80)};
-  }
-  // Tiny array
-  for (; i < 0xa0; i++) {
-    markers[i] = Marker{.typ = PackType::List, .shortlen = int8_t(i - 0x90)};
-  }
-  // Tiny map
-  for (; i < 0xb0; i++) {
-    markers[i] =
-        Marker{.typ = PackType::Dictionary, .shortlen = int8_t(i - 0xa0)};
-  }
-  // Structure
-  for (; i < 0xc0; i++) {
-    markers[i] =
-        Marker{.typ = PackType::Structure, .shortlen = int8_t(i - 0xb0)};
-  }
+  std::call_once(markers_init_once, []() {
+    int i = 0;
+    // Tiny int
+    for (; i < 0x80; i++) {
+      markers[i] = Marker{.typ = PackType::Integer, .shortlen = int8_t(i)};
+    }
+    // Tiny string
+    for (; i < 0x90; i++) {
+      markers[i] =
+          Marker{.typ = PackType::String, .shortlen = int8_t(i - 0x80)};
+    }
+    // Tiny array
+    for (; i < 0xa0; i++) {
+      markers[i] = Marker{.typ = PackType::List, .shortlen = int8_t(i - 0x90)};
+    }
+    // Tiny map
+    for (; i < 0xb0; i++) {
+      markers[i] =
+          Marker{.typ = PackType::Dictionary, .shortlen = int8_t(i - 0xa0)};
+    }
+    // Structure
+    for (; i < 0xc0; i++) {
+      markers[i] =
+          Marker{.typ = PackType::Structure, .shortlen = int8_t(i - 0xb0)};
+    }
 
-  markers[0xc0] = Marker{.typ = PackType::Null};
-  markers[0xc1] = Marker{.typ = PackType::Float, .numlenbytes = 8};
-  markers[0xc2] = Marker{.typ = PackType::False};
-  markers[0xc3] = Marker{.typ = PackType::True};
+    markers[0xc0] = Marker{.typ = PackType::Null};
+    markers[0xc1] = Marker{.typ = PackType::Float, .numlenbytes = 8};
+    markers[0xc2] = Marker{.typ = PackType::False};
+    markers[0xc3] = Marker{.typ = PackType::True};
 
-  markers[0xc8] = Marker{.typ = PackType::Integer, .numlenbytes = 1};
-  markers[0xc9] = Marker{.typ = PackType::Integer, .numlenbytes = 2};
-  markers[0xca] = Marker{.typ = PackType::Integer, .numlenbytes = 4};
-  markers[0xcb] = Marker{.typ = PackType::Integer, .numlenbytes = 8};
+    markers[0xc8] = Marker{.typ = PackType::Integer, .numlenbytes = 1};
+    markers[0xc9] = Marker{.typ = PackType::Integer, .numlenbytes = 2};
+    markers[0xca] = Marker{.typ = PackType::Integer, .numlenbytes = 4};
+    markers[0xcb] = Marker{.typ = PackType::Integer, .numlenbytes = 8};
 
-  markers[0xcc] = Marker{.typ = PackType::Bytes, .numlenbytes = 1};
-  markers[0xcd] = Marker{.typ = PackType::Bytes, .numlenbytes = 2};
-  markers[0xce] = Marker{.typ = PackType::Bytes, .numlenbytes = 4};
+    markers[0xcc] = Marker{.typ = PackType::Bytes, .numlenbytes = 1};
+    markers[0xcd] = Marker{.typ = PackType::Bytes, .numlenbytes = 2};
+    markers[0xce] = Marker{.typ = PackType::Bytes, .numlenbytes = 4};
 
-  markers[0xd0] = Marker{.typ = PackType::String, .numlenbytes = 1};
-  markers[0xd1] = Marker{.typ = PackType::String, .numlenbytes = 2};
-  markers[0xd2] = Marker{.typ = PackType::String, .numlenbytes = 4};
+    markers[0xd0] = Marker{.typ = PackType::String, .numlenbytes = 1};
+    markers[0xd1] = Marker{.typ = PackType::String, .numlenbytes = 2};
+    markers[0xd2] = Marker{.typ = PackType::String, .numlenbytes = 4};
 
-  markers[0xd4] = Marker{.typ = PackType::List, .numlenbytes = 1};
-  markers[0xd5] = Marker{.typ = PackType::List, .numlenbytes = 2};
-  markers[0xd6] = Marker{.typ = PackType::List, .numlenbytes = 4};
+    markers[0xd4] = Marker{.typ = PackType::List, .numlenbytes = 1};
+    markers[0xd5] = Marker{.typ = PackType::List, .numlenbytes = 2};
+    markers[0xd6] = Marker{.typ = PackType::List, .numlenbytes = 4};
 
-  markers[0xd8] = Marker{.typ = PackType::Dictionary, .numlenbytes = 1};
-  markers[0xd9] = Marker{.typ = PackType::Dictionary, .numlenbytes = 2};
-  markers[0xda] = Marker{.typ = PackType::Dictionary, .numlenbytes = 4};
+    markers[0xd8] = Marker{.typ = PackType::Dictionary, .numlenbytes = 1};
+    markers[0xd9] = Marker{.typ = PackType::Dictionary, .numlenbytes = 2};
+    markers[0xda] = Marker{.typ = PackType::Dictionary, .numlenbytes = 4};
 
-  for (i = 0xf0; i < 0x100; i++) {
-    markers[i] =
-        Marker{.typ = PackType::Integer, .shortlen = int8_t(i - 0x100)};
-  }
+    for (i = 0xf0; i < 0x100; i++) {
+      markers[i] =
+          Marker{.typ = PackType::Integer, .shortlen = int8_t(i - 0x100)};
+    }
+  });
 }
 
 }  // namespace bolt

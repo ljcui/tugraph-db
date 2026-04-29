@@ -27,10 +27,14 @@
 namespace server {
 
 bool RaftServer::Start(Galaxy* galaxy, uint32_t port) {
-  if (started_) {
+  if (started_.load()) {
     return true;
   }
 
+  if (!threads_.empty()) {
+    LOG_ERROR("raft server start failed: previous threads are still running");
+    return false;
+  }
   galaxy_ = galaxy;
   listener_.reset();
 
@@ -64,7 +68,7 @@ bool RaftServer::Start(Galaxy* galaxy, uint32_t port) {
           raft_service(listener_, port, 1, protobuf_handler_);
       boost::asio::io_service::work holder(listener_);
 
-      started_ = true;
+      started_.store(true);
       promise.set_value(true);
       promise_done = true;
 
@@ -77,45 +81,33 @@ bool RaftServer::Start(Galaxy* galaxy, uint32_t port) {
         promise.set_value(false);
       }
     }
+    started_.store(false);
+    LOG_INFO("Raft server exit");
   });
 
   if (future.get()) {
     return true;
   }
 
-  for (auto& t : threads_) {
-    t.join();
-  }
-  threads_.clear();
-  galaxy_ = nullptr;
-  protobuf_handler_ = {};
-  listener_.reset();
+  Stop();
   return false;
 }
 
 void RaftServer::Stop() {
-  if (!started_) {
-    for (auto& t : threads_) {
-      t.join();
-    }
-    threads_.clear();
-    galaxy_ = nullptr;
-    protobuf_handler_ = {};
-    listener_.reset();
-    return;
-  }
-
+  bool had_threads = !threads_.empty();
   listener_.stop();
   for (auto& t : threads_) {
     t.join();
   }
   threads_.clear();
 
-  started_ = false;
+  started_.store(false);
   galaxy_ = nullptr;
   protobuf_handler_ = {};
   listener_.reset();
-  LOG_INFO("Raft server stopped");
+  if (had_threads) {
+    LOG_INFO("Raft server stopped");
+  }
 }
 
 }  // namespace server

@@ -18,15 +18,18 @@
 
 #include <sys/resource.h>
 
+#include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <stdexcept>
 #include <tabulate/table.hpp>
+#include <thread>
 
 #include "bolt/bolt_server.h"
 #include "common/flags.h"
 #include "common/logger.h"
 #include "common/version.h"
-#include "server/galaxy.h"
+#include "server/lgraph_server.h"
 #include "server/raft_server.h"
 #include "service.h"
 
@@ -47,6 +50,12 @@ std::unordered_set<std::string> inner_flags = {"flagfile",
 
 using namespace bolt;
 namespace server {
+namespace {
+
+volatile std::sig_atomic_t g_shutdown_signal = 0;
+
+}  // namespace
+
 std::string Version() {
   std::ostringstream info;
   std::string version;
@@ -134,13 +143,7 @@ void PrintWelcome() {
   LOG_INFO(info.str());
   spdlog::default_logger()->flush();
 }
-void ShutDownHandler(int sig) {
-  LOG_INFO("Received signal {}, shutdown", strsignal(sig));
-  spdlog::default_logger()->flush();
-  BoltServer::Instance().Stop();
-  RaftServer::Instance().Stop();
-  spdlog::default_logger()->flush();
-}
+void ShutDownHandler(int sig) { g_shutdown_signal = sig; }
 void CrashHandler(int sig) {
   LOG_ERROR("Received signal {}, crash", strsignal(sig));
   spdlog::default_logger()->flush();
@@ -176,9 +179,6 @@ void SetupSignalHandler() {
   }
 }
 
-extern std::function<void(bolt::BoltConnection& conn, bolt::BoltMsg msg,
-                          std::vector<std::any> fields)>
-    g_bolt_handler;
 class LGraphDaemon : public Service {
  public:
   LGraphDaemon() : Service("lgraph_server", FLAGS_pid_file) {}
@@ -186,26 +186,38 @@ class LGraphDaemon : public Service {
     if (!SetupLogger()) return -1;
     SetupSignalHandler();
     PrintWelcome();
+    LGraphServer server(
+        {.data_path = FLAGS_data_path,
+         .host = FLAGS_host,
+         .bolt_port = FLAGS_bolt_port,
+         .bolt_io_thread_num = FLAGS_bolt_io_thread_num,
+         .raft_port = FLAGS_raft_port,
+         .galaxy_options = {
+             .block_cache_size = FLAGS_block_cache,
+             .row_cache_size = FLAGS_row_cache,
+             .ft_apply_interval = FLAGS_ft_apply_interval,
+             .ft_writer_threads = FLAGS_ft_writer_threads,
+             .ft_writer_memory_budget = FLAGS_ft_writer_memory_budget,
+             .vt_apply_interval = FLAGS_vt_apply_interval}});
+    g_shutdown_signal = 0;
     try {
-      g_galaxy = Galaxy::Open(
-          FLAGS_data_path,
-          {.block_cache_size = FLAGS_block_cache,
-           .row_cache_size = FLAGS_row_cache,
-           .ft_apply_interval = FLAGS_ft_apply_interval,
-           .ft_writer_threads = FLAGS_ft_writer_threads,
-           .ft_writer_memory_budget = FLAGS_ft_writer_memory_budget,
-           .vt_apply_interval = FLAGS_vt_apply_interval});
-      if (!RaftServer::Instance().Start(g_galaxy.get(), FLAGS_raft_port)) {
-        throw std::runtime_error("failed to start raft server");
+      if (!server.Start()) {
+        throw std::runtime_error("failed to start lgraph server");
       }
-      BoltServer::Instance().Start(FLAGS_bolt_port, FLAGS_bolt_io_thread_num,
-                                   g_bolt_handler);
-      RaftServer::Instance().Stop();
-      g_galaxy.reset();
+      while (g_shutdown_signal == 0 && server.Started()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+      if (g_shutdown_signal != 0) {
+        LOG_INFO("Received signal {}, shutdown",
+                 strsignal(static_cast<int>(g_shutdown_signal)));
+      } else if (!server.Started()) {
+        throw std::runtime_error("lgraph server exited unexpectedly");
+      }
+      server.Stop();
       spdlog::shutdown();
       return 0;
     } catch (const std::exception& e) {
-      RaftServer::Instance().Stop();
+      server.Stop();
       LOG_ERROR(e.what());
       return -1;
     }

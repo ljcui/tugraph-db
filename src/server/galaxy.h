@@ -17,6 +17,8 @@
 //
 
 #pragma once
+#include <cstdint>
+
 #include "graphdb/graph_db.h"
 
 namespace server {
@@ -32,6 +34,9 @@ struct GalaxyOptions {
   size_t ft_writer_threads = 1;
   size_t ft_writer_memory_budget = 50 * 1000 * 1000;
   size_t vt_apply_interval = 1;
+  std::string host = "127.0.0.1";
+  uint32_t bolt_port = 0;
+  uint32_t raft_port = 0;
 };
 
 class Galaxy {
@@ -67,5 +72,4 @@ class Galaxy {
   std::string path_;
   GalaxyOptions options_;
 };
-extern std::unique_ptr<server::Galaxy> g_galaxy;
 }  // namespace server

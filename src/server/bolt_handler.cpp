@@ -16,13 +16,14 @@
 // Created by botu.wzy
 //
 
+#include "server/bolt_handler.h"
+
 #include <spdlog/fmt/chrono.h>
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/stopwatch.h>
 
 #include <boost/algorithm/string.hpp>
 
-#include "bolt/bolt_server.h"
 #include "bolt/connection.h"
 #include "common/exceptions.h"
 #include "common/logger.h"
@@ -179,7 +180,7 @@ static bool SendRecord(BoltConnection* conn, BoltSession* session,
   return true;
 }
 
-void BoltFSM(std::shared_ptr<BoltConnection> conn) {
+void BoltFSM(Galaxy* galaxy, std::shared_ptr<BoltConnection> conn) {
   pthread_setname_np(pthread_self(), "bolt_fsm");
   auto conn_id = conn->conn_id();
   LOG_DEBUG("bolt fsm thread[conn_id:{}] start.", conn_id);
@@ -277,14 +278,14 @@ void BoltFSM(std::shared_ptr<BoltConnection> conn) {
           auto& field1 =
               std::any_cast<std::unordered_map<std::string, std::any>&>(
                   fields[1]);
-          cypher::RTContext ctx(g_galaxy.get(), session->user, graph);
+          cypher::RTContext ctx(galaxy, session->user, graph);
           for (auto& pair : field1) {
             ctx.bolt_parameters_.emplace(
                 "$" + pair.first,
                 ConvertParameters(ctx.obj_alloc_, std::move(pair.second)));
           }
           session->streaming_msg.reset();
-          auto graph_db = g_galaxy->OpenGraph(graph);
+          auto graph_db = galaxy->OpenGraph(graph);
           auto txn = graph_db->BeginTransaction();
           txn->SetConn(conn);
           LOG_DEBUG("Execute {}", cypher.substr(0, 256));
@@ -330,93 +331,85 @@ void BoltFSM(std::shared_ptr<BoltConnection> conn) {
   LOG_DEBUG("bolt fsm thread[conn_id:{}] exit.", conn_id);
 }
 
-std::function<void(bolt::BoltConnection& conn, bolt::BoltMsg msg,
-                   std::vector<std::any> fields)>
-    g_bolt_handler = [](BoltConnection& conn, BoltMsg msg,
-                        std::vector<std::any> fields) {
-      if (msg == BoltMsg::Hello) {
-        if (fields.size() != 1) {
-          LOG_ERROR("Hello msg fields size error, size: {}", fields.size());
-          bolt::PackStream ps;
-          ps.AppendFailure(
-              {{"code", "error"}, {"message", "Hello msg fields size error"}});
-          conn.Respond(std::move(ps.MutableBuffer()));
-          conn.Close();
-          return;
-        }
-        auto& val =
-            std::any_cast<const std::unordered_map<std::string, std::any>&>(
-                fields[0]);
-        if (!val.count("principal") || !val.count("credentials")) {
-          std::string err = "Miss 'principal' or 'credentials' in Hello msg";
-          LOG_ERROR(err);
-          bolt::PackStream ps;
-          ps.AppendFailure({{"code", "error"}, {"message", err}});
-          conn.Respond(std::move(ps.MutableBuffer()));
-          conn.Close();
-          return;
-        }
-        auto& principal =
-            std::any_cast<const std::string&>(val.at("principal"));
-        auto& credentials =
-            std::any_cast<const std::string&>(val.at("credentials"));
-        /*auto galaxy = BoltServer::Instance().StateMachine()->GetGalaxy();
-        if (!galaxy->ValidateUser(principal, credentials)) {
-            LOG_ERROR("Bolt authentication failed");
-            bolt::PackStream ps;
-            ps.AppendFailure({{"code", "error"},
-                              {"message", "Authentication failed"}});
-            conn.Respond(std::move(ps.MutableBuffer()));
-            conn.Close();
-            return;
-        }*/
-        std::unordered_map<std::string, std::any> meta;
-        meta["connection_id"] =
-            std::string("bolt") + std::to_string(conn.conn_id());
-        // Neo4j python client check that the returned server info must start
-        // with 'Neo4j/'
-        meta["server"] = "Neo4j/tugraph-db";
-        auto session = std::make_shared<BoltSession>();
-        if (val.count("user_agent")) {
-          auto& user_agent =
-              std::any_cast<const std::string&>(val.at("user_agent"));
-          if (boost::algorithm::starts_with(user_agent, "neo4j-python")) {
-            session->python_driver = true;
-          }
-        }
-        if (val.count("patch_bolt")) {
-          auto& patch =
-              std::any_cast<const std::vector<std::any>&>(val.at("patch_bolt"));
-          if (patch.size() == 1) {
-            auto item = std::any_cast<std::string>(patch[0]);
-            if (item == "utc") {
-              session->utc_patch = true;
-              meta["patch_bolt"] = std::vector<std::string>{"utc"};
-            }
-          }
-        }
-        session->state = SessionState::READY;
-        session->user = principal;
-        conn.SetContext(session);
-        session->fsm_thread = std::thread(BoltFSM, conn.shared_from_this());
-        session->fsm_thread.detach();
+BoltHandler NewBoltHandler(Galaxy* galaxy) {
+  return [galaxy](BoltConnection& conn, BoltMsg msg,
+                  std::vector<std::any> fields) {
+    if (msg == BoltMsg::Hello) {
+      if (fields.size() != 1) {
+        LOG_ERROR("Hello msg fields size error, size: {}", fields.size());
         bolt::PackStream ps;
-        ps.AppendSuccess(meta);
+        ps.AppendFailure(
+            {{"code", "error"}, {"message", "Hello msg fields size error"}});
         conn.Respond(std::move(ps.MutableBuffer()));
-      } else if (msg == BoltMsg::Run || msg == BoltMsg::PullN ||
-                 msg == BoltMsg::DiscardN || msg == BoltMsg::Begin ||
-                 msg == BoltMsg::Commit || msg == BoltMsg::Rollback) {
-        auto session = (BoltSession*)conn.GetContext();
-        session->msgs.Push({msg, std::move(fields)});
-      } else if (msg == BoltMsg::Reset) {
-        auto session = (BoltSession*)conn.GetContext();
-        session->state = SessionState::INTERRUPTED;
-        session->msgs.Push({BoltMsg::Reset, std::move(fields)});
-      } else if (msg == BoltMsg::Goodbye) {
         conn.Close();
-      } else {
-        LOG_WARN("receive unknown bolt message: {}", ToString(msg));
-        conn.Close();
+        return;
       }
-    };
+      auto& val =
+          std::any_cast<const std::unordered_map<std::string, std::any>&>(
+              fields[0]);
+      if (!val.count("principal") || !val.count("credentials")) {
+        std::string err = "Miss 'principal' or 'credentials' in Hello msg";
+        LOG_ERROR(err);
+        bolt::PackStream ps;
+        ps.AppendFailure({{"code", "error"}, {"message", err}});
+        conn.Respond(std::move(ps.MutableBuffer()));
+        conn.Close();
+        return;
+      }
+      auto& principal = std::any_cast<const std::string&>(val.at("principal"));
+      auto& credentials =
+          std::any_cast<const std::string&>(val.at("credentials"));
+      /* TODO(anyone): wire real authentication through the server-owned galaxy.
+       */
+      std::unordered_map<std::string, std::any> meta;
+      meta["connection_id"] =
+          std::string("bolt") + std::to_string(conn.conn_id());
+      // Neo4j python client check that the returned server info must start
+      // with 'Neo4j/'
+      meta["server"] = "Neo4j/tugraph-db";
+      auto session = std::make_shared<BoltSession>();
+      if (val.count("user_agent")) {
+        auto& user_agent =
+            std::any_cast<const std::string&>(val.at("user_agent"));
+        if (boost::algorithm::starts_with(user_agent, "neo4j-python")) {
+          session->python_driver = true;
+        }
+      }
+      if (val.count("patch_bolt")) {
+        auto& patch =
+            std::any_cast<const std::vector<std::any>&>(val.at("patch_bolt"));
+        if (patch.size() == 1) {
+          auto item = std::any_cast<std::string>(patch[0]);
+          if (item == "utc") {
+            session->utc_patch = true;
+            meta["patch_bolt"] = std::vector<std::string>{"utc"};
+          }
+        }
+      }
+      session->state = SessionState::READY;
+      session->user = principal;
+      conn.SetContext(session);
+      session->fsm_thread =
+          std::thread(BoltFSM, galaxy, conn.shared_from_this());
+      session->fsm_thread.detach();
+      bolt::PackStream ps;
+      ps.AppendSuccess(meta);
+      conn.Respond(std::move(ps.MutableBuffer()));
+    } else if (msg == BoltMsg::Run || msg == BoltMsg::PullN ||
+               msg == BoltMsg::DiscardN || msg == BoltMsg::Begin ||
+               msg == BoltMsg::Commit || msg == BoltMsg::Rollback) {
+      auto session = (BoltSession*)conn.GetContext();
+      session->msgs.Push({msg, std::move(fields)});
+    } else if (msg == BoltMsg::Reset) {
+      auto session = (BoltSession*)conn.GetContext();
+      session->state = SessionState::INTERRUPTED;
+      session->msgs.Push({BoltMsg::Reset, std::move(fields)});
+    } else if (msg == BoltMsg::Goodbye) {
+      conn.Close();
+    } else {
+      LOG_WARN("receive unknown bolt message: {}", ToString(msg));
+      conn.Close();
+    }
+  };
+}
 }  // namespace server

@@ -324,7 +324,7 @@ set(DEPS_SOURCES deps/geax-front-end/src/geax-front-end/isogql/GEAXErrorCode.cpp
 
 set(TRANSACTION_SOURCES src/transaction/transaction.cpp)
 
-set(SERVER_SOURCES src/server/galaxy.cpp src/server/bolt_handler.cpp src/server/raft_server.cpp)
+set(SERVER_SOURCES src/server/galaxy.cpp src/server/bolt_handler.cpp src/server/lgraph_server.cpp src/server/raft_server.cpp)
 
 set(PROTO_SOURCES src/proto/meta.pb.cc)
 
@@ -333,6 +333,7 @@ set(TEST_CASE_SOURCES
     test/test_cypher.cpp
     test/test_graph_db.cpp
     test/test_kv_engine.cpp
+    test/test_raft_cluster.cpp
     test/test_transaction.cpp
     test/test_index.cpp
     test/test_concurrency.cpp

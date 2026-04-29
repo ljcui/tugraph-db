@@ -736,7 +736,7 @@ void BuiltinProcedure::DbIndexVectorApplyWal(
                                "given. Usage: db.index.vector.applyWal",
                                args.size()))
   std::string name = ctx->txn_->db()->db_meta().graph_name();
-  auto graphdb = server::g_galaxy->OpenGraph(name);
+  auto graphdb = ctx->galaxy_->OpenGraph(name);
   for (const auto &index : graphdb->meta_info().GetVertexVectorIndexes()) {
     LOG_INFO("Manually apply WAL for Vector index {}", index->meta().name());
     index->ApplyWAL();
@@ -841,7 +841,7 @@ void BuiltinProcedure::DbIndexFullTextApplyWal(
                                "given. Usage: db.index.fulltext.applyWal",
                                args.size()))
   std::string name = ctx->txn_->db()->db_meta().graph_name();
-  auto graphdb = server::g_galaxy->OpenGraph(name);
+  auto graphdb = ctx->galaxy_->OpenGraph(name);
   for (const auto &index : graphdb->meta_info().GetVertexFullTextIndexes()) {
     LOG_INFO("Manually apply WAL for FullText index {}", index->Name());
     index->ApplyWAL();
@@ -859,7 +859,7 @@ void BuiltinProcedure::DbmsGraphCreateGraph(
   CYPHER_ARG_CHECK(args[0].IsString(), "graph_name type should be String")
   auto name = args[0].constant.AsString();
   LOG_INFO("Create graph {}", name);
-  server::g_galaxy->CreateGraph(name);
+  ctx->galaxy_->CreateGraph(name);
 }
 
 void BuiltinProcedure::DbmsGraphCreateGraphWithRaft(
@@ -880,7 +880,7 @@ void BuiltinProcedure::DbmsGraphCreateGraphWithRaft(
   auto node_infos = ParseRaftMembersArgument(args[1].constant, name);
   LOG_INFO("Create graph with raft {}, members:{}", name,
            node_infos.ShortDebugString());
-  server::g_galaxy->CreateGraphWithRaft(name, node_infos);
+  ctx->galaxy_->CreateGraphWithRaft(name, node_infos);
 }
 
 void BuiltinProcedure::DbmsGraphDeleteGraph(
@@ -894,7 +894,7 @@ void BuiltinProcedure::DbmsGraphDeleteGraph(
   CYPHER_ARG_CHECK(args[0].IsString(), "graph_name type should be String")
   auto name = args[0].constant.AsString();
   LOG_INFO("Delete graph {}", name);
-  server::g_galaxy->DeleteGraph(args[0].constant.AsString());
+  ctx->galaxy_->DeleteGraph(args[0].constant.AsString());
 }
 
 void BuiltinProcedure::DbmsGraphListGraph(
@@ -905,7 +905,7 @@ void BuiltinProcedure::DbmsGraphListGraph(
                    fmt::format("Function requires 0 arguments, but {} are "
                                "given. Usage: dbms.graph.listGraph()",
                                args.size()))
-  for (auto &[_, graph] : server::g_galaxy->Graphs()) {
+  for (auto &[_, graph] : ctx->galaxy_->Graphs()) {
     std::vector<ProcedureResult> r;
     for (auto &yield : yield_items) {
       if (yield == "id") {
@@ -929,7 +929,7 @@ void BuiltinProcedure::DbmsGraphClearGraph(
   CYPHER_ARG_CHECK(args[0].IsString(), "graph_name type should be String")
   std::string name = args[0].constant.AsString();
   LOG_INFO("clearGraph {}", name);
-  server::g_galaxy->ClearGraph(name);
+  ctx->galaxy_->ClearGraph(name);
 }
 
 void BuiltinProcedure::DbShowIndexes(
@@ -941,7 +941,7 @@ void BuiltinProcedure::DbShowIndexes(
                                "given. Usage: db.showIndexes()",
                                args.size()))
   std::string name = ctx->txn_->db()->db_meta().graph_name();
-  auto graphdb = server::g_galaxy->OpenGraph(name);
+  auto graphdb = ctx->galaxy_->OpenGraph(name);
   for (const auto &index : graphdb->meta_info().GetVertexPropertyIndexes()) {
     std::vector<ProcedureResult> r;
     for (auto &yield : yield_items) {

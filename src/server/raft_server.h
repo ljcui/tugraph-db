@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <boost/asio.hpp>
 #include <functional>
 #include <thread>
@@ -28,25 +29,18 @@ class Galaxy;
 
 class RaftServer final {
  public:
-  static RaftServer& Instance() {
-    static RaftServer server;
-    return server;
-  }
-
+  RaftServer() = default;
   DISABLE_COPY(RaftServer);
   DISABLE_MOVE(RaftServer);
 
   bool Start(Galaxy* galaxy, uint32_t port);
   void Stop();
-  bool Started() const { return started_; }
+  bool Started() const { return started_.load(); }
 
   ~RaftServer() { Stop(); }
 
- private:
-  RaftServer() = default;
-
   std::vector<std::thread> threads_;
-  bool started_ = false;
+  std::atomic<bool> started_{false};
   Galaxy* galaxy_ = nullptr;
   boost::asio::io_service listener_{BOOST_ASIO_CONCURRENCY_HINT_UNSAFE};
   std::function<void(std::string, raftpb::Message)> protobuf_handler_{};

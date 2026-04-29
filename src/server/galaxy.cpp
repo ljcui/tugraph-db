@@ -22,7 +22,6 @@
 #include <filesystem>
 
 #include "common/exceptions.h"
-#include "common/flags.h"
 #include "common/logger.h"
 using namespace graphdb;
 using namespace boost::endian;
@@ -74,7 +73,6 @@ void ApplyRaftRequest(GraphDB *graph_db, uint64_t index,
 
 }  // namespace
 
-std::unique_ptr<server::Galaxy> g_galaxy;
 Galaxy::~Galaxy() {
   graphs_.clear();
   auto s = meta_db_->Close();
@@ -145,9 +143,9 @@ std::unique_ptr<Galaxy> Galaxy::Open(const std::string &path,
     if (meta.enable_raft()) {
       raft::LocalNodeConfig local_node;
       local_node.graph = meta.graph_name();
-      local_node.ip = FLAGS_host;
-      local_node.bolt_port = static_cast<int32_t>(FLAGS_bolt_port);
-      local_node.raft_poft = static_cast<int32_t>(FLAGS_raft_port);
+      local_node.ip = galaxy->options_.host;
+      local_node.bolt_port = static_cast<int32_t>(galaxy->options_.bolt_port);
+      local_node.raft_poft = static_cast<int32_t>(galaxy->options_.raft_port);
 
       raft::RaftLogStoreConfig store_config;
       store_config.path = graph_path + "/raft";
@@ -229,9 +227,9 @@ GraphDB *Galaxy::CreateGraphInternal(const std::string &name,
     ValidateRaftNodeInfos(*node_infos, name);
     raft::LocalNodeConfig local_node;
     local_node.graph = name;
-    local_node.ip = FLAGS_host;
-    local_node.bolt_port = static_cast<int32_t>(FLAGS_bolt_port);
-    local_node.raft_poft = static_cast<int32_t>(FLAGS_raft_port);
+    local_node.ip = options_.host;
+    local_node.bolt_port = static_cast<int32_t>(options_.bolt_port);
+    local_node.raft_poft = static_cast<int32_t>(options_.raft_port);
 
     raft::RaftLogStoreConfig store_config;
     store_config.path = graph_path + "/raft";

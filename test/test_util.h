@@ -99,9 +99,9 @@ inline bool WaitUntilPropertyIndexFailed(
 
 namespace testutil {
 
-inline constexpr std::array<std::string_view, 7> kTestDataDirectories = {
+inline constexpr std::array<std::string_view, 8> kTestDataDirectories = {
     "testdb",       "cypher_testdb", "temporal_db", "test_galaxy",
-    "test_ftindex", "testkv",        "varlendb"};
+    "test_ftindex", "testkv",        "varlendb",    "testdb_raft_cluster"};
 
 inline void CleanupTestDataDirectories() {
   std::error_code ec;
