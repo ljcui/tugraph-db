@@ -327,13 +327,7 @@ std::unique_ptr<GraphDB> GraphDB::Open(const std::string& path,
 
 GraphDB::~GraphDB() {
   LOG_INFO("Close graph: {}", db_meta_.graph_name());
-  {
-    std::unique_lock<std::shared_mutex> lock(raft_mutex_);
-    if (raft_driver_) {
-      raft_driver_->Stop();
-      raft_driver_.reset();
-    }
-  }
+  StopRaft();
   for (const auto& index : meta_info_.GetVertexVectorIndexes()) {
     index->Stop();
   }
@@ -378,6 +372,15 @@ void GraphDB::SetRaftDriver(std::unique_ptr<raft::RaftDriver> raft_driver) {
   std::unique_lock<std::shared_mutex> lock(raft_mutex_);
   raft_driver_ = std::move(raft_driver);
   meta_info_.id_generator().SetRaftDriver(raft_driver_.get());
+}
+
+void GraphDB::StopRaft() {
+  std::unique_lock<std::shared_mutex> lock(raft_mutex_);
+  if (raft_driver_) {
+    raft_driver_->Stop();
+    raft_driver_.reset();
+  }
+  meta_info_.id_generator().SetRaftDriver(nullptr);
 }
 
 uint64_t GraphDB::GetRaftApplyIndex() const {

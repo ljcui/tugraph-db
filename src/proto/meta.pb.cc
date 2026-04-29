@@ -93,6 +93,11 @@ class CreateGraphRequestDefaultTypeInternal {
   ::google::protobuf::internal::ExplicitlyConstructed<CreateGraphRequest>
       _instance;
 } _CreateGraphRequest_default_instance_;
+class GraphLifecycleRequestDefaultTypeInternal {
+ public:
+  ::google::protobuf::internal::ExplicitlyConstructed<GraphLifecycleRequest>
+      _instance;
+} _GraphLifecycleRequest_default_instance_;
 }  // namespace meta
 namespace protobuf_meta_2eproto {
 static void InitDefaultsVertexPropertyIndex() {
@@ -280,6 +285,20 @@ static void InitDefaultsCreateGraphRequest() {
     {{ATOMIC_VAR_INIT(::google::protobuf::internal::SCCInfoBase::kUninitialized), 1, InitDefaultsCreateGraphRequest}, {
       &protobuf_meta_2eproto::scc_info_RaftNodeInfos.base,}};
 
+static void InitDefaultsGraphLifecycleRequest() {
+  GOOGLE_PROTOBUF_VERIFY_VERSION;
+
+  {
+    void* ptr = &::meta::_GraphLifecycleRequest_default_instance_;
+    new (ptr) ::meta::GraphLifecycleRequest();
+    ::google::protobuf::internal::OnShutdownDestroyMessage(ptr);
+  }
+  ::meta::GraphLifecycleRequest::InitAsDefaultInstance();
+}
+
+::google::protobuf::internal::SCCInfo<0> scc_info_GraphLifecycleRequest =
+    {{ATOMIC_VAR_INIT(::google::protobuf::internal::SCCInfoBase::kUninitialized), 0, InitDefaultsGraphLifecycleRequest}, {}};
+
 void InitDefaults() {
   ::google::protobuf::internal::InitSCC(&scc_info_VertexPropertyIndex.base);
   ::google::protobuf::internal::InitSCC(&scc_info_VertexFullTextIndex.base);
@@ -294,9 +313,10 @@ void InitDefaults() {
   ::google::protobuf::internal::InitSCC(&scc_info_RaftNodeInfos_NodesEntry_DoNotUse.base);
   ::google::protobuf::internal::InitSCC(&scc_info_RaftNodeInfos.base);
   ::google::protobuf::internal::InitSCC(&scc_info_CreateGraphRequest.base);
+  ::google::protobuf::internal::InitSCC(&scc_info_GraphLifecycleRequest.base);
 }
 
-::google::protobuf::Metadata file_level_metadata[13];
+::google::protobuf::Metadata file_level_metadata[14];
 const ::google::protobuf::EnumDescriptor* file_level_enum_descriptors[5];
 
 const ::google::protobuf::uint32 TableStruct::offsets[] GOOGLE_PROTOBUF_ATTRIBUTE_SECTION_VARIABLE(protodesc_cold) = {
@@ -436,6 +456,13 @@ const ::google::protobuf::uint32 TableStruct::offsets[] GOOGLE_PROTOBUF_ATTRIBUT
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::CreateGraphRequest, graph_name_),
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::CreateGraphRequest, graph_id_),
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::CreateGraphRequest, node_infos_),
+  ~0u,  // no _has_bits_
+  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::GraphLifecycleRequest, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::GraphLifecycleRequest, graph_name_),
+  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::GraphLifecycleRequest, graph_id_),
 };
 static const ::google::protobuf::internal::MigrationSchema schemas[] GOOGLE_PROTOBUF_ATTRIBUTE_SECTION_VARIABLE(protodesc_cold) = {
   { 0, -1, sizeof(::meta::VertexPropertyIndex)},
@@ -451,6 +478,7 @@ static const ::google::protobuf::internal::MigrationSchema schemas[] GOOGLE_PROT
   { 113, 120, sizeof(::meta::RaftNodeInfos_NodesEntry_DoNotUse)},
   { 122, -1, sizeof(::meta::RaftNodeInfos)},
   { 128, -1, sizeof(::meta::CreateGraphRequest)},
+  { 136, -1, sizeof(::meta::GraphLifecycleRequest)},
 };
 
 static ::google::protobuf::Message const * const file_default_instances[] = {
@@ -467,6 +495,7 @@ static ::google::protobuf::Message const * const file_default_instances[] = {
   reinterpret_cast<const ::google::protobuf::Message*>(&::meta::_RaftNodeInfos_NodesEntry_DoNotUse_default_instance_),
   reinterpret_cast<const ::google::protobuf::Message*>(&::meta::_RaftNodeInfos_default_instance_),
   reinterpret_cast<const ::google::protobuf::Message*>(&::meta::_CreateGraphRequest_default_instance_),
+  reinterpret_cast<const ::google::protobuf::Message*>(&::meta::_GraphLifecycleRequest_default_instance_),
 };
 
 void protobuf_AssignDescriptors() {
@@ -484,7 +513,7 @@ void protobuf_AssignDescriptorsOnce() {
 void protobuf_RegisterTypes(const ::std::string&) GOOGLE_PROTOBUF_ATTRIBUTE_COLD;
 void protobuf_RegisterTypes(const ::std::string&) {
   protobuf_AssignDescriptorsOnce();
-  ::google::protobuf::internal::RegisterAllTypes(file_level_metadata, 13);
+  ::google::protobuf::internal::RegisterAllTypes(file_level_metadata, 14);
 }
 
 void AddDescriptorsImpl() {
@@ -535,17 +564,20 @@ void AddDescriptorsImpl() {
       "!\n\005value\030\002 \001(\0132\022.meta.RaftNodeInfo:\0028\001\"c"
       "\n\022CreateGraphRequest\022\022\n\ngraph_name\030\001 \001(\t"
       "\022\020\n\010graph_id\030\002 \001(\r\022\'\n\nnode_infos\030\003 \001(\0132\023"
-      ".meta.RaftNodeInfos*0\n\022VectorDistanceTyp"
-      "e\022\006\n\002L2\020\000\022\006\n\002IP\020\001\022\n\n\006COSINE\020\002*)\n\017VectorI"
-      "ndexType\022\010\n\004HNSW\020\000\022\014\n\010IVF_FLAT\020\001*G\n\017Inde"
-      "xBuildState\022\014\n\010BUILDING\020\000\022\017\n\013CATCHING_UP"
-      "\020\001\022\t\n\005READY\020\002\022\n\n\006FAILED\020\003*!\n\nUpdateType\022"
-      "\007\n\003Add\020\000\022\n\n\006Delete\020\001*Y\n\016WriteBatchKind\022\013"
-      "\n\007UNKNOWN\020\000\022\017\n\013GRAPH_WRITE\020\001\022\020\n\014ID_GENER"
-      "ATOR\020\002\022\027\n\023GALAXY_CREATE_GRAPH\020\003b\006proto3"
+      ".meta.RaftNodeInfos\"=\n\025GraphLifecycleReq"
+      "uest\022\022\n\ngraph_name\030\001 \001(\t\022\020\n\010graph_id\030\002 \001"
+      "(\r*0\n\022VectorDistanceType\022\006\n\002L2\020\000\022\006\n\002IP\020\001"
+      "\022\n\n\006COSINE\020\002*)\n\017VectorIndexType\022\010\n\004HNSW\020"
+      "\000\022\014\n\010IVF_FLAT\020\001*G\n\017IndexBuildState\022\014\n\010BU"
+      "ILDING\020\000\022\017\n\013CATCHING_UP\020\001\022\t\n\005READY\020\002\022\n\n\006"
+      "FAILED\020\003*!\n\nUpdateType\022\007\n\003Add\020\000\022\n\n\006Delet"
+      "e\020\001*\212\001\n\016WriteBatchKind\022\013\n\007UNKNOWN\020\000\022\017\n\013G"
+      "RAPH_WRITE\020\001\022\020\n\014ID_GENERATOR\020\002\022\027\n\023GALAXY"
+      "_CREATE_GRAPH\020\003\022\027\n\023GALAXY_DELETE_GRAPH\020\004"
+      "\022\026\n\022GALAXY_CLEAR_GRAPH\020\005b\006proto3"
   };
   ::google::protobuf::DescriptorPool::InternalAddGeneratedFile(
-      descriptor, 2119);
+      descriptor, 2232);
   ::google::protobuf::MessageFactory::InternalRegisterGeneratedFile(
     "meta.proto", &protobuf_RegisterTypes);
   ::protobuf_raft_2eproto::AddDescriptors();
@@ -632,6 +664,8 @@ bool WriteBatchKind_IsValid(int value) {
     case 1:
     case 2:
     case 3:
+    case 4:
+    case 5:
       return true;
     default:
       return false;
@@ -6032,6 +6066,287 @@ void CreateGraphRequest::InternalSwap(CreateGraphRequest* other) {
 }
 
 
+// ===================================================================
+
+void GraphLifecycleRequest::InitAsDefaultInstance() {
+}
+#if !defined(_MSC_VER) || _MSC_VER >= 1900
+const int GraphLifecycleRequest::kGraphNameFieldNumber;
+const int GraphLifecycleRequest::kGraphIdFieldNumber;
+#endif  // !defined(_MSC_VER) || _MSC_VER >= 1900
+
+GraphLifecycleRequest::GraphLifecycleRequest()
+  : ::google::protobuf::Message(), _internal_metadata_(NULL) {
+  ::google::protobuf::internal::InitSCC(
+      &protobuf_meta_2eproto::scc_info_GraphLifecycleRequest.base);
+  SharedCtor();
+  // @@protoc_insertion_point(constructor:meta.GraphLifecycleRequest)
+}
+GraphLifecycleRequest::GraphLifecycleRequest(const GraphLifecycleRequest& from)
+  : ::google::protobuf::Message(),
+      _internal_metadata_(NULL) {
+  _internal_metadata_.MergeFrom(from._internal_metadata_);
+  graph_name_.UnsafeSetDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+  if (from.graph_name().size() > 0) {
+    graph_name_.AssignWithDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), from.graph_name_);
+  }
+  graph_id_ = from.graph_id_;
+  // @@protoc_insertion_point(copy_constructor:meta.GraphLifecycleRequest)
+}
+
+void GraphLifecycleRequest::SharedCtor() {
+  graph_name_.UnsafeSetDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+  graph_id_ = 0u;
+}
+
+GraphLifecycleRequest::~GraphLifecycleRequest() {
+  // @@protoc_insertion_point(destructor:meta.GraphLifecycleRequest)
+  SharedDtor();
+}
+
+void GraphLifecycleRequest::SharedDtor() {
+  graph_name_.DestroyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+}
+
+void GraphLifecycleRequest::SetCachedSize(int size) const {
+  _cached_size_.Set(size);
+}
+const ::google::protobuf::Descriptor* GraphLifecycleRequest::descriptor() {
+  ::protobuf_meta_2eproto::protobuf_AssignDescriptorsOnce();
+  return ::protobuf_meta_2eproto::file_level_metadata[kIndexInFileMessages].descriptor;
+}
+
+const GraphLifecycleRequest& GraphLifecycleRequest::default_instance() {
+  ::google::protobuf::internal::InitSCC(&protobuf_meta_2eproto::scc_info_GraphLifecycleRequest.base);
+  return *internal_default_instance();
+}
+
+
+void GraphLifecycleRequest::Clear() {
+// @@protoc_insertion_point(message_clear_start:meta.GraphLifecycleRequest)
+  ::google::protobuf::uint32 cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  graph_name_.ClearToEmptyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+  graph_id_ = 0u;
+  _internal_metadata_.Clear();
+}
+
+bool GraphLifecycleRequest::MergePartialFromCodedStream(
+    ::google::protobuf::io::CodedInputStream* input) {
+#define DO_(EXPRESSION) if (!GOOGLE_PREDICT_TRUE(EXPRESSION)) goto failure
+  ::google::protobuf::uint32 tag;
+  // @@protoc_insertion_point(parse_start:meta.GraphLifecycleRequest)
+  for (;;) {
+    ::std::pair<::google::protobuf::uint32, bool> p = input->ReadTagWithCutoffNoLastTag(127u);
+    tag = p.first;
+    if (!p.second) goto handle_unusual;
+    switch (::google::protobuf::internal::WireFormatLite::GetTagFieldNumber(tag)) {
+      // string graph_name = 1;
+      case 1: {
+        if (static_cast< ::google::protobuf::uint8>(tag) ==
+            static_cast< ::google::protobuf::uint8>(10u /* 10 & 0xFF */)) {
+          DO_(::google::protobuf::internal::WireFormatLite::ReadString(
+                input, this->mutable_graph_name()));
+          DO_(::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+            this->graph_name().data(), static_cast<int>(this->graph_name().length()),
+            ::google::protobuf::internal::WireFormatLite::PARSE,
+            "meta.GraphLifecycleRequest.graph_name"));
+        } else {
+          goto handle_unusual;
+        }
+        break;
+      }
+
+      // uint32 graph_id = 2;
+      case 2: {
+        if (static_cast< ::google::protobuf::uint8>(tag) ==
+            static_cast< ::google::protobuf::uint8>(16u /* 16 & 0xFF */)) {
+
+          DO_((::google::protobuf::internal::WireFormatLite::ReadPrimitive<
+                   ::google::protobuf::uint32, ::google::protobuf::internal::WireFormatLite::TYPE_UINT32>(
+                 input, &graph_id_)));
+        } else {
+          goto handle_unusual;
+        }
+        break;
+      }
+
+      default: {
+      handle_unusual:
+        if (tag == 0) {
+          goto success;
+        }
+        DO_(::google::protobuf::internal::WireFormat::SkipField(
+              input, tag, _internal_metadata_.mutable_unknown_fields()));
+        break;
+      }
+    }
+  }
+success:
+  // @@protoc_insertion_point(parse_success:meta.GraphLifecycleRequest)
+  return true;
+failure:
+  // @@protoc_insertion_point(parse_failure:meta.GraphLifecycleRequest)
+  return false;
+#undef DO_
+}
+
+void GraphLifecycleRequest::SerializeWithCachedSizes(
+    ::google::protobuf::io::CodedOutputStream* output) const {
+  // @@protoc_insertion_point(serialize_start:meta.GraphLifecycleRequest)
+  ::google::protobuf::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // string graph_name = 1;
+  if (this->graph_name().size() > 0) {
+    ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+      this->graph_name().data(), static_cast<int>(this->graph_name().length()),
+      ::google::protobuf::internal::WireFormatLite::SERIALIZE,
+      "meta.GraphLifecycleRequest.graph_name");
+    ::google::protobuf::internal::WireFormatLite::WriteStringMaybeAliased(
+      1, this->graph_name(), output);
+  }
+
+  // uint32 graph_id = 2;
+  if (this->graph_id() != 0) {
+    ::google::protobuf::internal::WireFormatLite::WriteUInt32(2, this->graph_id(), output);
+  }
+
+  if ((_internal_metadata_.have_unknown_fields() &&  ::google::protobuf::internal::GetProto3PreserveUnknownsDefault())) {
+    ::google::protobuf::internal::WireFormat::SerializeUnknownFields(
+        (::google::protobuf::internal::GetProto3PreserveUnknownsDefault()   ? _internal_metadata_.unknown_fields()   : _internal_metadata_.default_instance()), output);
+  }
+  // @@protoc_insertion_point(serialize_end:meta.GraphLifecycleRequest)
+}
+
+::google::protobuf::uint8* GraphLifecycleRequest::InternalSerializeWithCachedSizesToArray(
+    bool deterministic, ::google::protobuf::uint8* target) const {
+  (void)deterministic; // Unused
+  // @@protoc_insertion_point(serialize_to_array_start:meta.GraphLifecycleRequest)
+  ::google::protobuf::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // string graph_name = 1;
+  if (this->graph_name().size() > 0) {
+    ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+      this->graph_name().data(), static_cast<int>(this->graph_name().length()),
+      ::google::protobuf::internal::WireFormatLite::SERIALIZE,
+      "meta.GraphLifecycleRequest.graph_name");
+    target =
+      ::google::protobuf::internal::WireFormatLite::WriteStringToArray(
+        1, this->graph_name(), target);
+  }
+
+  // uint32 graph_id = 2;
+  if (this->graph_id() != 0) {
+    target = ::google::protobuf::internal::WireFormatLite::WriteUInt32ToArray(2, this->graph_id(), target);
+  }
+
+  if ((_internal_metadata_.have_unknown_fields() &&  ::google::protobuf::internal::GetProto3PreserveUnknownsDefault())) {
+    target = ::google::protobuf::internal::WireFormat::SerializeUnknownFieldsToArray(
+        (::google::protobuf::internal::GetProto3PreserveUnknownsDefault()   ? _internal_metadata_.unknown_fields()   : _internal_metadata_.default_instance()), target);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:meta.GraphLifecycleRequest)
+  return target;
+}
+
+size_t GraphLifecycleRequest::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:meta.GraphLifecycleRequest)
+  size_t total_size = 0;
+
+  if ((_internal_metadata_.have_unknown_fields() &&  ::google::protobuf::internal::GetProto3PreserveUnknownsDefault())) {
+    total_size +=
+      ::google::protobuf::internal::WireFormat::ComputeUnknownFieldsSize(
+        (::google::protobuf::internal::GetProto3PreserveUnknownsDefault()   ? _internal_metadata_.unknown_fields()   : _internal_metadata_.default_instance()));
+  }
+  // string graph_name = 1;
+  if (this->graph_name().size() > 0) {
+    total_size += 1 +
+      ::google::protobuf::internal::WireFormatLite::StringSize(
+        this->graph_name());
+  }
+
+  // uint32 graph_id = 2;
+  if (this->graph_id() != 0) {
+    total_size += 1 +
+      ::google::protobuf::internal::WireFormatLite::UInt32Size(
+        this->graph_id());
+  }
+
+  int cached_size = ::google::protobuf::internal::ToCachedSize(total_size);
+  SetCachedSize(cached_size);
+  return total_size;
+}
+
+void GraphLifecycleRequest::MergeFrom(const ::google::protobuf::Message& from) {
+// @@protoc_insertion_point(generalized_merge_from_start:meta.GraphLifecycleRequest)
+  GOOGLE_DCHECK_NE(&from, this);
+  const GraphLifecycleRequest* source =
+      ::google::protobuf::internal::DynamicCastToGenerated<const GraphLifecycleRequest>(
+          &from);
+  if (source == NULL) {
+  // @@protoc_insertion_point(generalized_merge_from_cast_fail:meta.GraphLifecycleRequest)
+    ::google::protobuf::internal::ReflectionOps::Merge(from, this);
+  } else {
+  // @@protoc_insertion_point(generalized_merge_from_cast_success:meta.GraphLifecycleRequest)
+    MergeFrom(*source);
+  }
+}
+
+void GraphLifecycleRequest::MergeFrom(const GraphLifecycleRequest& from) {
+// @@protoc_insertion_point(class_specific_merge_from_start:meta.GraphLifecycleRequest)
+  GOOGLE_DCHECK_NE(&from, this);
+  _internal_metadata_.MergeFrom(from._internal_metadata_);
+  ::google::protobuf::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (from.graph_name().size() > 0) {
+
+    graph_name_.AssignWithDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), from.graph_name_);
+  }
+  if (from.graph_id() != 0) {
+    set_graph_id(from.graph_id());
+  }
+}
+
+void GraphLifecycleRequest::CopyFrom(const ::google::protobuf::Message& from) {
+// @@protoc_insertion_point(generalized_copy_from_start:meta.GraphLifecycleRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+void GraphLifecycleRequest::CopyFrom(const GraphLifecycleRequest& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:meta.GraphLifecycleRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool GraphLifecycleRequest::IsInitialized() const {
+  return true;
+}
+
+void GraphLifecycleRequest::Swap(GraphLifecycleRequest* other) {
+  if (other == this) return;
+  InternalSwap(other);
+}
+void GraphLifecycleRequest::InternalSwap(GraphLifecycleRequest* other) {
+  using std::swap;
+  graph_name_.Swap(&other->graph_name_, &::google::protobuf::internal::GetEmptyStringAlreadyInited(),
+    GetArenaNoVirtual());
+  swap(graph_id_, other->graph_id_);
+  _internal_metadata_.Swap(&other->_internal_metadata_);
+}
+
+::google::protobuf::Metadata GraphLifecycleRequest::GetMetadata() const {
+  protobuf_meta_2eproto::protobuf_AssignDescriptorsOnce();
+  return ::protobuf_meta_2eproto::file_level_metadata[kIndexInFileMessages];
+}
+
+
 // @@protoc_insertion_point(namespace_scope)
 }  // namespace meta
 namespace google {
@@ -6074,6 +6389,9 @@ template<> GOOGLE_PROTOBUF_ATTRIBUTE_NOINLINE ::meta::RaftNodeInfos* Arena::Crea
 }
 template<> GOOGLE_PROTOBUF_ATTRIBUTE_NOINLINE ::meta::CreateGraphRequest* Arena::CreateMaybeMessage< ::meta::CreateGraphRequest >(Arena* arena) {
   return Arena::CreateInternal< ::meta::CreateGraphRequest >(arena);
+}
+template<> GOOGLE_PROTOBUF_ATTRIBUTE_NOINLINE ::meta::GraphLifecycleRequest* Arena::CreateMaybeMessage< ::meta::GraphLifecycleRequest >(Arena* arena) {
+  return Arena::CreateInternal< ::meta::GraphLifecycleRequest >(arena);
 }
 }  // namespace protobuf
 }  // namespace google

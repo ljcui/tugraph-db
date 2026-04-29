@@ -80,6 +80,10 @@ class Galaxy {
   void ApplyGalaxyRaftRequest(uint64_t index, const meta::RaftRequest& request);
   graphdb::GraphDB* ApplyCreateGraphWithRaft(
       uint64_t apply_index, const meta::CreateGraphRequest& request);
+  void ApplyDeleteGraphWithRaft(uint64_t apply_index,
+                                const meta::GraphLifecycleRequest& request);
+  graphdb::GraphDB* ApplyClearGraphWithRaft(
+      uint64_t apply_index, const meta::GraphLifecycleRequest& request);
   graphdb::GraphDB* CreateGraphInternal(const std::string& name,
                                         const meta::RaftNodeInfos* node_infos);
   graphdb::GraphDB* CreateGraphWithId(const meta::GraphDBMetaInfo& meta,

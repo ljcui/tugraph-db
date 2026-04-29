@@ -139,11 +139,14 @@ class RaftManager : public std::enable_shared_from_this<RaftManager> {
     ~ServiceRunner();
     void Stop();
     void WaitForIdle();
+    bool IsServiceThread();
 
     std::string thread_name;
     boost::asio::io_service service;
     std::unique_ptr<boost::asio::io_service::work> work;
     std::vector<std::thread> threads;
+    std::mutex thread_ids_mutex;
+    std::unordered_set<std::thread::id> thread_ids;
     std::atomic<bool> stopped{false};
   };
 

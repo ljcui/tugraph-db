@@ -347,9 +347,17 @@ RaftManager::ServiceRunner::ServiceRunner(std::string thread_name,
   threads.reserve(thread_num);
   for (size_t i = 0; i < thread_num; ++i) {
     threads.emplace_back([this, i]() {
+      {
+        std::lock_guard<std::mutex> guard(thread_ids_mutex);
+        thread_ids.insert(std::this_thread::get_id());
+      }
       auto name = fmt::format("{}{}", this->thread_name, i);
       pthread_setname_np(pthread_self(), name.c_str());
       service.run();
+      {
+        std::lock_guard<std::mutex> guard(thread_ids_mutex);
+        thread_ids.erase(std::this_thread::get_id());
+      }
     });
   }
 }
@@ -371,13 +379,18 @@ void RaftManager::ServiceRunner::Stop() {
 }
 
 void RaftManager::ServiceRunner::WaitForIdle() {
-  if (stopped.load()) {
+  if (stopped.load() || IsServiceThread()) {
     return;
   }
   std::promise<void> promise;
   auto future = promise.get_future();
   service.post([&promise]() { promise.set_value(); });
   future.wait();
+}
+
+bool RaftManager::ServiceRunner::IsServiceThread() {
+  std::lock_guard<std::mutex> guard(thread_ids_mutex);
+  return thread_ids.count(std::this_thread::get_id()) > 0;
 }
 
 std::shared_ptr<RaftManager> RaftManager::Instance() {

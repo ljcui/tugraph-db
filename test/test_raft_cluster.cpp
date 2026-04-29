@@ -257,6 +257,52 @@ class TestServerCluster final {
         timeout);
   }
 
+  bool WaitForGraphDeleted(
+      const std::string& graph_name,
+      std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
+    return WaitUntil(
+        [this, &graph_name]() {
+          return std::all_of(servers_.begin(), servers_.end(),
+                             [&graph_name](const auto& server) {
+                               if (server == nullptr) {
+                                 return true;
+                               }
+                               try {
+                                 server->galaxy()->OpenGraph(graph_name);
+                                 return false;
+                               } catch (const std::exception&) {
+                                 return true;
+                               }
+                             });
+        },
+        timeout);
+  }
+
+  bool WaitForGraphVertexCount(
+      const std::string& graph_name, size_t expected_count,
+      std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
+    return WaitUntil(
+        [this, &graph_name, expected_count]() {
+          return std::all_of(servers_.begin(), servers_.end(),
+                             [&graph_name, expected_count](const auto& server) {
+                               if (server == nullptr) {
+                                 return true;
+                               }
+                               auto graph =
+                                   server->galaxy()->OpenGraph(graph_name);
+                               auto txn = graph->BeginTransaction();
+                               size_t vertex_count = 0;
+                               for (auto iter = txn->NewVertexIterator();
+                                    iter->Valid(); iter->Next()) {
+                                 ++vertex_count;
+                               }
+                               txn->Commit();
+                               return vertex_count == expected_count;
+                             });
+        },
+        timeout);
+  }
+
   bool WaitForApplyIndex(
       uint64_t apply_index,
       std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
@@ -978,6 +1024,74 @@ TEST(RaftCluster, galaxyFailoverCanCreateRaftGraph) {
     EXPECT_EQ(persisted_vertex.GetAllProperty(), kProperties);
     read_txn->Commit();
   }
+}
+
+TEST(RaftCluster, clearRaftGraphUsesGalaxyRaftOnAllServers) {
+  TestServerCluster cluster("testdb_raft_cluster");
+  ASSERT_NO_THROW(cluster.Start());
+
+  auto* graph_leader = cluster.WaitForLeader(std::chrono::seconds(15));
+  ASSERT_NE(graph_leader, nullptr) << cluster.StatusSummary();
+  auto leader_graph = graph_leader->galaxy()->OpenGraph(kGraphName);
+
+  auto txn = leader_graph->BeginTransaction();
+  txn->CreateVertex({"person"}, {{"name", Value::String("before_clear")}});
+  txn->Commit();
+  const auto applied_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+  ASSERT_TRUE(
+      cluster.WaitForGraphVertexCount(kGraphName, 1, std::chrono::seconds(15)));
+
+  auto* galaxy_leader = cluster.WaitForGalaxyLeader(std::chrono::seconds(15));
+  ASSERT_NE(galaxy_leader, nullptr) << cluster.GalaxyStatusSummary();
+  ASSERT_NO_THROW(galaxy_leader->galaxy()->ClearGraph(kGraphName));
+  ASSERT_TRUE(
+      cluster.WaitForGraphVertexCount(kGraphName, 0, std::chrono::seconds(15)))
+      << cluster.GalaxyStatusSummary();
+
+  graph_leader = cluster.WaitForLeader(std::chrono::seconds(15));
+  ASSERT_NE(graph_leader, nullptr) << cluster.StatusSummary();
+  leader_graph = graph_leader->galaxy()->OpenGraph(kGraphName);
+  txn = leader_graph->BeginTransaction();
+  txn->CreateVertex({"person"}, {{"name", Value::String("after_clear")}});
+  txn->Commit();
+  const auto after_clear_apply_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_TRUE(cluster.WaitForApplyIndex(after_clear_apply_index,
+                                        std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+  ASSERT_TRUE(
+      cluster.WaitForGraphVertexCount(kGraphName, 1, std::chrono::seconds(15)));
+}
+
+TEST(RaftCluster, deleteRaftGraphStopsGroupAndRemovesDataOnAllServers) {
+  TestServerCluster cluster("testdb_raft_cluster");
+  ASSERT_NO_THROW(cluster.Start());
+
+  std::vector<std::string> graph_paths;
+  graph_paths.reserve(cluster.servers().size());
+  for (auto* server : cluster.servers()) {
+    auto graph = server->galaxy()->OpenGraph(kGraphName);
+    ASSERT_TRUE(graph->db_meta().enable_raft());
+    ASSERT_NE(graph->raft_driver(), nullptr);
+    graph_paths.emplace_back(graph->path());
+  }
+
+  auto* galaxy_leader = cluster.WaitForGalaxyLeader(std::chrono::seconds(15));
+  ASSERT_NE(galaxy_leader, nullptr) << cluster.GalaxyStatusSummary();
+  ASSERT_NO_THROW(galaxy_leader->galaxy()->DeleteGraph(kGraphName));
+  ASSERT_TRUE(cluster.WaitForGraphDeleted(kGraphName, std::chrono::seconds(15)))
+      << cluster.GalaxyStatusSummary();
+
+  ASSERT_TRUE(WaitUntil(
+      [&graph_paths]() {
+        return std::all_of(
+            graph_paths.begin(), graph_paths.end(), [](const auto& path) {
+              return !fs::exists(path) && !fs::exists(path + "/raft");
+            });
+      },
+      std::chrono::seconds(15)));
 }
 
 TEST(RaftCluster, removeLeaderFromGraphRaftElectsNewLeaderAndCommits) {

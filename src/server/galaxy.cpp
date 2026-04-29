@@ -137,6 +137,24 @@ meta::RaftNodeInfos CopyRaftNodeInfosForGraph(
   return ret;
 }
 
+meta::GraphLifecycleRequest BuildGraphLifecycleRequest(
+    const meta::GraphDBMetaInfo &meta) {
+  meta::GraphLifecycleRequest request;
+  request.set_graph_name(meta.graph_name());
+  request.set_graph_id(meta.graph_id());
+  return request;
+}
+
+void RemoveRaftLogDirectory(const std::string &graph_path) {
+  std::error_code ec;
+  auto raft_path = graph_path + "/raft";
+  std::filesystem::remove_all(raft_path, ec);
+  if (ec) {
+    THROW_CODE(StorageEngineError, "failed to remove raft log directory {}: {}",
+               raft_path, ec.message());
+  }
+}
+
 }  // namespace
 
 Galaxy::~Galaxy() {
@@ -463,6 +481,22 @@ void Galaxy::ApplyGalaxyRaftRequest(uint64_t index,
       ApplyCreateGraphWithRaft(index, create_graph_request);
       return;
     }
+    case meta::WriteBatchKind::GALAXY_DELETE_GRAPH: {
+      meta::GraphLifecycleRequest delete_graph_request;
+      if (!delete_graph_request.ParseFromString(request.wb_data())) {
+        THROW_CODE(InvalidParameter, "failed to parse GraphLifecycleRequest");
+      }
+      ApplyDeleteGraphWithRaft(index, delete_graph_request);
+      return;
+    }
+    case meta::WriteBatchKind::GALAXY_CLEAR_GRAPH: {
+      meta::GraphLifecycleRequest clear_graph_request;
+      if (!clear_graph_request.ParseFromString(request.wb_data())) {
+        THROW_CODE(InvalidParameter, "failed to parse GraphLifecycleRequest");
+      }
+      ApplyClearGraphWithRaft(index, clear_graph_request);
+      return;
+    }
     case meta::WriteBatchKind::UNKNOWN:
       THROW_CODE(InvalidParameter,
                  "write batch kind must be specified for galaxy raft request");
@@ -483,6 +517,88 @@ GraphDB *Galaxy::ApplyCreateGraphWithRaft(
   return CreateGraphWithId(meta, &request.node_infos(), apply_index);
 }
 
+void Galaxy::ApplyDeleteGraphWithRaft(
+    uint64_t apply_index, const meta::GraphLifecycleRequest &request) {
+  std::unique_lock<std::shared_mutex> write_lock(graphs_mutex_);
+  auto iter = graphs_.find(request.graph_name());
+  if (iter == graphs_.end()) {
+    rocksdb::WriteBatch wb;
+    auto s = SetGalaxyRaftApplyIndex(apply_index, &wb);
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    s = meta_db_->Write({}, {}, &wb);
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    return;
+  }
+
+  auto graph = iter->second;
+  auto &graph_meta = graph->db_meta();
+  if (graph_meta.graph_id() != request.graph_id()) {
+    THROW_CODE(StorageEngineError,
+               "delete graph [{}] id mismatch, request id {}, local id {}",
+               request.graph_name(), request.graph_id(), graph_meta.graph_id());
+  }
+  if (!graph_meta.enable_raft()) {
+    THROW_CODE(StorageEngineError,
+               "delete graph [{}] expected raft graph, but local graph is not "
+               "raft-enabled",
+               request.graph_name());
+  }
+
+  graph->StopRaft();
+
+  rocksdb::WriteBatch wb;
+  wb.Delete(BuildGraphMetaKey(graph_meta.graph_id()));
+  auto s = SetGalaxyRaftApplyIndex(apply_index, &wb);
+  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  s = meta_db_->Write({}, {}, &wb);
+  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+
+  const auto graph_path = graph->path();
+  graph->ClearData();
+  RemoveRaftLogDirectory(graph_path);
+  graph->drop_on_close() = true;
+  LOG_INFO("Erase raft graph:{}, path:{}", request.graph_name(), graph_path);
+  graphs_.erase(iter);
+}
+
+GraphDB *Galaxy::ApplyClearGraphWithRaft(
+    uint64_t apply_index, const meta::GraphLifecycleRequest &request) {
+  std::unique_lock<std::shared_mutex> write_lock(graphs_mutex_);
+  auto iter = graphs_.find(request.graph_name());
+  if (iter == graphs_.end()) {
+    rocksdb::WriteBatch wb;
+    auto s = SetGalaxyRaftApplyIndex(apply_index, &wb);
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    s = meta_db_->Write({}, {}, &wb);
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    return nullptr;
+  }
+
+  auto &graph_meta = iter->second->db_meta();
+  if (graph_meta.graph_id() != request.graph_id()) {
+    THROW_CODE(StorageEngineError,
+               "clear graph [{}] id mismatch, request id {}, local id {}",
+               request.graph_name(), request.graph_id(), graph_meta.graph_id());
+  }
+  if (!graph_meta.enable_raft()) {
+    THROW_CODE(StorageEngineError,
+               "clear graph [{}] expected raft graph, but local graph is not "
+               "raft-enabled",
+               request.graph_name());
+  }
+
+  LOG_INFO("Clear raft graph:{}, path:{}", request.graph_name(),
+           iter->second->path());
+  iter->second->ClearData();
+
+  rocksdb::WriteBatch wb;
+  auto s = SetGalaxyRaftApplyIndex(apply_index, &wb);
+  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  s = meta_db_->Write({}, {}, &wb);
+  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  return iter->second.get();
+}
+
 void Galaxy::StepGalaxyRaftMessage(raftpb::Message msg) {
   if (galaxy_raft_driver_ == nullptr) {
     LOG_WARN("galaxy raft is not enabled, drop message");
@@ -496,6 +612,34 @@ raft::RaftDriver *Galaxy::galaxy_raft_driver() const {
 }
 
 GraphDB *Galaxy::ClearGraph(const std::string &name) {
+  std::lock_guard<std::mutex> guard(create_graph_mutex_);
+  meta::GraphDBMetaInfo graph_meta;
+  {
+    std::shared_lock<std::shared_mutex> read_lock(graphs_mutex_);
+    auto iter = graphs_.find(name);
+    if (iter == graphs_.end()) {
+      THROW_CODE(NoSuchGraph, "No such graph: {}", name);
+    }
+    graph_meta = iter->second->db_meta();
+  }
+
+  if (graph_meta.enable_raft()) {
+    if (galaxy_raft_driver_ == nullptr) {
+      THROW_CODE(StorageEngineError,
+                 "galaxy raft is not enabled for raft graph [{}]", name);
+    }
+    meta::RaftRequest raft_request;
+    raft_request.set_wb_kind(meta::WriteBatchKind::GALAXY_CLEAR_GRAPH);
+    raft_request.set_wb_data(
+        BuildGraphLifecycleRequest(graph_meta).SerializeAsString());
+    auto apply_result =
+        galaxy_raft_driver_->ProposeRaftRequestAndWait(std::move(raft_request));
+    if (apply_result.err != nullptr) {
+      THROW_CODE(StorageEngineError, apply_result.err.String());
+    }
+    return OpenGraph(name).get();
+  }
+
   std::unique_lock<std::shared_mutex> write_lock(graphs_mutex_);
   auto iter = graphs_.find(name);
   if (iter == graphs_.end()) {
@@ -507,6 +651,34 @@ GraphDB *Galaxy::ClearGraph(const std::string &name) {
 }
 
 void Galaxy::DeleteGraph(const std::string &name) {
+  std::lock_guard<std::mutex> guard(create_graph_mutex_);
+  meta::GraphDBMetaInfo graph_meta;
+  {
+    std::shared_lock<std::shared_mutex> read_lock(graphs_mutex_);
+    auto iter = graphs_.find(name);
+    if (iter == graphs_.end()) {
+      THROW_CODE(NoSuchGraph, "No such graph: {}", name);
+    }
+    graph_meta = iter->second->db_meta();
+  }
+
+  if (graph_meta.enable_raft()) {
+    if (galaxy_raft_driver_ == nullptr) {
+      THROW_CODE(StorageEngineError,
+                 "galaxy raft is not enabled for raft graph [{}]", name);
+    }
+    meta::RaftRequest raft_request;
+    raft_request.set_wb_kind(meta::WriteBatchKind::GALAXY_DELETE_GRAPH);
+    raft_request.set_wb_data(
+        BuildGraphLifecycleRequest(graph_meta).SerializeAsString());
+    auto apply_result =
+        galaxy_raft_driver_->ProposeRaftRequestAndWait(std::move(raft_request));
+    if (apply_result.err != nullptr) {
+      THROW_CODE(StorageEngineError, apply_result.err.String());
+    }
+    return;
+  }
+
   std::unique_lock<std::shared_mutex> write_lock(graphs_mutex_);
   auto iter = graphs_.find(name);
   if (iter == graphs_.end()) {

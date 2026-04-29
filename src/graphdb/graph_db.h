@@ -84,6 +84,7 @@ class GraphDB {
   const std::string& path() { return path_; }
   raft::RaftDriver* raft_driver() const;
   void SetRaftDriver(std::unique_ptr<raft::RaftDriver> raft_driver);
+  void StopRaft();
   uint64_t GetRaftApplyIndex() const;
   void ApplyRaftRequest(uint64_t index, const meta::RaftRequest& request);
   rocksdb::Status SetRaftApplyIndex(uint64_t apply_index,
