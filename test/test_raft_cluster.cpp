@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <boost/asio.hpp>
 #include <chrono>
 #include <filesystem>
@@ -34,6 +35,7 @@
 #include "etcd-raft-cpp/raft.h"
 #include "graphdb/graph_db.h"
 #include "proto/meta.pb.h"
+#include "raft/raft_driver.h"
 #include "server/lgraph_server.h"
 #include "transaction/transaction.h"
 
@@ -296,6 +298,82 @@ TEST(RaftCluster, threeServersElectLeaderAndReplicateTransaction) {
     EXPECT_EQ(persisted_e1.GetAllProperty(), kProperties);
     read_txn->Commit();
   }
+}
+
+TEST(RaftDriver, proposeWriteBatchTimesOutWhenApplyStalls) {
+  const std::string raft_path = "testdb_raft_proposal_timeout";
+  fs::remove_all(raft_path);
+
+  raft::LocalNodeConfig local_node;
+  local_node.graph = "proposal_timeout_graph";
+  local_node.ip = "127.0.0.1";
+  local_node.bolt_port = AllocateFreePort();
+  local_node.raft_poft = AllocateFreePort();
+
+  raft::RaftLogStoreConfig store_config;
+  store_config.path = raft_path;
+  store_config.block_cache = 64;
+  store_config.total_threads = 2;
+  store_config.keep_logs = 100000;
+  store_config.gc_interval = 1;
+
+  raft::RaftConfig raft_config;
+  raft_config.tick_interval = 100;
+  raft_config.election_tick = 10;
+  raft_config.heartbeat_tick = 1;
+  raft_config.proposal_timeout = 50;
+
+  meta::RaftNodeInfo node_info;
+  node_info.set_node_id(1);
+  node_info.set_graph(local_node.graph);
+  node_info.set_ip(local_node.ip);
+  node_info.set_bolt_port(local_node.bolt_port);
+  node_info.set_raft_poft(local_node.raft_poft);
+
+  std::vector<eraft::Peer> init_peers;
+  eraft::Peer peer;
+  peer.id_ = 1;
+  peer.context_ = node_info.SerializeAsString();
+  init_peers.emplace_back(std::move(peer));
+
+  std::atomic<uint64_t> applied_index{0};
+  raft::RaftDriver driver(
+      [&applied_index](uint64_t index, const meta::RaftRequest&) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        applied_index.store(index);
+      },
+      0, std::move(local_node), std::move(init_peers), store_config,
+      raft_config);
+
+  auto err = driver.Run();
+  if (err != nullptr) {
+    driver.Stop();
+    FAIL() << err.String();
+  }
+  if (!WaitUntil(
+          [&driver]() {
+            auto status = driver.GetRaftStatus();
+            return status.s.basicStatus_.softState_.lead_ == 1 &&
+                   status.s.basicStatus_.softState_.raftState_ ==
+                       eraft::StateLeader;
+          },
+          std::chrono::seconds(5))) {
+    auto status = driver.GetRaftStatus();
+    driver.Stop();
+    FAIL() << "raft driver did not become leader, lead="
+           << status.s.basicStatus_.softState_.lead_;
+  }
+
+  rocksdb::WriteBatch wb;
+  ASSERT_TRUE(wb.Put("k", "v").ok());
+  auto result = driver.ProposeWriteBatch(meta::WriteBatchKind::GRAPH_WRITE, wb);
+  EXPECT_NE(result.err, nullptr);
+  EXPECT_NE(result.err.String().find("timed out"), std::string::npos);
+  EXPECT_TRUE(WaitUntil([&applied_index]() { return applied_index.load() > 0; },
+                        std::chrono::seconds(2)));
+
+  driver.Stop();
+  fs::remove_all(raft_path);
 }
 
 }  // namespace

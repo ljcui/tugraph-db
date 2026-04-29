@@ -281,6 +281,10 @@ bool RaftConfig::Check() {
     LOG_WARN("election_tick should be greater than 10");
     return false;
   }
+  if (proposal_timeout < 1) {
+    LOG_WARN("proposal_timeout should be greater than 0");
+    return false;
+  }
   return true;
 }
 
@@ -361,6 +365,7 @@ RaftDriver::RaftDriver(
       raft_config_(config) {}
 
 eraft::Error RaftDriver::Run() {
+  stopped_.store(false);
   if (!local_node_.Check()) {
     return eraft::Error("invalid local node config");
   }
@@ -479,6 +484,8 @@ eraft::Error RaftDriver::Run() {
 }
 
 void RaftDriver::Stop() {
+  stopped_.store(true);
+  RejectPendingPromises(eraft::Error("raft driver stopped"));
   client_service_.stop();
   timer_service_.stop();
   raft_service_.stop();
@@ -507,30 +514,78 @@ void RaftDriver::Step(raftpb::Message msg) {
 std::shared_ptr<PromiseContext> RaftDriver::Propose(uint64_t uuid,
                                                     raftpb::Message msg) {
   auto context = std::make_shared<PromiseContext>();
+  context->id = uuid;
+  {
+    std::lock_guard<std::mutex> guard(promise_mutex_);
+    if (stopped_.load()) {
+      context->SetError(eraft::Error("raft driver stopped"));
+      return context;
+    }
+    pending_promise_.emplace(uuid, context);
+  }
   raft_service_.post([this, uuid, context, msg = std::move(msg)]() mutable {
-    if (rn_->raft_->id_ != rn_->raft_->lead_) {
-      context->commited.set_value(
-          PromiseContext::CommitResult{eraft::Error("not leader"), 0});
-      context->applied.set_value(
-          PromiseContext::ApplyResult{eraft::Error("not leader"), 0});
-      return;
-    }
-    msg.set_from(rn_->raft_->id_);
-    auto err = rn_->raft_->Step(std::move(msg));
-    if (err != nullptr) {
-      LOG_WARN("failed to step raft message, err: {}", err.String());
-      context->commited.set_value(PromiseContext::CommitResult{err, 0});
-      context->applied.set_value(
-          PromiseContext::ApplyResult{std::move(err), 0});
-      return;
-    }
+    eraft::Error err = nullptr;
+    bool should_reject = false;
     {
       std::lock_guard<std::mutex> guard(promise_mutex_);
-      pending_promise_.emplace(uuid, std::move(context));
+      auto iter = pending_promise_.find(uuid);
+      if (iter == pending_promise_.end() || iter->second != context) {
+        return;
+      }
+      if (stopped_.load()) {
+        err = eraft::Error("raft driver stopped");
+        pending_promise_.erase(iter);
+        should_reject = true;
+      } else if (rn_->raft_->id_ != rn_->raft_->lead_) {
+        err = eraft::Error("not leader");
+        pending_promise_.erase(iter);
+        should_reject = true;
+      } else {
+        msg.set_from(rn_->raft_->id_);
+        err = rn_->raft_->Step(std::move(msg));
+        if (err != nullptr) {
+          pending_promise_.erase(iter);
+          should_reject = true;
+        }
+      }
+    }
+    if (should_reject) {
+      if (err.String() != "not leader" &&
+          err.String() != "raft driver stopped") {
+        LOG_WARN("failed to step raft message, err: {}", err.String());
+      }
+      context->SetError(std::move(err));
+      return;
     }
     CheckReady();
   });
   return context;
+}
+
+bool RaftDriver::RemovePendingPromise(
+    uint64_t uuid, const std::shared_ptr<PromiseContext>& context) {
+  std::lock_guard<std::mutex> guard(promise_mutex_);
+  auto iter = pending_promise_.find(uuid);
+  if (iter == pending_promise_.end() || iter->second != context) {
+    return false;
+  }
+  pending_promise_.erase(iter);
+  return true;
+}
+
+void RaftDriver::RejectPendingPromises(const eraft::Error& err) {
+  std::vector<std::shared_ptr<PromiseContext>> contexts;
+  {
+    std::lock_guard<std::mutex> guard(promise_mutex_);
+    contexts.reserve(pending_promise_.size());
+    for (auto& [_, context] : pending_promise_) {
+      contexts.emplace_back(std::move(context));
+    }
+    pending_promise_.clear();
+  }
+  for (auto& context : contexts) {
+    context->SetError(err);
+  }
 }
 
 void RaftDriver::Tick() {
@@ -565,7 +620,22 @@ PromiseContext::ApplyResult RaftDriver::ProposeWriteBatch(
   request.set_wb_kind(kind);
   request.set_wb_data(wb.Data());
   auto context = ProposeRaftRequest(std::move(request));
-  return context->applied.get_future().get();
+  auto future = context->applied.get_future();
+  auto timeout = std::chrono::milliseconds(raft_config_.proposal_timeout);
+  if (future.wait_for(timeout) == std::future_status::ready) {
+    return future.get();
+  }
+  if (future.wait_for(std::chrono::milliseconds(0)) ==
+      std::future_status::ready) {
+    return future.get();
+  }
+  auto err =
+      eraft::Error(fmt::format("proposal {} timed out after {} ms", context->id,
+                               raft_config_.proposal_timeout));
+  if (RemovePendingPromise(context->id, context)) {
+    context->SetError(err);
+  }
+  return PromiseContext::ApplyResult{std::move(err), 0};
 }
 
 std::shared_ptr<PromiseContext> RaftDriver::ProposeRaftRequest(
@@ -642,6 +712,11 @@ void RaftDriver::CheckReady() {
     LOG_INFO("soft state change, state:{}, lead:{}",
              eraft::ToString(ready.softState_->raftState_),
              ready.softState_->lead_);
+    if (ready.softState_->raftState_ != eraft::StateLeader ||
+        ready.softState_->lead_ != node_id_) {
+      RejectPendingPromises(eraft::Error(fmt::format(
+          "leadership changed, current leader {}", ready.softState_->lead_)));
+    }
   }
   rocksdb::WriteBatch batch;
   if (!ready.entries_.empty()) {
@@ -721,7 +796,7 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
           }
         }
         if (context) {
-          context->commited.set_value(
+          context->SetCommited(
               PromiseContext::CommitResult{nullptr, entry.index()});
         }
         eraft::Error apply_err = nullptr;
@@ -736,7 +811,7 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
           apply_id_.store(entry.index());
         }
         if (context) {
-          context->applied.set_value(
+          context->SetApplied(
               PromiseContext::ApplyResult{apply_err, entry.index()});
         }
         if (apply_err != nullptr) {
@@ -812,9 +887,9 @@ void RaftDriver::Apply(const std::vector<raftpb::Entry>& entries) {
           }
         }
         if (context) {
-          context->commited.set_value(
+          context->SetCommited(
               PromiseContext::CommitResult{nullptr, entry.index()});
-          context->applied.set_value(
+          context->SetApplied(
               PromiseContext::ApplyResult{nullptr, entry.index()});
         }
         break;

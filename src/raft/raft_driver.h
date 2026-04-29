@@ -20,6 +20,7 @@
 #include <atomic>
 #include <boost/asio.hpp>
 #include <deque>
+#include <future>
 #include <shared_mutex>
 #include <utility>
 
@@ -93,8 +94,28 @@ struct PromiseContext {
   using CommitResult = Result;
   using ApplyResult = Result;
 
+  uint64_t id = 0;
   std::promise<CommitResult> commited;
   std::promise<ApplyResult> applied;
+  std::atomic<bool> commited_ready = false;
+  std::atomic<bool> applied_ready = false;
+
+  void SetCommited(CommitResult result) {
+    if (!commited_ready.exchange(true)) {
+      commited.set_value(std::move(result));
+    }
+  }
+
+  void SetApplied(ApplyResult result) {
+    if (!applied_ready.exchange(true)) {
+      applied.set_value(std::move(result));
+    }
+  }
+
+  void SetError(eraft::Error err, uint64_t index = 0) {
+    SetCommited(CommitResult{err, index});
+    SetApplied(ApplyResult{std::move(err), index});
+  }
 };
 
 struct RaftStatus {
@@ -107,6 +128,7 @@ struct RaftConfig {
   int64_t tick_interval = 0;
   int64_t election_tick = 0;
   int64_t heartbeat_tick = 0;
+  int64_t proposal_timeout = 10000;
   bool Check();
 };
 
@@ -150,6 +172,9 @@ class RaftDriver {
 
  private:
   std::shared_ptr<PromiseContext> Propose(uint64_t uuid, raftpb::Message msg);
+  bool RemovePendingPromise(uint64_t uuid,
+                            const std::shared_ptr<PromiseContext>& context);
+  void RejectPendingPromises(const eraft::Error& err);
   void Tick();
   void CheckAndCompactLog();
   void CheckReady();
@@ -181,5 +206,6 @@ class RaftDriver {
   std::unordered_set<uint64_t> mark_unreachable_;
   RaftLogStoreConfig store_config_;
   RaftConfig raft_config_;
+  std::atomic<bool> stopped_ = false;
 };
 }  // namespace raft
