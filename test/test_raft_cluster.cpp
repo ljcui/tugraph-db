@@ -86,34 +86,26 @@ struct TestServerConfig {
 
 class TestServerCluster final {
  public:
-  explicit TestServerCluster(std::string base_path)
-      : base_path_(std::move(base_path)) {}
+  explicit TestServerCluster(std::string base_path, size_t node_count = 3)
+      : base_path_(std::move(base_path)), node_count_(node_count) {}
 
   ~TestServerCluster() { Stop(); }
 
   void Start() {
     Stop();
+    if (node_count_ == 0) {
+      throw std::runtime_error("raft test cluster must have at least one node");
+    }
     fs::remove_all(base_path_);
     server_configs_ = BuildServerConfigs();
     graph_node_infos_ = BuildNodeInfos(server_configs_, kGraphName);
     galaxy_node_infos_ =
         BuildNodeInfos(server_configs_, server::Galaxy::RaftGraphName());
+    servers_.clear();
+    servers_.resize(server_configs_.size());
     try {
-      for (const auto& config : server_configs_) {
-        server::LGraphServerOptions options;
-        options.data_path = config.data_path;
-        options.local_node_options.host = "127.0.0.1";
-        options.local_node_options.bolt_port = config.bolt_port;
-        options.galaxy_raft_node_infos = galaxy_node_infos_;
-        options.bolt_io_thread_num = 1;
-        options.local_node_options.raft_port = config.raft_port;
-
-        auto server =
-            std::make_unique<server::LGraphServer>(std::move(options));
-        if (!server->Start()) {
-          throw std::runtime_error("failed to start lgraph server");
-        }
-        servers_.emplace_back(std::move(server));
+      for (size_t i = 0; i < server_configs_.size(); ++i) {
+        StartServer(i);
       }
 
       auto* galaxy_leader = WaitForGalaxyLeader(std::chrono::seconds(15));
@@ -135,28 +127,63 @@ class TestServerCluster final {
 
   void Stop() {
     for (auto& server : servers_) {
-      server->Stop();
+      if (server != nullptr) {
+        server->Stop();
+      }
     }
     servers_.clear();
     fs::remove_all(base_path_);
   }
 
+  void StopServer(size_t index) {
+    if (index >= servers_.size()) {
+      throw std::out_of_range("raft test server index is out of range");
+    }
+    if (servers_[index] == nullptr) {
+      return;
+    }
+    servers_[index]->Stop();
+    servers_[index].reset();
+  }
+
+  void StartServer(size_t index) {
+    if (index >= server_configs_.size()) {
+      throw std::out_of_range("raft test server index is out of range");
+    }
+    if (index < servers_.size() && servers_[index] != nullptr) {
+      return;
+    }
+    if (servers_.size() < server_configs_.size()) {
+      servers_.resize(server_configs_.size());
+    }
+    auto server = MakeServer(server_configs_[index]);
+    if (!server->Start()) {
+      throw std::runtime_error("failed to start lgraph server");
+    }
+    servers_[index] = std::move(server);
+  }
+
   server::LGraphServer* WaitForLeader(
       std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
-    size_t leader_index = 0;
-    if (!WaitUntil(
-            [this, &leader_index]() {
-              auto found = FindConsistentLeaderIndex();
-              if (!found.has_value()) {
-                return false;
-              }
-              leader_index = *found;
-              return true;
-            },
-            timeout)) {
+    auto leader_index = WaitForLeaderIndex(timeout);
+    if (!leader_index.has_value()) {
       return nullptr;
     }
-    return servers_[leader_index].get();
+    return servers_[*leader_index].get();
+  }
+
+  std::optional<size_t> WaitForLeaderIndex(
+      std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
+    std::optional<size_t> leader_index;
+    if (!WaitUntil(
+            [this, &leader_index]() {
+              leader_index = FindConsistentLeaderIndex();
+              return leader_index.has_value();
+            },
+            timeout)) {
+      return std::nullopt;
+    }
+    return leader_index;
   }
 
   server::LGraphServer* WaitForGalaxyLeader(
@@ -183,6 +210,9 @@ class TestServerCluster final {
         [this]() {
           return std::all_of(servers_.begin(), servers_.end(),
                              [](const auto& server) {
+                               if (server == nullptr) {
+                                 return true;
+                               }
                                try {
                                  server->galaxy()->OpenGraph(kGraphName);
                                  return true;
@@ -202,6 +232,9 @@ class TestServerCluster final {
           return std::all_of(
               servers_.begin(), servers_.end(),
               [this, apply_index](const auto& server) {
+                if (server == nullptr) {
+                  return true;
+                }
                 return OpenGraph(server.get())->GetRaftApplyIndex() >=
                        apply_index;
               });
@@ -213,14 +246,28 @@ class TestServerCluster final {
     std::vector<server::LGraphServer*> ret;
     ret.reserve(servers_.size());
     for (const auto& server : servers_) {
-      ret.push_back(server.get());
+      if (server != nullptr) {
+        ret.push_back(server.get());
+      }
     }
     return ret;
   }
 
+  server::LGraphServer* server(size_t index) const {
+    if (index >= servers_.size() || servers_[index] == nullptr) {
+      return nullptr;
+    }
+    return servers_[index].get();
+  }
+
   std::string StatusSummary() const {
     std::ostringstream out;
-    for (const auto& server : servers_) {
+    for (size_t i = 0; i < servers_.size(); ++i) {
+      const auto& server = servers_[i];
+      if (server == nullptr) {
+        out << "[node_id=" << server_configs_[i].node_id << ", stopped]";
+        continue;
+      }
       auto graph = OpenGraph(server.get());
       auto status = graph->raft_driver()->GetRaftStatus();
       out << "[bolt_port=" << server->options().local_node_options.bolt_port
@@ -236,7 +283,12 @@ class TestServerCluster final {
 
   std::string GalaxyStatusSummary() const {
     std::ostringstream out;
-    for (const auto& server : servers_) {
+    for (size_t i = 0; i < servers_.size(); ++i) {
+      const auto& server = servers_[i];
+      if (server == nullptr) {
+        out << "[node_id=" << server_configs_[i].node_id << ", stopped]";
+        continue;
+      }
       auto* raft_driver = server->galaxy()->galaxy_raft_driver();
       if (raft_driver == nullptr) {
         out << "[bolt_port=" << server->options().local_node_options.bolt_port
@@ -260,11 +312,23 @@ class TestServerCluster final {
     return server->galaxy()->OpenGraph(kGraphName);
   }
 
+  std::unique_ptr<server::LGraphServer> MakeServer(
+      const TestServerConfig& config) const {
+    server::LGraphServerOptions options;
+    options.data_path = config.data_path;
+    options.local_node_options.host = "127.0.0.1";
+    options.local_node_options.bolt_port = config.bolt_port;
+    options.galaxy_raft_node_infos = galaxy_node_infos_;
+    options.bolt_io_thread_num = 1;
+    options.local_node_options.raft_port = config.raft_port;
+    return std::make_unique<server::LGraphServer>(std::move(options));
+  }
+
   std::vector<TestServerConfig> BuildServerConfigs() const {
     std::vector<TestServerConfig> configs;
-    configs.reserve(3);
+    configs.reserve(node_count_);
     std::unordered_set<int32_t> used_ports;
-    for (size_t i = 0; i < 3; ++i) {
+    for (size_t i = 0; i < node_count_; ++i) {
       TestServerConfig config;
       config.node_id = static_cast<uint64_t>(i + 1);
       do {
@@ -298,8 +362,13 @@ class TestServerCluster final {
   std::optional<size_t> FindConsistentLeaderIndex() const {
     std::optional<size_t> leader_index;
     uint64_t leader_id = 0;
+    bool has_running_server = false;
 
     for (size_t i = 0; i < servers_.size(); ++i) {
+      if (servers_[i] == nullptr) {
+        continue;
+      }
+      has_running_server = true;
       auto graph = OpenGraph(servers_[i].get());
       auto status = graph->raft_driver()->GetRaftStatus();
       auto reported_leader = status.s.basicStatus_.softState_.lead_;
@@ -319,6 +388,9 @@ class TestServerCluster final {
       }
     }
 
+    if (!has_running_server) {
+      return std::nullopt;
+    }
     if (!leader_index.has_value()) {
       return std::nullopt;
     }
@@ -331,8 +403,13 @@ class TestServerCluster final {
   std::optional<size_t> FindConsistentGalaxyLeaderIndex() const {
     std::optional<size_t> leader_index;
     uint64_t leader_id = 0;
+    bool has_running_server = false;
 
     for (size_t i = 0; i < servers_.size(); ++i) {
+      if (servers_[i] == nullptr) {
+        continue;
+      }
+      has_running_server = true;
       auto* raft_driver = servers_[i]->galaxy()->galaxy_raft_driver();
       if (raft_driver == nullptr) {
         return std::nullopt;
@@ -355,6 +432,9 @@ class TestServerCluster final {
       }
     }
 
+    if (!has_running_server) {
+      return std::nullopt;
+    }
     if (!leader_index.has_value()) {
       return std::nullopt;
     }
@@ -365,11 +445,73 @@ class TestServerCluster final {
   }
 
   std::string base_path_;
+  size_t node_count_;
   std::vector<TestServerConfig> server_configs_;
   meta::RaftNodeInfos graph_node_infos_;
   meta::RaftNodeInfos galaxy_node_infos_;
   std::vector<std::unique_ptr<server::LGraphServer>> servers_;
 };
+
+raft::LocalNodeConfig MakeLocalNodeConfig(const std::string& graph_name) {
+  raft::LocalNodeConfig local_node;
+  local_node.graph = graph_name;
+  local_node.ip = "127.0.0.1";
+  local_node.bolt_port = AllocateFreePort();
+  local_node.raft_poft = AllocateFreePort();
+  return local_node;
+}
+
+raft::RaftLogStoreConfig MakeRaftLogStoreConfig(const std::string& path) {
+  raft::RaftLogStoreConfig store_config;
+  store_config.path = path;
+  store_config.block_cache = 64;
+  store_config.total_threads = 2;
+  store_config.keep_logs = 100000;
+  store_config.gc_interval = 1;
+  return store_config;
+}
+
+raft::RaftConfig MakeRaftConfig() {
+  raft::RaftConfig raft_config;
+  raft_config.tick_interval = 100;
+  raft_config.election_tick = 10;
+  raft_config.heartbeat_tick = 1;
+  return raft_config;
+}
+
+meta::RaftNodeInfo MakeNodeInfo(const raft::LocalNodeConfig& local_node,
+                                uint64_t node_id) {
+  meta::RaftNodeInfo node_info;
+  node_info.set_node_id(node_id);
+  node_info.set_graph(local_node.graph);
+  node_info.set_ip(local_node.ip);
+  node_info.set_bolt_port(local_node.bolt_port);
+  node_info.set_raft_poft(local_node.raft_poft);
+  return node_info;
+}
+
+std::vector<eraft::Peer> MakeInitPeers(const raft::LocalNodeConfig& local_node,
+                                       uint64_t node_id = 1) {
+  std::vector<eraft::Peer> init_peers;
+  eraft::Peer peer;
+  peer.id_ = node_id;
+  peer.context_ = MakeNodeInfo(local_node, node_id).SerializeAsString();
+  init_peers.emplace_back(std::move(peer));
+  return init_peers;
+}
+
+bool WaitForRaftDriverLeader(
+    raft::RaftDriver* driver, uint64_t expected_leader_id = 1,
+    std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+  return WaitUntil(
+      [driver, expected_leader_id]() {
+        auto status = driver->GetRaftStatus();
+        return status.s.basicStatus_.softState_.lead_ == expected_leader_id &&
+               status.s.basicStatus_.softState_.raftState_ ==
+                   eraft::StateLeader;
+      },
+      timeout);
+}
 
 TEST(RaftCluster, threeServersElectLeaderAndReplicateTransaction) {
   TestServerCluster cluster("testdb_raft_cluster");
@@ -402,6 +544,71 @@ TEST(RaftCluster, threeServersElectLeaderAndReplicateTransaction) {
     EXPECT_EQ(persisted_v1.GetAllProperty(), kProperties);
     EXPECT_EQ(persisted_v2.GetAllProperty(), kProperties);
     EXPECT_EQ(persisted_e1.GetAllProperty(), kProperties);
+    read_txn->Commit();
+  }
+}
+
+TEST(RaftCluster, singleServerElectsLeaderAndCommitsTransaction) {
+  TestServerCluster cluster("testdb_raft_cluster", 1);
+  ASSERT_NO_THROW(cluster.Start());
+
+  auto* leader = cluster.WaitForLeader(std::chrono::seconds(15));
+  ASSERT_NE(leader, nullptr) << cluster.StatusSummary();
+
+  auto leader_graph = leader->galaxy()->OpenGraph(kGraphName);
+  auto txn = leader_graph->BeginTransaction();
+  auto vertex = txn->CreateVertex({"single_node_label"}, kProperties);
+  txn->Commit();
+
+  const auto applied_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_GT(applied_index, 0U);
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(10)))
+      << cluster.StatusSummary();
+
+  auto read_txn = leader_graph->BeginTransaction();
+  auto persisted_vertex = read_txn->GetVertexById(vertex.GetId());
+  EXPECT_EQ(persisted_vertex.GetAllProperty(), kProperties);
+  read_txn->Commit();
+}
+
+TEST(RaftCluster, stoppedLeaderFailsOverAndCatchesUpAfterRestart) {
+  TestServerCluster cluster("testdb_raft_cluster");
+  ASSERT_NO_THROW(cluster.Start());
+
+  auto old_leader_index = cluster.WaitForLeaderIndex(std::chrono::seconds(15));
+  ASSERT_TRUE(old_leader_index.has_value()) << cluster.StatusSummary();
+  ASSERT_NO_THROW(cluster.StopServer(*old_leader_index));
+
+  auto new_leader_index = cluster.WaitForLeaderIndex(std::chrono::seconds(20));
+  ASSERT_TRUE(new_leader_index.has_value()) << cluster.StatusSummary();
+  ASSERT_NE(*new_leader_index, *old_leader_index);
+  auto* new_leader = cluster.server(*new_leader_index);
+  ASSERT_NE(new_leader, nullptr);
+
+  auto leader_graph = new_leader->galaxy()->OpenGraph(kGraphName);
+  auto txn = leader_graph->BeginTransaction();
+  auto vertex = txn->CreateVertex({"failover_label"}, kProperties);
+  txn->Commit();
+
+  const auto applied_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+
+  ASSERT_NO_THROW(cluster.StartServer(*old_leader_index));
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(30)))
+      << cluster.StatusSummary();
+
+  auto final_leader_index =
+      cluster.WaitForLeaderIndex(std::chrono::seconds(15));
+  ASSERT_TRUE(final_leader_index.has_value()) << cluster.StatusSummary();
+  for (auto* server : cluster.servers()) {
+    auto graph = server->galaxy()->OpenGraph(kGraphName);
+    auto read_txn = graph->BeginTransaction();
+    auto persisted_vertex = read_txn->GetVertexById(vertex.GetId());
+    EXPECT_EQ(persisted_vertex.GetAllProperty(), kProperties);
     read_txn->Commit();
   }
 }
@@ -477,6 +684,118 @@ TEST(RaftDriver, proposeWriteBatchTimesOutWhenApplyStalls) {
   EXPECT_NE(result.err.String().find("timed out"), std::string::npos);
   EXPECT_TRUE(WaitUntil([&applied_index]() { return applied_index.load() > 0; },
                         std::chrono::seconds(2)));
+
+  driver.Stop();
+  fs::remove_all(raft_path);
+}
+
+TEST(RaftDriver, restartRecoversNodeInfosAndContinuesApplying) {
+  const std::string raft_path = "testdb_raft_restart_recovery";
+  fs::remove_all(raft_path);
+
+  auto local_node = MakeLocalNodeConfig("restart_recovery_graph");
+  auto store_config = MakeRaftLogStoreConfig(raft_path);
+  auto raft_config = MakeRaftConfig();
+
+  uint64_t first_applied_index = 0;
+  {
+    std::atomic<uint64_t> applied_index{0};
+    raft::RaftDriver driver(
+        [&applied_index](uint64_t index, const meta::RaftRequest&) {
+          applied_index.store(index);
+        },
+        0, local_node, MakeInitPeers(local_node), store_config, raft_config);
+
+    auto err = driver.Run();
+    if (err != nullptr) {
+      driver.Stop();
+      FAIL() << err.String();
+    }
+    if (!WaitForRaftDriverLeader(&driver)) {
+      auto status = driver.GetRaftStatus();
+      driver.Stop();
+      FAIL() << "raft driver did not become leader, lead="
+             << status.s.basicStatus_.softState_.lead_;
+    }
+
+    rocksdb::WriteBatch wb;
+    ASSERT_TRUE(wb.Put("k1", "v1").ok());
+    auto result =
+        driver.ProposeWriteBatch(meta::WriteBatchKind::GRAPH_WRITE, wb);
+    if (result.err != nullptr) {
+      driver.Stop();
+      FAIL() << result.err.String();
+    }
+    if (result.index == 0) {
+      driver.Stop();
+      FAIL() << "raft proposal applied at invalid index 0";
+    }
+    first_applied_index = result.index;
+    EXPECT_EQ(applied_index.load(), first_applied_index);
+
+    driver.Stop();
+  }
+
+  {
+    std::atomic<uint64_t> applied_index{first_applied_index};
+    raft::RaftDriver driver(
+        [&applied_index](uint64_t index, const meta::RaftRequest&) {
+          applied_index.store(index);
+        },
+        first_applied_index, local_node, store_config, raft_config);
+
+    auto err = driver.Run();
+    if (err != nullptr) {
+      driver.Stop();
+      FAIL() << err.String();
+    }
+    if (!WaitForRaftDriverLeader(&driver)) {
+      auto status = driver.GetRaftStatus();
+      driver.Stop();
+      FAIL() << "raft driver did not become leader after restart, lead="
+             << status.s.basicStatus_.softState_.lead_;
+    }
+
+    auto node_infos = driver.GetNodeInfosWithLeader();
+    if (node_infos.nodes_size() != 1 || !node_infos.nodes().count(1)) {
+      driver.Stop();
+      FAIL() << "unexpected node infos after restart: "
+             << node_infos.ShortDebugString();
+    }
+    EXPECT_TRUE(node_infos.nodes().at(1).is_leader());
+    EXPECT_EQ(node_infos.nodes().at(1).graph(), local_node.graph);
+
+    rocksdb::WriteBatch wb;
+    ASSERT_TRUE(wb.Put("k2", "v2").ok());
+    auto result =
+        driver.ProposeWriteBatch(meta::WriteBatchKind::GRAPH_WRITE, wb);
+    if (result.err != nullptr) {
+      driver.Stop();
+      FAIL() << result.err.String();
+    }
+    EXPECT_GT(result.index, first_applied_index);
+    EXPECT_EQ(applied_index.load(), result.index);
+
+    driver.Stop();
+  }
+
+  fs::remove_all(raft_path);
+}
+
+TEST(RaftDriver, freshBootstrapWithoutInitialPeersFails) {
+  const std::string raft_path = "testdb_raft_missing_init_peers";
+  fs::remove_all(raft_path);
+
+  auto local_node = MakeLocalNodeConfig("missing_init_peers_graph");
+  auto store_config = MakeRaftLogStoreConfig(raft_path);
+  auto raft_config = MakeRaftConfig();
+
+  raft::RaftDriver driver([](uint64_t, const meta::RaftRequest&) {}, 0,
+                          local_node, store_config, raft_config);
+
+  auto err = driver.Run();
+  EXPECT_NE(err, nullptr);
+  EXPECT_NE(err.String().find("initial peers are required"), std::string::npos);
 
   driver.Stop();
   fs::remove_all(raft_path);
