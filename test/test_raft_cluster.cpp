@@ -581,6 +581,16 @@ meta::RaftRequest MakeGraphWriteRequest(const std::string& key,
   return request;
 }
 
+raft::PromiseContext::ApplyResult WaitForAppliedResult(
+    const std::shared_ptr<raft::PromiseContext>& context,
+    std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+  auto future = context->applied.get_future();
+  if (future.wait_for(timeout) != std::future_status::ready) {
+    return {eraft::Error("raft proposal did not apply before timeout"), 0};
+  }
+  return future.get();
+}
+
 size_t FirstFollowerIndex(const TestServerCluster& cluster,
                           size_t leader_index) {
   for (size_t i = 0; i < cluster.size(); ++i) {
@@ -1166,6 +1176,69 @@ TEST(RaftDriver, freshBootstrapWithoutInitialPeersFails) {
   fs::remove_all(raft_path);
 }
 
+TEST(RaftDriver, configValidationRejectsInvalidValues) {
+  auto raft_config = MakeRaftConfig();
+  EXPECT_TRUE(raft_config.Check());
+
+  auto invalid_raft_config = raft_config;
+  invalid_raft_config.tick_interval = 99;
+  EXPECT_FALSE(invalid_raft_config.Check());
+  invalid_raft_config = raft_config;
+  invalid_raft_config.heartbeat_tick = 0;
+  EXPECT_FALSE(invalid_raft_config.Check());
+  invalid_raft_config = raft_config;
+  invalid_raft_config.election_tick = 9;
+  EXPECT_FALSE(invalid_raft_config.Check());
+  invalid_raft_config = raft_config;
+  invalid_raft_config.proposal_timeout = 0;
+  EXPECT_FALSE(invalid_raft_config.Check());
+  invalid_raft_config = raft_config;
+  invalid_raft_config.max_proposal_bytes = 0;
+  EXPECT_FALSE(invalid_raft_config.Check());
+  invalid_raft_config = raft_config;
+  invalid_raft_config.max_pending_proposals = 0;
+  EXPECT_FALSE(invalid_raft_config.Check());
+  invalid_raft_config = raft_config;
+  invalid_raft_config.max_pending_proposal_bytes =
+      invalid_raft_config.max_proposal_bytes - 1;
+  EXPECT_FALSE(invalid_raft_config.Check());
+
+  auto store_config = MakeRaftLogStoreConfig("testdb_raft_config_validation");
+  EXPECT_TRUE(store_config.Check());
+
+  auto invalid_store_config = store_config;
+  invalid_store_config.path.clear();
+  EXPECT_FALSE(invalid_store_config.Check());
+  invalid_store_config = store_config;
+  invalid_store_config.block_cache = 9;
+  EXPECT_FALSE(invalid_store_config.Check());
+  invalid_store_config = store_config;
+  invalid_store_config.total_threads = 1;
+  EXPECT_FALSE(invalid_store_config.Check());
+  invalid_store_config = store_config;
+  invalid_store_config.keep_logs = 99999;
+  EXPECT_FALSE(invalid_store_config.Check());
+  invalid_store_config = store_config;
+  invalid_store_config.gc_interval = 0;
+  EXPECT_FALSE(invalid_store_config.Check());
+
+  auto local_node = MakeLocalNodeConfig("config_validation_graph");
+  EXPECT_TRUE(local_node.Check());
+
+  auto invalid_local_node = local_node;
+  invalid_local_node.graph.clear();
+  EXPECT_FALSE(invalid_local_node.Check());
+  invalid_local_node = local_node;
+  invalid_local_node.ip.clear();
+  EXPECT_FALSE(invalid_local_node.Check());
+  invalid_local_node = local_node;
+  invalid_local_node.bolt_port = 0;
+  EXPECT_FALSE(invalid_local_node.Check());
+  invalid_local_node = local_node;
+  invalid_local_node.raft_poft = 0;
+  EXPECT_FALSE(invalid_local_node.Check());
+}
+
 TEST(RaftDriver, freshBootstrapRejectsInvalidInitialPeerContext) {
   const std::string raft_path = "testdb_raft_invalid_peer_context";
   fs::remove_all(raft_path);
@@ -1337,6 +1410,171 @@ TEST(RaftDriver, concurrentLeaderProposalsAllApply) {
         return applied_count.load() == static_cast<uint64_t>(kProposalCount);
       },
       std::chrono::seconds(5)));
+
+  driver.Stop();
+  fs::remove_all(raft_path);
+}
+
+TEST(RaftDriver, rejectUnknownWriteBatchKind) {
+  auto local_node = MakeLocalNodeConfig("unknown_wb_kind_graph");
+  raft::RaftDriver driver([](uint64_t, const meta::RaftRequest&) {}, 0,
+                          std::move(local_node), {}, MakeRaftConfig());
+
+  meta::RaftRequest request;
+  EXPECT_THROW(driver.ProposeRaftRequest(std::move(request)), std::exception);
+}
+
+TEST(RaftDriver, rejectWriteBatchAfterStop) {
+  const std::string raft_path = "testdb_raft_proposal_after_stop";
+  fs::remove_all(raft_path);
+
+  auto local_node = MakeLocalNodeConfig("proposal_after_stop_graph");
+  auto store_config = MakeRaftLogStoreConfig(raft_path);
+  auto raft_config = MakeRaftConfig();
+
+  raft::RaftDriver driver([](uint64_t, const meta::RaftRequest&) {}, 0,
+                          local_node, MakeInitPeers(local_node), store_config,
+                          raft_config);
+
+  auto err = driver.Run();
+  if (err != nullptr) {
+    driver.Stop();
+    FAIL() << err.String();
+  }
+  if (!WaitForRaftDriverLeader(&driver)) {
+    auto status = driver.GetRaftStatus();
+    driver.Stop();
+    FAIL() << "raft driver did not become leader, lead="
+           << status.s.basicStatus_.softState_.lead_;
+  }
+  driver.Stop();
+
+  rocksdb::WriteBatch wb;
+  ASSERT_TRUE(wb.Put("after_stop_key", "value").ok());
+  auto result = driver.ProposeWriteBatch(meta::WriteBatchKind::GRAPH_WRITE, wb);
+  EXPECT_NE(result.err, nullptr);
+  EXPECT_NE(result.err.String().find("raft driver stopped"), std::string::npos);
+  EXPECT_EQ(result.index, 0U);
+
+  fs::remove_all(raft_path);
+}
+
+TEST(RaftDriver, learnerConfChangeUpdatesNodeInfos) {
+  const std::string raft_path = "testdb_raft_learner_confchange";
+  fs::remove_all(raft_path);
+
+  auto local_node = MakeLocalNodeConfig("learner_confchange_graph");
+  auto learner_node = MakeLocalNodeConfig(local_node.graph);
+  auto store_config = MakeRaftLogStoreConfig(raft_path);
+  auto raft_config = MakeRaftConfig();
+
+  raft::RaftDriver driver([](uint64_t, const meta::RaftRequest&) {}, 0,
+                          local_node, MakeInitPeers(local_node), store_config,
+                          raft_config);
+
+  auto err = driver.Run();
+  if (err != nullptr) {
+    driver.Stop();
+    FAIL() << err.String();
+  }
+  if (!WaitForRaftDriverLeader(&driver)) {
+    auto status = driver.GetRaftStatus();
+    driver.Stop();
+    FAIL() << "raft driver did not become leader, lead="
+           << status.s.basicStatus_.softState_.lead_;
+  }
+
+  auto learner_info = MakeNodeInfo(learner_node, 2);
+  raftpb::ConfChange add_learner;
+  add_learner.set_type(raftpb::ConfChangeAddLearnerNode);
+  add_learner.set_node_id(learner_info.node_id());
+  add_learner.set_context(learner_info.SerializeAsString());
+
+  auto add_result = WaitForAppliedResult(driver.ProposeConfChange(add_learner));
+  if (add_result.err != nullptr) {
+    driver.Stop();
+    FAIL() << add_result.err.String();
+  }
+  EXPECT_GT(add_result.index, 0U);
+
+  auto node_infos = driver.GetNodeInfosWithLeader();
+  ASSERT_EQ(node_infos.nodes_size(), 2);
+  ASSERT_TRUE(node_infos.nodes().count(1));
+  ASSERT_TRUE(node_infos.nodes().count(2));
+  EXPECT_TRUE(node_infos.nodes().at(1).is_leader());
+  EXPECT_FALSE(node_infos.nodes().at(2).is_leader());
+  EXPECT_EQ(node_infos.nodes().at(2).graph(), local_node.graph);
+
+  raftpb::ConfChange remove_learner;
+  remove_learner.set_type(raftpb::ConfChangeRemoveNode);
+  remove_learner.set_node_id(learner_info.node_id());
+  remove_learner.set_context(learner_info.SerializeAsString());
+
+  auto remove_result =
+      WaitForAppliedResult(driver.ProposeConfChange(remove_learner));
+  if (remove_result.err != nullptr) {
+    driver.Stop();
+    FAIL() << remove_result.err.String();
+  }
+  EXPECT_GT(remove_result.index, add_result.index);
+
+  node_infos = driver.GetNodeInfosWithLeader();
+  ASSERT_EQ(node_infos.nodes_size(), 1);
+  ASSERT_TRUE(node_infos.nodes().count(1));
+  EXPECT_FALSE(node_infos.nodes().count(2));
+  EXPECT_TRUE(node_infos.nodes().at(1).is_leader());
+
+  driver.Stop();
+  fs::remove_all(raft_path);
+}
+
+TEST(RaftDriver, restartRejectsDuplicatePersistedNodeInfos) {
+  const std::string raft_path = "testdb_raft_restart_duplicate_node_infos";
+  fs::remove_all(raft_path);
+
+  auto local_node = MakeLocalNodeConfig("restart_duplicate_node_infos_graph");
+  auto store_config = MakeRaftLogStoreConfig(raft_path);
+  auto raft_config = MakeRaftConfig();
+
+  {
+    raft::RaftDriver driver([](uint64_t, const meta::RaftRequest&) {}, 0,
+                            local_node, MakeInitPeers(local_node), store_config,
+                            raft_config);
+
+    auto err = driver.Run();
+    if (err != nullptr) {
+      driver.Stop();
+      FAIL() << err.String();
+    }
+    if (!WaitForRaftDriverLeader(&driver)) {
+      auto status = driver.GetRaftStatus();
+      driver.Stop();
+      FAIL() << "raft driver did not become leader, lead="
+             << status.s.basicStatus_.softState_.lead_;
+    }
+
+    auto duplicate_info = MakeNodeInfo(local_node, 2);
+    raftpb::ConfChange add_duplicate_learner;
+    add_duplicate_learner.set_type(raftpb::ConfChangeAddLearnerNode);
+    add_duplicate_learner.set_node_id(duplicate_info.node_id());
+    add_duplicate_learner.set_context(duplicate_info.SerializeAsString());
+
+    auto result =
+        WaitForAppliedResult(driver.ProposeConfChange(add_duplicate_learner));
+    if (result.err != nullptr) {
+      driver.Stop();
+      FAIL() << result.err.String();
+    }
+    driver.Stop();
+  }
+
+  raft::RaftDriver driver([](uint64_t, const meta::RaftRequest&) {}, 0,
+                          local_node, store_config, raft_config);
+
+  auto err = driver.Run();
+  EXPECT_NE(err, nullptr);
+  EXPECT_NE(err.String().find("multiple raft nodes match local identity"),
+            std::string::npos);
 
   driver.Stop();
   fs::remove_all(raft_path);
