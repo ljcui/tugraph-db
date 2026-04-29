@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <functional>
 #include <future>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -591,6 +592,59 @@ raft::PromiseContext::ApplyResult WaitForAppliedResult(
   return future.get();
 }
 
+struct TestRaftLogStorage {
+  explicit TestRaftLogStorage(std::unique_ptr<raft::RaftLogStorage> storage)
+      : storage(std::move(storage)) {}
+
+  TestRaftLogStorage(TestRaftLogStorage&&) = default;
+  TestRaftLogStorage& operator=(TestRaftLogStorage&&) = default;
+
+  ~TestRaftLogStorage() { Close(); }
+
+  raft::RaftLogStorage* operator->() const { return storage.get(); }
+
+  void Close() {
+    if (storage != nullptr) {
+      storage->Close();
+      storage.reset();
+    }
+  }
+
+  std::unique_ptr<raft::RaftLogStorage> storage;
+};
+
+TestRaftLogStorage OpenRaftLogStorage(const std::string& path) {
+  rocksdb::Options options;
+  options.create_if_missing = true;
+  options.create_missing_column_families = true;
+
+  std::vector<rocksdb::ColumnFamilyDescriptor> cfs;
+  cfs.emplace_back(rocksdb::kDefaultColumnFamilyName, options);
+  cfs.emplace_back("meta", options);
+
+  std::vector<rocksdb::ColumnFamilyHandle*> cf_handles;
+  rocksdb::DB* db = nullptr;
+  fs::create_directories(path);
+  auto status = rocksdb::DB::Open(options, path, cfs, &cf_handles, &db);
+  if (!status.ok()) {
+    throw std::runtime_error(status.ToString());
+  }
+  if (cf_handles.size() != 2) {
+    throw std::runtime_error("unexpected raft log storage column families");
+  }
+  return TestRaftLogStorage(
+      std::make_unique<raft::RaftLogStorage>(db, cf_handles[0], cf_handles[1]));
+}
+
+raftpb::Entry MakeLogEntry(uint64_t index, uint64_t term,
+                           std::string data = {}) {
+  raftpb::Entry entry;
+  entry.set_index(index);
+  entry.set_term(term);
+  entry.set_data(std::move(data));
+  return entry;
+}
+
 size_t FirstFollowerIndex(const TestServerCluster& cluster,
                           size_t leader_index) {
   for (size_t i = 0; i < cluster.size(); ++i) {
@@ -875,6 +929,99 @@ TEST(RaftCluster, galaxyFailoverCanCreateRaftGraph) {
   }
 }
 
+TEST(RaftCluster, removeFollowerFromGraphRaftKeepsMajorityWritable) {
+  TestServerCluster cluster("testdb_raft_cluster");
+  ASSERT_NO_THROW(cluster.Start());
+
+  auto leader_index = cluster.WaitForLeaderIndex(std::chrono::seconds(15));
+  ASSERT_TRUE(leader_index.has_value()) << cluster.StatusSummary();
+  auto removed_index = FirstFollowerIndex(cluster, *leader_index);
+  auto removed_node_id = cluster.node_id(removed_index);
+
+  auto* leader = cluster.server(*leader_index);
+  ASSERT_NE(leader, nullptr);
+  auto leader_graph = leader->galaxy()->OpenGraph(kGraphName);
+
+  auto initial_node_infos = cluster.NodeInfosForGraph(kGraphName);
+  ASSERT_TRUE(initial_node_infos.nodes().count(removed_node_id));
+  auto removed_node_info = initial_node_infos.nodes().at(removed_node_id);
+
+  raftpb::ConfChange remove_follower;
+  remove_follower.set_type(raftpb::ConfChangeRemoveNode);
+  remove_follower.set_node_id(removed_node_id);
+  remove_follower.set_context(removed_node_info.SerializeAsString());
+
+  auto remove_result = WaitForAppliedResult(
+      leader_graph->raft_driver()->ProposeConfChange(remove_follower),
+      std::chrono::seconds(15));
+  ASSERT_EQ(remove_result.err, nullptr) << remove_result.err.String();
+  ASSERT_GT(remove_result.index, 0U);
+
+  ASSERT_TRUE(WaitUntil(
+      [&cluster, removed_index, removed_node_id]() {
+        for (size_t i = 0; i < cluster.size(); ++i) {
+          if (i == removed_index) {
+            continue;
+          }
+          auto* server = cluster.server(i);
+          if (server == nullptr) {
+            continue;
+          }
+          auto graph = server->galaxy()->OpenGraph(kGraphName);
+          auto node_infos = graph->raft_driver()->GetNodeInfosWithLeader();
+          if (node_infos.nodes().count(removed_node_id)) {
+            return false;
+          }
+        }
+        return true;
+      },
+      std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+
+  int64_t vertex_id = 0;
+  uint64_t applied_index = 0;
+  {
+    auto txn = leader_graph->BeginTransaction();
+    auto vertex = txn->CreateVertex({"remove_follower_label"}, kProperties);
+    vertex_id = vertex.GetId();
+    txn->Commit();
+    applied_index = leader_graph->GetRaftApplyIndex();
+  }
+
+  ASSERT_TRUE(WaitUntil(
+      [&cluster, removed_index, applied_index]() {
+        for (size_t i = 0; i < cluster.size(); ++i) {
+          if (i == removed_index) {
+            continue;
+          }
+          auto* server = cluster.server(i);
+          if (server == nullptr) {
+            continue;
+          }
+          auto graph = server->galaxy()->OpenGraph(kGraphName);
+          if (graph->GetRaftApplyIndex() < applied_index) {
+            return false;
+          }
+        }
+        return true;
+      },
+      std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+
+  for (size_t i = 0; i < cluster.size(); ++i) {
+    if (i == removed_index) {
+      continue;
+    }
+    auto* server = cluster.server(i);
+    ASSERT_NE(server, nullptr);
+    auto graph = server->galaxy()->OpenGraph(kGraphName);
+    auto read_txn = graph->BeginTransaction();
+    auto persisted_vertex = read_txn->GetVertexById(vertex_id);
+    EXPECT_EQ(persisted_vertex.GetAllProperty(), kProperties);
+    read_txn->Commit();
+  }
+}
+
 TEST(RaftCluster, allServersRestartAndRecoverCommittedData) {
   TestServerCluster cluster("testdb_raft_cluster");
   ASSERT_NO_THROW(cluster.Start());
@@ -986,6 +1133,178 @@ TEST(RaftCluster, stoppedLeaderFailsOverAndCatchesUpAfterRestart) {
     EXPECT_EQ(persisted_vertex.GetAllProperty(), kProperties);
     read_txn->Commit();
   }
+}
+
+TEST(RaftLogStorage, persistsStateEntriesAndMetadataAcrossReopen) {
+  const std::string raft_path = "testdb_raft_log_storage_persistence";
+  fs::remove_all(raft_path);
+
+  auto local_node = MakeLocalNodeConfig("log_storage_persistence_graph");
+  {
+    auto storage = OpenRaftLogStorage(raft_path);
+    ASSERT_FALSE(storage->Init());
+
+    auto first_index = storage->FirstIndex();
+    EXPECT_EQ(first_index.second, nullptr);
+    EXPECT_EQ(first_index.first, 1U);
+    auto last_index = storage->LastIndex();
+    EXPECT_EQ(last_index.second, nullptr);
+    EXPECT_EQ(last_index.first, 0U);
+    EXPECT_EQ(storage->GetApplyIndex(), 0U);
+    EXPECT_FALSE(storage->GetNodeInfos().has_value());
+
+    raftpb::HardState hard_state;
+    hard_state.set_term(3);
+    hard_state.set_vote(1);
+    hard_state.set_commit(2);
+
+    raftpb::ConfState conf_state;
+    conf_state.add_voters(1);
+    conf_state.add_voters(2);
+
+    meta::RaftNodeInfos node_infos;
+    (*node_infos.mutable_nodes())[1] = MakeNodeInfo(local_node, 1);
+
+    rocksdb::WriteBatch wb;
+    EXPECT_EQ(storage->SetHardState(hard_state, wb), nullptr);
+    EXPECT_EQ(storage->SetConfState(conf_state, wb), nullptr);
+    EXPECT_EQ(storage->SetNodeInfos(node_infos.SerializeAsString(), wb),
+              nullptr);
+    EXPECT_EQ(storage->SetApplyIndex(2, wb), nullptr);
+    EXPECT_EQ(storage->Append(
+                  {MakeLogEntry(1, 1, "one"), MakeLogEntry(2, 1, "two")}, wb),
+              nullptr);
+    storage->WriteBatch(wb);
+    storage.Close();
+  }
+
+  {
+    auto storage = OpenRaftLogStorage(raft_path);
+    ASSERT_TRUE(storage->Init());
+
+    auto [hard_state, conf_state, err] = storage->InitialState();
+    EXPECT_EQ(err, nullptr);
+    EXPECT_EQ(hard_state.term(), 3U);
+    EXPECT_EQ(hard_state.vote(), 1U);
+    EXPECT_EQ(hard_state.commit(), 2U);
+    ASSERT_EQ(conf_state.voters_size(), 2);
+    EXPECT_EQ(conf_state.voters(0), 1U);
+    EXPECT_EQ(conf_state.voters(1), 2U);
+    EXPECT_EQ(storage->GetApplyIndex(), 2U);
+
+    auto node_infos_data = storage->GetNodeInfos();
+    ASSERT_TRUE(node_infos_data.has_value());
+    meta::RaftNodeInfos node_infos;
+    ASSERT_TRUE(node_infos.ParseFromString(*node_infos_data));
+    ASSERT_TRUE(node_infos.nodes().count(1));
+    EXPECT_EQ(node_infos.nodes().at(1).graph(), local_node.graph);
+
+    auto first_index = storage->FirstIndex();
+    EXPECT_EQ(first_index.second, nullptr);
+    EXPECT_EQ(first_index.first, 1U);
+    auto last_index = storage->LastIndex();
+    EXPECT_EQ(last_index.second, nullptr);
+    EXPECT_EQ(last_index.first, 2U);
+
+    auto term = storage->Term(2);
+    EXPECT_EQ(term.second, nullptr);
+    EXPECT_EQ(term.first, 1U);
+
+    auto entries = storage->Entries(1, 3, std::numeric_limits<uint64_t>::max());
+    EXPECT_EQ(entries.second, nullptr);
+    ASSERT_EQ(entries.first.size(), 2U);
+    EXPECT_EQ(entries.first[0].data(), "one");
+    EXPECT_EQ(entries.first[1].data(), "two");
+
+    auto snapshot = storage->Snapshot();
+    EXPECT_EQ(snapshot.second, eraft::ErrSnapshotTemporarilyUnavailable);
+  }
+
+  fs::remove_all(raft_path);
+}
+
+TEST(RaftLogStorage, appendOverwritesConflictingSuffix) {
+  const std::string raft_path = "testdb_raft_log_storage_append";
+  fs::remove_all(raft_path);
+
+  auto storage = OpenRaftLogStorage(raft_path);
+  ASSERT_FALSE(storage->Init());
+
+  rocksdb::WriteBatch first_wb;
+  ASSERT_EQ(
+      storage->Append({MakeLogEntry(1, 1, "one"), MakeLogEntry(2, 1, "two"),
+                       MakeLogEntry(3, 1, "stale")},
+                      first_wb),
+      nullptr);
+  storage->WriteBatch(first_wb);
+
+  rocksdb::WriteBatch overwrite_wb;
+  ASSERT_EQ(
+      storage->Append({MakeLogEntry(2, 2, "two-overwritten")}, overwrite_wb),
+      nullptr);
+  storage->WriteBatch(overwrite_wb);
+
+  auto last_index = storage->LastIndex();
+  EXPECT_EQ(last_index.second, nullptr);
+  EXPECT_EQ(last_index.first, 2U);
+
+  auto term = storage->Term(2);
+  EXPECT_EQ(term.second, nullptr);
+  EXPECT_EQ(term.first, 2U);
+  EXPECT_EQ(storage->Term(3).second, eraft::ErrUnavailable);
+
+  auto entries = storage->Entries(1, 3, std::numeric_limits<uint64_t>::max());
+  EXPECT_EQ(entries.second, nullptr);
+  ASSERT_EQ(entries.first.size(), 2U);
+  EXPECT_EQ(entries.first[0].data(), "one");
+  EXPECT_EQ(entries.first[1].data(), "two-overwritten");
+
+  auto limited_entries = storage->Entries(1, 3, 1);
+  EXPECT_EQ(limited_entries.second, nullptr);
+  ASSERT_EQ(limited_entries.first.size(), 1U);
+  EXPECT_EQ(limited_entries.first[0].index(), 1U);
+
+  storage.Close();
+  fs::remove_all(raft_path);
+}
+
+TEST(RaftLogStorage, compactMovesFirstIndexAndRejectsCompactedEntries) {
+  const std::string raft_path = "testdb_raft_log_storage_compact";
+  fs::remove_all(raft_path);
+
+  auto storage = OpenRaftLogStorage(raft_path);
+  ASSERT_FALSE(storage->Init());
+
+  rocksdb::WriteBatch wb;
+  ASSERT_EQ(
+      storage->Append({MakeLogEntry(1, 1, "one"), MakeLogEntry(2, 1, "two"),
+                       MakeLogEntry(3, 2, "three"), MakeLogEntry(4, 2, "four"),
+                       MakeLogEntry(5, 2, "five")},
+                      wb),
+      nullptr);
+  storage->WriteBatch(wb);
+
+  storage->Compact(3);
+
+  auto first_index = storage->FirstIndex();
+  EXPECT_EQ(first_index.second, nullptr);
+  EXPECT_EQ(first_index.first, 4U);
+  EXPECT_EQ(storage->Term(2).second, eraft::ErrCompacted);
+  auto compacted_entries = storage->Entries(3, 5, 1024);
+  EXPECT_EQ(compacted_entries.second, eraft::ErrCompacted);
+
+  auto term = storage->Term(3);
+  EXPECT_EQ(term.second, nullptr);
+  EXPECT_EQ(term.first, 2U);
+
+  auto entries = storage->Entries(4, 6, std::numeric_limits<uint64_t>::max());
+  EXPECT_EQ(entries.second, nullptr);
+  ASSERT_EQ(entries.first.size(), 2U);
+  EXPECT_EQ(entries.first[0].data(), "four");
+  EXPECT_EQ(entries.first[1].data(), "five");
+
+  storage.Close();
+  fs::remove_all(raft_path);
 }
 
 TEST(RaftDriver, proposeWriteBatchTimesOutWhenApplyStalls) {
