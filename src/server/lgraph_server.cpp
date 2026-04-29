@@ -19,14 +19,6 @@
 
 namespace server {
 
-GalaxyOptions LGraphServer::BuildGalaxyOptions() const {
-  auto galaxy_options = options_.galaxy_options;
-  galaxy_options.host = options_.host;
-  galaxy_options.bolt_port = options_.bolt_port;
-  galaxy_options.raft_port = options_.raft_port;
-  return galaxy_options;
-}
-
 bool LGraphServer::Start() {
   if (started_.load()) {
     return true;
@@ -38,19 +30,22 @@ bool LGraphServer::Start() {
   }
 
   try {
-    galaxy_ = Galaxy::Open(options_.data_path, BuildGalaxyOptions());
+    galaxy_ = Galaxy::Open(options_.data_path, options_.galaxy_options,
+                           options_.local_node_options);
   } catch (const std::exception& e) {
     LOG_ERROR("failed to open galaxy: {}", e.what());
     galaxy_.reset();
     return false;
   }
 
-  if (!raft_server_.Start(galaxy_.get(), options_.raft_port)) {
+  if (!raft_server_.Start(galaxy_.get(),
+                          options_.local_node_options.raft_port)) {
     galaxy_.reset();
     return false;
   }
 
-  if (!bolt_server_.Start(options_.bolt_port, options_.bolt_io_thread_num,
+  if (!bolt_server_.Start(options_.local_node_options.bolt_port,
+                          options_.bolt_io_thread_num,
                           NewBoltHandler(galaxy_.get()))) {
     raft_server_.Stop();
     galaxy_.reset();

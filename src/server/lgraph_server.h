@@ -29,10 +29,8 @@ namespace server {
 
 struct LGraphServerOptions {
   std::string data_path;
-  std::string host = "127.0.0.1";
-  uint32_t bolt_port = 0;
+  LocalNodeOptions local_node_options;
   uint32_t bolt_io_thread_num = 1;
-  uint32_t raft_port = 0;
   GalaxyOptions galaxy_options;
 };
 
@@ -53,8 +51,6 @@ class LGraphServer final {
   ~LGraphServer() { Stop(); }
 
  private:
-  GalaxyOptions BuildGalaxyOptions() const;
-
   LGraphServerOptions options_;
   std::unique_ptr<Galaxy> galaxy_;
   bolt::BoltServer bolt_server_;

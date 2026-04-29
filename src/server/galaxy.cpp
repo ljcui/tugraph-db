@@ -20,6 +20,7 @@
 
 #include <boost/endian/conversion.hpp>
 #include <filesystem>
+#include <utility>
 
 #include "common/exceptions.h"
 #include "common/logger.h"
@@ -71,6 +72,16 @@ void ApplyRaftRequest(GraphDB *graph_db, uint64_t index,
   graph_db->ApplyRaftRequest(index, request);
 }
 
+raft::LocalNodeConfig BuildLocalNodeConfig(
+    const std::string &graph_name, const LocalNodeOptions &local_node_options) {
+  raft::LocalNodeConfig local_node;
+  local_node.graph = graph_name;
+  local_node.ip = local_node_options.host;
+  local_node.bolt_port = static_cast<int32_t>(local_node_options.bolt_port);
+  local_node.raft_poft = static_cast<int32_t>(local_node_options.raft_port);
+  return local_node;
+}
+
 }  // namespace
 
 Galaxy::~Galaxy() {
@@ -85,7 +96,8 @@ Galaxy::~Galaxy() {
 }
 
 std::unique_ptr<Galaxy> Galaxy::Open(const std::string &path,
-                                     const GalaxyOptions &galaxy_options) {
+                                     const GalaxyOptions &galaxy_options,
+                                     LocalNodeOptions local_node_options) {
   LOG_INFO("Open galaxy: {}", path);
   rocksdb::Options options;
   options.create_if_missing = true;
@@ -103,6 +115,7 @@ std::unique_ptr<Galaxy> Galaxy::Open(const std::string &path,
   galaxy->block_cache_ = rocksdb::NewLRUCache(galaxy_options.block_cache_size);
   galaxy->row_cache_ = rocksdb::NewLRUCache(galaxy_options.row_cache_size);
   galaxy->options_ = galaxy_options;
+  galaxy->local_node_options_ = std::move(local_node_options);
   galaxy->meta_db_ = db;
 
   rocksdb::ReadOptions ro;
@@ -141,11 +154,8 @@ std::unique_ptr<Galaxy> Galaxy::Open(const std::string &path,
          .vt_apply_interval_ = galaxy->options_.vt_apply_interval});
     graph_db->db_meta() = meta;
     if (meta.enable_raft()) {
-      raft::LocalNodeConfig local_node;
-      local_node.graph = meta.graph_name();
-      local_node.ip = galaxy->options_.host;
-      local_node.bolt_port = static_cast<int32_t>(galaxy->options_.bolt_port);
-      local_node.raft_poft = static_cast<int32_t>(galaxy->options_.raft_port);
+      auto local_node =
+          BuildLocalNodeConfig(meta.graph_name(), galaxy->local_node_options_);
 
       raft::RaftLogStoreConfig store_config;
       store_config.path = graph_path + "/raft";
@@ -225,11 +235,7 @@ GraphDB *Galaxy::CreateGraphInternal(const std::string &name,
   graph_db->db_meta() = meta;
   if (node_infos) {
     ValidateRaftNodeInfos(*node_infos, name);
-    raft::LocalNodeConfig local_node;
-    local_node.graph = name;
-    local_node.ip = options_.host;
-    local_node.bolt_port = static_cast<int32_t>(options_.bolt_port);
-    local_node.raft_poft = static_cast<int32_t>(options_.raft_port);
+    auto local_node = BuildLocalNodeConfig(name, local_node_options_);
 
     raft::RaftLogStoreConfig store_config;
     store_config.path = graph_path + "/raft";

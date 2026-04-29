@@ -188,10 +188,10 @@ class LGraphDaemon : public Service {
     PrintWelcome();
     LGraphServer server(
         {.data_path = FLAGS_data_path,
-         .host = FLAGS_host,
-         .bolt_port = FLAGS_bolt_port,
+         .local_node_options = {.host = FLAGS_host,
+                                .bolt_port = FLAGS_bolt_port,
+                                .raft_port = FLAGS_raft_port},
          .bolt_io_thread_num = FLAGS_bolt_io_thread_num,
-         .raft_port = FLAGS_raft_port,
          .galaxy_options = {
              .block_cache_size = FLAGS_block_cache,
              .row_cache_size = FLAGS_row_cache,

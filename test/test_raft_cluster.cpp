@@ -97,10 +97,10 @@ class TestServerCluster final {
       for (const auto& config : server_configs_) {
         server::LGraphServerOptions options;
         options.data_path = config.data_path;
-        options.host = "127.0.0.1";
-        options.bolt_port = config.bolt_port;
+        options.local_node_options.host = "127.0.0.1";
+        options.local_node_options.bolt_port = config.bolt_port;
         options.bolt_io_thread_num = 1;
-        options.raft_port = config.raft_port;
+        options.local_node_options.raft_port = config.raft_port;
 
         auto server =
             std::make_unique<server::LGraphServer>(std::move(options));
@@ -174,8 +174,8 @@ class TestServerCluster final {
     for (const auto& server : servers_) {
       auto graph = OpenGraph(server.get());
       auto status = graph->raft_driver()->GetRaftStatus();
-      out << "[bolt_port=" << server->options().bolt_port
-          << ", raft_port=" << server->options().raft_port
+      out << "[bolt_port=" << server->options().local_node_options.bolt_port
+          << ", raft_port=" << server->options().local_node_options.raft_port
           << ", lead=" << status.s.basicStatus_.softState_.lead_ << ", state="
           << eraft::ToString(status.s.basicStatus_.softState_.raftState_)
           << ", apply=" << graph->GetRaftApplyIndex()

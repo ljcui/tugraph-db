@@ -18,6 +18,7 @@
 
 #pragma once
 #include <cstdint>
+#include <string>
 
 #include "graphdb/graph_db.h"
 
@@ -34,6 +35,9 @@ struct GalaxyOptions {
   size_t ft_writer_threads = 1;
   size_t ft_writer_memory_budget = 50 * 1000 * 1000;
   size_t vt_apply_interval = 1;
+};
+
+struct LocalNodeOptions {
   std::string host = "127.0.0.1";
   uint32_t bolt_port = 0;
   uint32_t raft_port = 0;
@@ -48,7 +52,8 @@ class Galaxy {
   void operator=(const Galaxy&) = delete;
 
   static std::unique_ptr<Galaxy> Open(const std::string& path,
-                                      const GalaxyOptions& galaxy_options);
+                                      const GalaxyOptions& galaxy_options,
+                                      LocalNodeOptions local_node_options = {});
   std::shared_ptr<graphdb::GraphDB> OpenGraph(const std::string& name);
   graphdb::GraphDB* CreateGraph(const std::string& name);
   graphdb::GraphDB* CreateGraphWithRaft(const std::string& name,
@@ -71,5 +76,6 @@ class Galaxy {
   std::atomic<uint64_t> next_graph_id_ = 1;
   std::string path_;
   GalaxyOptions options_;
+  LocalNodeOptions local_node_options_;
 };
 }  // namespace server
