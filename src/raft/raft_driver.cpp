@@ -470,6 +470,9 @@ eraft::Error RaftDriver::Run() {
     if (err != nullptr) {
       return err;
     }
+    // Persist and apply bootstrap ConfChange entries before Run returns, so a
+    // crash after graph metadata is visible can still recover local node infos.
+    CheckReady();
   }
   Tick();
   CheckAndCompactLog();
@@ -688,6 +691,11 @@ PromiseContext::ApplyResult RaftDriver::ProposeWriteBatch(
   meta::RaftRequest request;
   request.set_wb_kind(kind);
   request.set_wb_data(wb.Data());
+  return ProposeRaftRequestAndWait(std::move(request));
+}
+
+PromiseContext::ApplyResult RaftDriver::ProposeRaftRequestAndWait(
+    meta::RaftRequest request) {
   auto context = ProposeRaftRequest(std::move(request));
   auto future = context->applied.get_future();
   auto timeout = std::chrono::milliseconds(raft_config_.proposal_timeout);

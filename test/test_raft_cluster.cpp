@@ -95,13 +95,16 @@ class TestServerCluster final {
     Stop();
     fs::remove_all(base_path_);
     server_configs_ = BuildServerConfigs();
-    node_infos_ = BuildNodeInfos(server_configs_);
+    graph_node_infos_ = BuildNodeInfos(server_configs_, kGraphName);
+    galaxy_node_infos_ =
+        BuildNodeInfos(server_configs_, server::Galaxy::RaftGraphName());
     try {
       for (const auto& config : server_configs_) {
         server::LGraphServerOptions options;
         options.data_path = config.data_path;
         options.local_node_options.host = "127.0.0.1";
         options.local_node_options.bolt_port = config.bolt_port;
+        options.galaxy_raft_node_infos = galaxy_node_infos_;
         options.bolt_io_thread_num = 1;
         options.local_node_options.raft_port = config.raft_port;
 
@@ -113,8 +116,16 @@ class TestServerCluster final {
         servers_.emplace_back(std::move(server));
       }
 
-      for (const auto& server : servers_) {
-        server->galaxy()->CreateGraphWithRaft(kGraphName, node_infos_);
+      auto* galaxy_leader = WaitForGalaxyLeader(std::chrono::seconds(15));
+      if (galaxy_leader == nullptr) {
+        throw std::runtime_error("failed to elect galaxy raft leader: " +
+                                 GalaxyStatusSummary());
+      }
+      galaxy_leader->galaxy()->CreateGraphWithRaft(kGraphName,
+                                                   graph_node_infos_);
+      if (!WaitForGraphCreated(std::chrono::seconds(15))) {
+        throw std::runtime_error("failed to create graph on all servers: " +
+                                 GalaxyStatusSummary());
       }
     } catch (...) {
       Stop();
@@ -146,6 +157,41 @@ class TestServerCluster final {
       return nullptr;
     }
     return servers_[leader_index].get();
+  }
+
+  server::LGraphServer* WaitForGalaxyLeader(
+      std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
+    size_t leader_index = 0;
+    if (!WaitUntil(
+            [this, &leader_index]() {
+              auto found = FindConsistentGalaxyLeaderIndex();
+              if (!found.has_value()) {
+                return false;
+              }
+              leader_index = *found;
+              return true;
+            },
+            timeout)) {
+      return nullptr;
+    }
+    return servers_[leader_index].get();
+  }
+
+  bool WaitForGraphCreated(
+      std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
+    return WaitUntil(
+        [this]() {
+          return std::all_of(servers_.begin(), servers_.end(),
+                             [](const auto& server) {
+                               try {
+                                 server->galaxy()->OpenGraph(kGraphName);
+                                 return true;
+                               } catch (const std::exception&) {
+                                 return false;
+                               }
+                             });
+        },
+        timeout);
   }
 
   bool WaitForApplyIndex(
@@ -188,6 +234,27 @@ class TestServerCluster final {
     return out.str();
   }
 
+  std::string GalaxyStatusSummary() const {
+    std::ostringstream out;
+    for (const auto& server : servers_) {
+      auto* raft_driver = server->galaxy()->galaxy_raft_driver();
+      if (raft_driver == nullptr) {
+        out << "[bolt_port=" << server->options().local_node_options.bolt_port
+            << ", galaxy_raft=disabled]";
+        continue;
+      }
+      auto status = raft_driver->GetRaftStatus();
+      out << "[bolt_port=" << server->options().local_node_options.bolt_port
+          << ", raft_port=" << server->options().local_node_options.raft_port
+          << ", galaxy_lead=" << status.s.basicStatus_.softState_.lead_
+          << ", galaxy_state="
+          << eraft::ToString(status.s.basicStatus_.softState_.raftState_)
+          << ", first_log=" << status.first_log
+          << ", last_log=" << status.last_log << "]";
+    }
+    return out.str();
+  }
+
  private:
   std::shared_ptr<GraphDB> OpenGraph(const server::LGraphServer* server) const {
     return server->galaxy()->OpenGraph(kGraphName);
@@ -213,7 +280,8 @@ class TestServerCluster final {
   }
 
   meta::RaftNodeInfos BuildNodeInfos(
-      const std::vector<TestServerConfig>& server_configs) const {
+      const std::vector<TestServerConfig>& server_configs,
+      const std::string& graph_name) const {
     meta::RaftNodeInfos node_infos;
     for (const auto& config : server_configs) {
       meta::RaftNodeInfo node_info;
@@ -221,7 +289,7 @@ class TestServerCluster final {
       node_info.set_ip("127.0.0.1");
       node_info.set_bolt_port(config.bolt_port);
       node_info.set_raft_poft(config.raft_port);
-      node_info.set_graph(kGraphName);
+      node_info.set_graph(graph_name);
       (*node_infos.mutable_nodes())[config.node_id] = node_info;
     }
     return node_infos;
@@ -260,9 +328,46 @@ class TestServerCluster final {
     return leader_index;
   }
 
+  std::optional<size_t> FindConsistentGalaxyLeaderIndex() const {
+    std::optional<size_t> leader_index;
+    uint64_t leader_id = 0;
+
+    for (size_t i = 0; i < servers_.size(); ++i) {
+      auto* raft_driver = servers_[i]->galaxy()->galaxy_raft_driver();
+      if (raft_driver == nullptr) {
+        return std::nullopt;
+      }
+      auto status = raft_driver->GetRaftStatus();
+      auto reported_leader = status.s.basicStatus_.softState_.lead_;
+      if (reported_leader == 0) {
+        return std::nullopt;
+      }
+      if (leader_id == 0) {
+        leader_id = reported_leader;
+      } else if (leader_id != reported_leader) {
+        return std::nullopt;
+      }
+      if (status.s.basicStatus_.softState_.raftState_ == eraft::StateLeader) {
+        if (leader_index.has_value()) {
+          return std::nullopt;
+        }
+        leader_index = i;
+      }
+    }
+
+    if (!leader_index.has_value()) {
+      return std::nullopt;
+    }
+    if (server_configs_[*leader_index].node_id != leader_id) {
+      return std::nullopt;
+    }
+    return leader_index;
+  }
+
   std::string base_path_;
   std::vector<TestServerConfig> server_configs_;
-  meta::RaftNodeInfos node_infos_;
+  meta::RaftNodeInfos graph_node_infos_;
+  meta::RaftNodeInfos galaxy_node_infos_;
   std::vector<std::unique_ptr<server::LGraphServer>> servers_;
 };
 

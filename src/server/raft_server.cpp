@@ -49,6 +49,10 @@ bool RaftServer::Start(Galaxy* galaxy, uint32_t port) {
                    graph_name);
           return;
         }
+        if (graph_name == Galaxy::RaftGraphName()) {
+          galaxy_->StepGalaxyRaftMessage(std::move(msg));
+          return;
+        }
         try {
           auto graph = galaxy_->OpenGraph(graph_name);
           auto* raft_driver = graph->raft_driver();

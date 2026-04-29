@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -30,6 +31,7 @@ namespace server {
 struct LGraphServerOptions {
   std::string data_path;
   LocalNodeOptions local_node_options;
+  std::optional<meta::RaftNodeInfos> galaxy_raft_node_infos = std::nullopt;
   uint32_t bolt_io_thread_num = 1;
   GalaxyOptions galaxy_options;
 };

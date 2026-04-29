@@ -170,6 +170,8 @@ class RaftDriver {
   void Step(raftpb::Message msg);
   PromiseContext::ApplyResult ProposeWriteBatch(meta::WriteBatchKind kind,
                                                 const rocksdb::WriteBatch& wb);
+  PromiseContext::ApplyResult ProposeRaftRequestAndWait(
+      meta::RaftRequest request);
   std::shared_ptr<PromiseContext> ProposeRaftRequest(meta::RaftRequest request);
   std::shared_ptr<PromiseContext> ProposeConfChange(raftpb::ConfChange& cc);
   meta::RaftNodeInfos GetNodeInfosWithLeader();
