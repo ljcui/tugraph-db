@@ -46,8 +46,9 @@ DECLARE_uint32(bolt_handshake_timeout_seconds);
 DECLARE_uint32(bolt_login_timeout_seconds);
 DECLARE_uint32(bolt_idle_timeout_seconds);
 
-DECLARE_uint64(block_cache);
-DECLARE_uint64(row_cache);
+DECLARE_uint64(graph_block_cache);
+DECLARE_uint64(graph_row_cache);
+DECLARE_uint64(raft_log_block_cache);
 DECLARE_uint64(ft_apply_interval);
 DECLARE_uint64(ft_writer_threads);
 DECLARE_uint64(ft_writer_memory_budget);

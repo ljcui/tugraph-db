@@ -34,6 +34,7 @@ enum class GalaxyMetaDataType : char {
 struct GalaxyOptions {
   size_t block_cache_size = 64 * 1024 * 1024L;
   size_t row_cache_size = 32 * 1024 * 1024L;
+  size_t raft_log_block_cache_size = 256 * 1024 * 1024L;
   size_t ft_apply_interval = 1;
   size_t ft_writer_threads = 1;
   size_t ft_writer_memory_budget = 50 * 1000 * 1000;
@@ -95,6 +96,7 @@ class Galaxy {
   std::unordered_map<std::string, std::shared_ptr<graphdb::GraphDB>> graphs_;
   std::shared_ptr<rocksdb::Cache> block_cache_;
   std::shared_ptr<rocksdb::RowCache> row_cache_;
+  std::shared_ptr<rocksdb::Cache> raft_log_block_cache_;
   std::shared_mutex graphs_mutex_;
   std::mutex create_graph_mutex_;
   std::atomic<uint64_t> next_graph_id_ = 1;

@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <rocksdb/cache.h>
 #include <rocksdb/write_batch.h>
 
 #include <array>
@@ -127,7 +128,7 @@ inline std::unique_ptr<raft::RaftDriver> NewSingleNodeRaftDriver(
 
   raft::RaftLogStoreConfig store_config;
   store_config.path = raft_path;
-  store_config.block_cache = 64;
+  store_config.shared_block_cache = rocksdb::NewLRUCache(64 * 1024 * 1024L);
   store_config.total_threads = 2;
   store_config.keep_logs = 100000;
   store_config.gc_interval = 1;

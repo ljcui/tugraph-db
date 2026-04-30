@@ -201,8 +201,9 @@ class LGraphDaemon : public Service {
               .login_timeout_seconds = FLAGS_bolt_login_timeout_seconds,
               .idle_timeout_seconds = FLAGS_bolt_idle_timeout_seconds},
          .galaxy_options = {
-             .block_cache_size = FLAGS_block_cache,
-             .row_cache_size = FLAGS_row_cache,
+             .block_cache_size = FLAGS_graph_block_cache,
+             .row_cache_size = FLAGS_graph_row_cache,
+             .raft_log_block_cache_size = FLAGS_raft_log_block_cache,
              .ft_apply_interval = FLAGS_ft_apply_interval,
              .ft_writer_threads = FLAGS_ft_writer_threads,
              .ft_writer_memory_budget = FLAGS_ft_writer_memory_budget,

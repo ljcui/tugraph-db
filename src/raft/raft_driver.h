@@ -15,6 +15,7 @@
 // written by botu.wzy
 
 #pragma once
+#include <rocksdb/cache.h>
 #include <rocksdb/write_batch.h>
 
 #include <atomic>
@@ -234,7 +235,7 @@ struct RaftConfig {
 
 struct RaftLogStoreConfig {
   std::string path;
-  uint64_t block_cache = 0;
+  std::shared_ptr<rocksdb::Cache> shared_block_cache;
   uint64_t total_threads = 0;
   uint64_t keep_logs = 0;
   uint64_t gc_interval = 0;

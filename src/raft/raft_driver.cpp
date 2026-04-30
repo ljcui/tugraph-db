@@ -500,8 +500,8 @@ bool RaftLogStoreConfig::Check() {
     LOG_WARN("raft logstore path is empty.");
     return false;
   }
-  if (block_cache < 10) {
-    LOG_WARN("block_cache should be greater than 10 MB");
+  if (shared_block_cache == nullptr) {
+    LOG_WARN("shared_block_cache should not be null");
     return false;
   }
   if (total_threads < 2) {
@@ -581,13 +581,15 @@ eraft::Error RaftDriver::Run() {
   if (!local_node_.Check()) {
     return eraft::Error("invalid local node config");
   }
+  if (store_config_.shared_block_cache == nullptr) {
+    return eraft::Error("raft log store shared_block_cache is required");
+  }
   rocksdb::Options options;
   options.create_if_missing = true;
   options.create_missing_column_families = true;
   rocksdb::BlockBasedTableOptions table_options;
   table_options.cache_index_and_filter_blocks = true;
-  table_options.block_cache =
-      rocksdb::NewLRUCache(store_config_.block_cache * 1024 * 1024L);
+  table_options.block_cache = store_config_.shared_block_cache;
   table_options.data_block_index_type =
       rocksdb::BlockBasedTableOptions::kDataBlockBinaryAndHash;
   table_options.partition_filters = true;

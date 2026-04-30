@@ -565,7 +565,7 @@ raft::LocalNodeConfig MakeLocalNodeConfig(const std::string& graph_name) {
 raft::RaftLogStoreConfig MakeRaftLogStoreConfig(const std::string& path) {
   raft::RaftLogStoreConfig store_config;
   store_config.path = path;
-  store_config.block_cache = 64;
+  store_config.shared_block_cache = rocksdb::NewLRUCache(64 * 1024 * 1024L);
   store_config.total_threads = 2;
   store_config.keep_logs = 100000;
   store_config.gc_interval = 1;
@@ -1653,7 +1653,7 @@ TEST(RaftDriver, proposeWriteBatchTimesOutWhenApplyStalls) {
 
   raft::RaftLogStoreConfig store_config;
   store_config.path = raft_path;
-  store_config.block_cache = 64;
+  store_config.shared_block_cache = rocksdb::NewLRUCache(64 * 1024 * 1024L);
   store_config.total_threads = 2;
   store_config.keep_logs = 100000;
   store_config.gc_interval = 1;
@@ -1863,7 +1863,7 @@ TEST(RaftDriver, configValidationRejectsInvalidValues) {
   invalid_store_config.path.clear();
   EXPECT_FALSE(invalid_store_config.Check());
   invalid_store_config = store_config;
-  invalid_store_config.block_cache = 9;
+  invalid_store_config.shared_block_cache.reset();
   EXPECT_FALSE(invalid_store_config.Check());
   invalid_store_config = store_config;
   invalid_store_config.total_threads = 1;
@@ -2265,7 +2265,7 @@ TEST(RaftDriver, rejectWriteBatchWhenPendingQueueIsFull) {
 
   raft::RaftLogStoreConfig store_config;
   store_config.path = raft_path;
-  store_config.block_cache = 64;
+  store_config.shared_block_cache = rocksdb::NewLRUCache(64 * 1024 * 1024L);
   store_config.total_threads = 2;
   store_config.keep_logs = 100000;
   store_config.gc_interval = 1;
@@ -2348,7 +2348,7 @@ TEST(RaftDriver, rejectWriteBatchWhenPendingBytesAreFull) {
 
   raft::RaftLogStoreConfig store_config;
   store_config.path = raft_path;
-  store_config.block_cache = 64;
+  store_config.shared_block_cache = rocksdb::NewLRUCache(64 * 1024 * 1024L);
   store_config.total_threads = 2;
   store_config.keep_logs = 100000;
   store_config.gc_interval = 1;

@@ -62,10 +62,12 @@ DEFINE_uint32(bolt_login_timeout_seconds, 10,
 DEFINE_uint32(bolt_idle_timeout_seconds, 1800,
               "Bolt idle connection timeout in seconds. 0 disables it.");
 
-DEFINE_uint64(block_cache, (uint64_t)8 * 1024 * 1024 * 1024,
-              "Block data cache size, in bytes.");
-DEFINE_uint64(row_cache, (uint64_t)8 * 1024 * 1024 * 1024,
-              "Row data cache size, in bytes.");
+DEFINE_uint64(graph_block_cache, (uint64_t)8 * 1024 * 1024 * 1024,
+              "Graph data block cache size, in bytes.");
+DEFINE_uint64(graph_row_cache, (uint64_t)8 * 1024 * 1024 * 1024,
+              "Graph data row cache size, in bytes.");
+DEFINE_uint64(raft_log_block_cache, (uint64_t)256 * 1024 * 1024,
+              "Total shared Raft log block cache size, in bytes.");
 DEFINE_uint64(ft_apply_interval, (uint64_t)1,
               "Fulltext index WAL auto apply interval, in seconds.");
 DEFINE_uint64(ft_writer_threads, (uint64_t)1,

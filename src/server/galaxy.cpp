@@ -97,10 +97,12 @@ raft::LocalNodeConfig BuildLocalNodeConfig(
   return local_node;
 }
 
-raft::RaftLogStoreConfig BuildRaftLogStoreConfig(const std::string &path) {
+raft::RaftLogStoreConfig BuildRaftLogStoreConfig(
+    const std::string &path,
+    std::shared_ptr<rocksdb::Cache> shared_block_cache) {
   raft::RaftLogStoreConfig store_config;
   store_config.path = path;
-  store_config.block_cache = 64;
+  store_config.shared_block_cache = std::move(shared_block_cache);
   store_config.total_threads = 2;
   store_config.keep_logs = 100000;
   store_config.gc_interval = 1;
@@ -195,6 +197,8 @@ std::unique_ptr<Galaxy> Galaxy::Open(
   galaxy->options_ = galaxy_options;
   galaxy->local_node_options_ = std::move(local_node_options);
   galaxy->meta_db_ = db;
+  galaxy->raft_log_block_cache_ =
+      rocksdb::NewLRUCache(galaxy_options.raft_log_block_cache_size);
 
   rocksdb::ReadOptions ro;
   {
@@ -372,7 +376,8 @@ void Galaxy::StartGraphRaft(GraphDB *graph_db,
                             const meta::RaftNodeInfos *node_infos) {
   auto local_node = BuildLocalNodeConfig(graph_db->db_meta().graph_name(),
                                          local_node_options_);
-  auto store_config = BuildRaftLogStoreConfig(graph_db->path() + "/raft");
+  auto store_config = BuildRaftLogStoreConfig(graph_db->path() + "/raft",
+                                              raft_log_block_cache_);
   auto raft_config = BuildRaftConfig();
   auto *graph_db_ptr = graph_db;
   auto apply_id = graph_db->GetRaftApplyIndex();
@@ -417,7 +422,8 @@ void Galaxy::StartGalaxyRaft(const meta::RaftNodeInfos *node_infos) {
   }
 
   auto local_node = BuildLocalNodeConfig(RaftGraphName(), local_node_options_);
-  auto store_config = BuildRaftLogStoreConfig(path_ + "/galaxy_raft");
+  auto store_config =
+      BuildRaftLogStoreConfig(path_ + "/galaxy_raft", raft_log_block_cache_);
   auto raft_config = BuildRaftConfig();
   auto apply_id = GetGalaxyRaftApplyIndex();
 
