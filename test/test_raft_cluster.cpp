@@ -358,7 +358,7 @@ class TestServerCluster final {
     return BuildNodeInfos(server_configs_, graph_name);
   }
 
-  std::string StatusSummary() const {
+  std::string StatusSummary(const std::string& graph_name = kGraphName) const {
     std::ostringstream out;
     for (size_t i = 0; i < servers_.size(); ++i) {
       const auto& server = servers_[i];
@@ -366,7 +366,7 @@ class TestServerCluster final {
         out << "[node_id=" << server_configs_[i].node_id << ", stopped]";
         continue;
       }
-      auto graph = OpenGraph(server.get());
+      auto graph = OpenGraph(server.get(), graph_name);
       auto status = graph->raft_driver()->GetRaftStatus();
       out << "[bolt_port=" << server->options().local_node_options.bolt_port
           << ", raft_port=" << server->options().local_node_options.raft_port
@@ -784,6 +784,76 @@ TEST(RaftCluster, threeServersElectLeaderAndReplicateTransaction) {
     EXPECT_EQ(persisted_v2.GetAllProperty(), kProperties);
     EXPECT_EQ(persisted_e1.GetAllProperty(), kProperties);
     read_txn->Commit();
+  }
+}
+
+TEST(RaftCluster, multipleRaftGraphsElectLeadersAndReplicateWrites) {
+  TestServerCluster cluster("testdb_raft_cluster");
+  ASSERT_NO_THROW(cluster.Start());
+
+  std::vector<std::string> graph_names = {kGraphName};
+  for (int i = 0; i < 4; ++i) {
+    graph_names.push_back("raft_multi_graph_" + std::to_string(i));
+  }
+
+  for (size_t i = 1; i < graph_names.size(); ++i) {
+    const auto& graph_name = graph_names[i];
+    auto* galaxy_leader = cluster.WaitForGalaxyLeader(std::chrono::seconds(15));
+    ASSERT_NE(galaxy_leader, nullptr) << cluster.GalaxyStatusSummary();
+    auto node_infos = cluster.NodeInfosForGraph(graph_name);
+    ASSERT_NO_THROW(
+        galaxy_leader->galaxy()->CreateGraphWithRaft(graph_name, node_infos))
+        << graph_name;
+    ASSERT_TRUE(
+        cluster.WaitForGraphCreated(graph_name, std::chrono::seconds(20)))
+        << graph_name << " " << cluster.GalaxyStatusSummary();
+  }
+
+  struct WrittenVertex {
+    std::string graph_name;
+    int64_t vertex_id = 0;
+    std::unordered_map<std::string, Value> properties;
+    uint64_t applied_index = 0;
+  };
+
+  std::vector<WrittenVertex> written_vertices;
+  written_vertices.reserve(graph_names.size());
+  for (const auto& graph_name : graph_names) {
+    auto* leader = cluster.WaitForLeader(graph_name, std::chrono::seconds(20));
+    ASSERT_NE(leader, nullptr)
+        << graph_name << " " << cluster.StatusSummary(graph_name);
+
+    auto properties = kProperties;
+    properties["graph_name"] = Value::String(graph_name);
+    auto graph = leader->galaxy()->OpenGraph(graph_name);
+    auto txn = graph->BeginTransaction();
+    auto vertex = txn->CreateVertex({graph_name + "_label"}, properties);
+    txn->Commit();
+
+    written_vertices.push_back(WrittenVertex{
+        graph_name, vertex.GetId(), properties, graph->GetRaftApplyIndex()});
+  }
+
+  for (const auto& written : written_vertices) {
+    ASSERT_GT(written.applied_index, 0U) << written.graph_name;
+    ASSERT_TRUE(cluster.WaitForApplyIndex(
+        written.graph_name, written.applied_index, std::chrono::seconds(20)))
+        << written.graph_name << " "
+        << cluster.StatusSummary(written.graph_name);
+    ASSERT_TRUE(cluster.WaitForGraphVertexCount(written.graph_name, 1,
+                                                std::chrono::seconds(15)))
+        << written.graph_name;
+  }
+
+  for (auto* server : cluster.servers()) {
+    for (const auto& written : written_vertices) {
+      auto graph = server->galaxy()->OpenGraph(written.graph_name);
+      auto read_txn = graph->BeginTransaction();
+      auto persisted_vertex = read_txn->GetVertexById(written.vertex_id);
+      EXPECT_EQ(persisted_vertex.GetAllProperty(), written.properties)
+          << written.graph_name;
+      read_txn->Commit();
+    }
   }
 }
 

@@ -192,6 +192,7 @@ std::unique_ptr<Galaxy> Galaxy::Open(
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   auto galaxy = std::make_unique<Galaxy>();
   galaxy->path_ = path;
+  raft::RaftManager::Configure(galaxy_options.raft_scheduler_shards);
   galaxy->block_cache_ = rocksdb::NewLRUCache(galaxy_options.block_cache_size);
   galaxy->row_cache_ = rocksdb::NewLRUCache(galaxy_options.row_cache_size);
   galaxy->options_ = galaxy_options;

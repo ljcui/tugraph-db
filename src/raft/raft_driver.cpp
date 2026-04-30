@@ -35,6 +35,15 @@ using namespace std::chrono;
 
 namespace raft {
 namespace {
+size_t NormalizeRaftShardCount(size_t shard_count) {
+  return shard_count == 0 ? 1 : shard_count;
+}
+
+std::atomic<size_t>& ConfiguredRaftShardCount() {
+  static std::atomic<size_t> shard_count{4};
+  return shard_count;
+}
+
 std::string LocalNodeIdentityString(const LocalNodeConfig& local_node) {
   return fmt::format("graph={}, ip={}, bolt_port={}, raft_poft={}",
                      local_node.graph, local_node.ip, local_node.bolt_port,
@@ -393,24 +402,38 @@ bool RaftManager::ServiceRunner::IsServiceThread() {
   return thread_ids.count(std::this_thread::get_id()) > 0;
 }
 
+RaftManager::ServiceShard::ServiceShard(size_t shard_id)
+    : raft_runner(fmt::format("raft-mgr{}-", shard_id), 1),
+      timer_runner(fmt::format("raft-tmr{}-", shard_id), 1),
+      apply_runner(fmt::format("raft-app{}-", shard_id), 1) {}
+
+void RaftManager::Configure(size_t raft_shard_count) {
+  ConfiguredRaftShardCount().store(NormalizeRaftShardCount(raft_shard_count));
+}
+
 std::shared_ptr<RaftManager> RaftManager::Instance() {
   static std::weak_ptr<RaftManager> weak_manager;
   static std::mutex mutex;
   std::lock_guard<std::mutex> guard(mutex);
   auto manager = weak_manager.lock();
   if (!manager) {
-    manager = std::shared_ptr<RaftManager>(new RaftManager());
+    manager = std::shared_ptr<RaftManager>(
+        new RaftManager(ConfiguredRaftShardCount().load()));
     weak_manager = manager;
   }
   return manager;
 }
 
-RaftManager::RaftManager()
-    : raft_runner_("raft-mgr-", 1),
-      timer_runner_("raft-tmr-", 1),
-      apply_runner_("raft-app-", 1),
+RaftManager::RaftManager(size_t raft_shard_count)
+    : raft_shard_count_(NormalizeRaftShardCount(raft_shard_count)),
       client_runner_("raft-cli-", 1) {
+  shards_.reserve(raft_shard_count_);
+  for (size_t i = 0; i < raft_shard_count_; ++i) {
+    shards_.emplace_back(std::make_unique<ServiceShard>(i));
+  }
   transport_ = std::make_shared<RaftTransport>(client_runner_.service);
+  LOG_INFO("raft manager started with {} scheduler shard(s)",
+           raft_shard_count_);
 }
 
 RaftManager::~RaftManager() {
@@ -419,20 +442,32 @@ RaftManager::~RaftManager() {
   }
 }
 
-boost::asio::io_service& RaftManager::raft_service() {
-  return raft_runner_.service;
+size_t RaftManager::PickShard(const std::string& graph) const {
+  return std::hash<std::string>{}(graph) % raft_shard_count_;
 }
 
-boost::asio::io_service& RaftManager::timer_service() {
-  return timer_runner_.service;
+boost::asio::io_service& RaftManager::raft_service(size_t shard_id) {
+  return Shard(shard_id).raft_runner.service;
 }
 
-boost::asio::io_service& RaftManager::apply_service() {
-  return apply_runner_.service;
+boost::asio::io_service& RaftManager::timer_service(size_t shard_id) {
+  return Shard(shard_id).timer_runner.service;
+}
+
+boost::asio::io_service& RaftManager::apply_service(size_t shard_id) {
+  return Shard(shard_id).apply_runner.service;
+}
+
+RaftManager::ServiceShard& RaftManager::Shard(size_t shard_id) {
+  return *shards_[shard_id % raft_shard_count_];
 }
 
 boost::asio::io_service& RaftManager::client_service() {
   return client_runner_.service;
+}
+
+const RaftManager::ServiceShard& RaftManager::Shard(size_t shard_id) const {
+  return *shards_[shard_id % raft_shard_count_];
 }
 
 std::shared_ptr<TransportClient> RaftManager::AcquireClient(
@@ -440,11 +475,17 @@ std::shared_ptr<TransportClient> RaftManager::AcquireClient(
   return transport_->Acquire(ip, port);
 }
 
-void RaftManager::WaitForRaftService() { raft_runner_.WaitForIdle(); }
+void RaftManager::WaitForRaftService(size_t shard_id) {
+  Shard(shard_id).raft_runner.WaitForIdle();
+}
 
-void RaftManager::WaitForTimerService() { timer_runner_.WaitForIdle(); }
+void RaftManager::WaitForTimerService(size_t shard_id) {
+  Shard(shard_id).timer_runner.WaitForIdle();
+}
 
-void RaftManager::WaitForApplyService() { apply_runner_.WaitForIdle(); }
+void RaftManager::WaitForApplyService(size_t shard_id) {
+  Shard(shard_id).apply_runner.WaitForIdle();
+}
 
 std::string MessageToNetString(const std::string& graph,
                                const raftpb::Message& msg) {
@@ -548,11 +589,12 @@ RaftDriver::RaftDriver(
       apply_(std::move(apply)),
       apply_id_(apply_id),
       local_node_(std::move(local_node)),
+      shard_id_(manager_->PickShard(local_node_.graph)),
       node_id_(0),
       tick_interval_(config.tick_interval),
-      tick_timer_(manager_->timer_service(), tick_interval_),
+      tick_timer_(manager_->timer_service(shard_id_), tick_interval_),
       compact_interval_(store_config.gc_interval * 60 * 1000),
-      compact_timer_(manager_->timer_service(), compact_interval_),
+      compact_timer_(manager_->timer_service(shard_id_), compact_interval_),
       store_config_(store_config),
       raft_config_(config) {}
 
@@ -566,12 +608,13 @@ RaftDriver::RaftDriver(
       apply_(std::move(apply)),
       apply_id_(apply_id),
       local_node_(std::move(local_node)),
+      shard_id_(manager_->PickShard(local_node_.graph)),
       node_id_(0),
       init_peers_(std::move(init_peers)),
       tick_interval_(config.tick_interval),
-      tick_timer_(manager_->timer_service(), tick_interval_),
+      tick_timer_(manager_->timer_service(shard_id_), tick_interval_),
       compact_interval_(store_config.gc_interval * 60 * 1000),
-      compact_timer_(manager_->timer_service(), compact_interval_),
+      compact_timer_(manager_->timer_service(shard_id_), compact_interval_),
       store_config_(store_config),
       raft_config_(config) {}
 
@@ -683,14 +726,14 @@ void RaftDriver::Stop() {
   }
   callback_alive_->store(false);
   RejectPendingPromises(eraft::Error("raft driver stopped"));
-  manager_->timer_service().post([this]() {
+  manager_->timer_service(shard_id_).post([this]() {
     boost::system::error_code ec;
     tick_timer_.cancel(ec);
     compact_timer_.cancel(ec);
   });
-  manager_->WaitForTimerService();
-  manager_->WaitForRaftService();
-  manager_->WaitForApplyService();
+  manager_->WaitForTimerService(shard_id_);
+  manager_->WaitForRaftService(shard_id_);
+  manager_->WaitForApplyService(shard_id_);
   node_clients_.clear();
   if (storage_) {
     storage_->Close();
@@ -703,17 +746,18 @@ void RaftDriver::Step(raftpb::Message msg) {
     return;
   }
   auto alive = callback_alive_;
-  manager_->raft_service().post([this, alive, msg = std::move(msg)]() mutable {
-    if (!alive->load() || stopped_.load()) {
-      return;
-    }
-    auto err = rn_->Step(std::move(msg));
-    if (err != nullptr) {
-      LOG_WARN("failed to step message, err: {}", err.String());
-      return;
-    }
-    CheckReady();
-  });
+  manager_->raft_service(shard_id_).post(
+      [this, alive, msg = std::move(msg)]() mutable {
+        if (!alive->load() || stopped_.load()) {
+          return;
+        }
+        auto err = rn_->Step(std::move(msg));
+        if (err != nullptr) {
+          LOG_WARN("failed to step message, err: {}", err.String());
+          return;
+        }
+        CheckReady();
+      });
 }
 
 std::shared_ptr<PromiseContext> RaftDriver::Propose(uint64_t uuid,
@@ -756,7 +800,7 @@ std::shared_ptr<PromiseContext> RaftDriver::Propose(uint64_t uuid,
     context->proposal_accounted = true;
   }
   auto alive = callback_alive_;
-  manager_->raft_service().post(
+  manager_->raft_service(shard_id_).post(
       [this, alive, uuid, context, msg = std::move(msg)]() mutable {
         eraft::Error err = nullptr;
         bool should_reject = false;
@@ -851,7 +895,7 @@ void RaftDriver::RejectPendingPromises(const eraft::Error& err) {
 
 void RaftDriver::Tick() {
   auto alive = callback_alive_;
-  manager_->raft_service().post([this, alive]() mutable {
+  manager_->raft_service(shard_id_).post([this, alive]() mutable {
     if (!alive->load() || stopped_.load()) {
       return;
     }
@@ -933,7 +977,7 @@ meta::RaftNodeInfos RaftDriver::GetNodeInfosWithLeader() {
   std::promise<uint64_t> promise;
   auto future = promise.get_future();
   auto alive = callback_alive_;
-  manager_->raft_service().post([this, alive, &promise]() {
+  manager_->raft_service(shard_id_).post([this, alive, &promise]() {
     if (!alive->load() || stopped_.load()) {
       promise.set_value(0);
       return;
@@ -954,7 +998,7 @@ RaftStatus RaftDriver::GetRaftStatus() {
   std::promise<RaftStatus> promise;
   auto future = promise.get_future();
   auto alive = callback_alive_;
-  manager_->raft_service().post([this, alive, &promise]() {
+  manager_->raft_service(shard_id_).post([this, alive, &promise]() {
     RaftStatus rs;
     if (!alive->load() || stopped_.load()) {
       promise.set_value(rs);
@@ -970,7 +1014,7 @@ RaftStatus RaftDriver::GetRaftStatus() {
 
 void RaftDriver::CheckAndCompactLog() {
   auto alive = callback_alive_;
-  manager_->raft_service().post([this, alive]() mutable {
+  manager_->raft_service(shard_id_).post([this, alive]() mutable {
     if (!alive->load() || stopped_.load()) {
       return;
     }
@@ -1062,7 +1106,7 @@ void RaftDriver::CheckReady() {
     }
     if (!has_confchange) {
       auto alive = callback_alive_;
-      manager_->apply_service().post(
+      manager_->apply_service(shard_id_).post(
           [this, alive,
            committedEntries = std::move(ready.committedEntries_)]() {
             if (!alive->load() || stopped_.load()) {

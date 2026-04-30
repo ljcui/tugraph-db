@@ -35,6 +35,7 @@ struct GalaxyOptions {
   size_t block_cache_size = 64 * 1024 * 1024L;
   size_t row_cache_size = 32 * 1024 * 1024L;
   size_t raft_log_block_cache_size = 256 * 1024 * 1024L;
+  size_t raft_scheduler_shards = 4;
   size_t assistant_thread_num = 4;
   size_t ft_apply_interval = 1;
   size_t ft_writer_threads = 1;

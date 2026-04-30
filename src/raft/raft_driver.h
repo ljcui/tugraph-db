@@ -21,6 +21,7 @@
 #include <atomic>
 #include <boost/asio.hpp>
 #include <deque>
+#include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -119,20 +120,22 @@ class RaftTransport : public std::enable_shared_from_this<RaftTransport> {
 
 class RaftManager : public std::enable_shared_from_this<RaftManager> {
  public:
+  static void Configure(size_t raft_shard_count);
   static std::shared_ptr<RaftManager> Instance();
   ~RaftManager();
   DISABLE_COPY(RaftManager);
   DISABLE_MOVE(RaftManager);
 
-  boost::asio::io_service& raft_service();
-  boost::asio::io_service& timer_service();
-  boost::asio::io_service& apply_service();
+  size_t PickShard(const std::string& graph) const;
+  boost::asio::io_service& raft_service(size_t shard_id);
+  boost::asio::io_service& timer_service(size_t shard_id);
+  boost::asio::io_service& apply_service(size_t shard_id);
   boost::asio::io_service& client_service();
   std::shared_ptr<TransportClient> AcquireClient(const std::string& ip,
                                                  int port);
-  void WaitForRaftService();
-  void WaitForTimerService();
-  void WaitForApplyService();
+  void WaitForRaftService(size_t shard_id);
+  void WaitForTimerService(size_t shard_id);
+  void WaitForApplyService(size_t shard_id);
 
  private:
   struct ServiceRunner {
@@ -151,11 +154,20 @@ class RaftManager : public std::enable_shared_from_this<RaftManager> {
     std::atomic<bool> stopped{false};
   };
 
-  RaftManager();
+  struct ServiceShard {
+    explicit ServiceShard(size_t shard_id);
 
-  ServiceRunner raft_runner_;
-  ServiceRunner timer_runner_;
-  ServiceRunner apply_runner_;
+    ServiceRunner raft_runner;
+    ServiceRunner timer_runner;
+    ServiceRunner apply_runner;
+  };
+
+  explicit RaftManager(size_t raft_shard_count);
+  ServiceShard& Shard(size_t shard_id);
+  const ServiceShard& Shard(size_t shard_id) const;
+
+  size_t raft_shard_count_ = 1;
+  std::vector<std::unique_ptr<ServiceShard>> shards_;
   ServiceRunner client_runner_;
   std::shared_ptr<RaftTransport> transport_;
 };
@@ -293,6 +305,7 @@ class RaftDriver {
   std::function<void(uint64_t, const meta::RaftRequest&)> apply_;
   std::atomic<uint64_t> apply_id_;
   LocalNodeConfig local_node_;
+  size_t shard_id_ = 0;
   uint64_t node_id_;
   std::vector<eraft::Peer> init_peers_;
   boost::posix_time::millisec tick_interval_;
