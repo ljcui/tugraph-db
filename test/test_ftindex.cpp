@@ -18,8 +18,8 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
-#include <iostream>
 #include <set>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -211,11 +211,7 @@ TEST(FTIndex, jieba_tokenize_output) {
       "恶性", "肿瘤", "恶性肿瘤", "属于",   "重大", "疾病"};
   EXPECT_EQ(tokens, expected);
 
-  std::cout << "jieba tokens:";
-  for (const auto& token : tokens) {
-    std::cout << " [" << token << "]";
-  }
-  std::cout << std::endl;
+  LOG_INFO("jieba tokens: [{}]", fmt::join(tokens, "] ["));
 }
 
 TEST(FTIndex, chinese_stop_words) {

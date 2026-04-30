@@ -221,7 +221,7 @@ class BenchmarkLightningGraph {
       std::string no = random_no();
       checksum += read_neighbour(no, depth);
     }
-    std::cout << "checksum: " << checksum << std::endl;
+    LOG_INFO("checksum: {}", checksum);
     return GetTime() - time_start;
   }
   double test_read_neighbour_mt(size_t count, int depth, size_t num_threads) {
