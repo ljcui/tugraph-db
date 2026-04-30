@@ -40,21 +40,73 @@ std::string BuildEdgeLockKey(int64_t eid) {
   return key;
 }
 
-VertexSerializedProperties LoadVertexSerializedProperties(txn::Transaction *txn,
-                                                          int64_t vid) {
+VertexSerializedProperties LoadVertexSerializedProperties(
+    txn::Transaction *txn, int64_t vid,
+    const std::unordered_set<uint32_t> &pids) {
   VertexSerializedProperties props;
   rocksdb::ReadOptions ro;
-  std::string prefix(AsChars(vid), sizeof(vid));
-  std::unique_ptr<rocksdb::Iterator> iter(
-      txn->dbtxn()->GetIterator(ro, txn->db()->graph_cf().vertex_property));
-  for (iter->Seek(prefix); iter->Valid() && iter->key().starts_with(prefix);
-       iter->Next()) {
-    auto key = iter->key();
-    key.remove_prefix(sizeof(int64_t));
-    uint32_t pid = ReadValue<uint32_t>(key.data());
-    props.emplace(pid, iter->value().ToString());
+  for (auto pid : pids) {
+    std::string pkey(AsChars(vid), sizeof(vid));
+    pkey.append(AsChars(pid), sizeof(pid));
+    std::string value;
+    auto s = txn->dbtxn()->Get(ro, txn->db()->graph_cf().vertex_property, pkey,
+                               &value);
+    if (s.IsNotFound()) {
+      continue;
+    }
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    props.emplace(pid, std::move(value));
   }
   return props;
+}
+
+std::unordered_set<uint32_t> CollectVertexIndexPropertyIds(
+    txn::Transaction *txn, const std::unordered_set<uint32_t> &old_lids,
+    const std::unordered_set<uint32_t> &new_lids,
+    const std::unordered_set<uint32_t> &touched_pids) {
+  std::unordered_set<uint32_t> required_pids;
+  bool labels_changed = old_lids != new_lids;
+  if (!labels_changed && touched_pids.empty()) {
+    return required_pids;
+  }
+
+  auto &meta_info = txn->db()->meta_info();
+  for (const auto &index : meta_info.GetVertexPropertyIndexes()) {
+    bool old_label_match = old_lids.count(index->lid());
+    bool new_label_match = new_lids.count(index->lid());
+    if (!old_label_match && !new_label_match) {
+      continue;
+    }
+    if (!labels_changed && !index->TouchesAnyProperty(touched_pids)) {
+      continue;
+    }
+    required_pids.insert(index->pids().begin(), index->pids().end());
+  }
+
+  for (const auto &index : meta_info.GetVertexFullTextIndexes()) {
+    if (!index->MatchLabelIds(old_lids) && !index->MatchLabelIds(new_lids)) {
+      continue;
+    }
+    if (!labels_changed && !index->MatchPropertyIds(touched_pids)) {
+      continue;
+    }
+    const auto &pids = index->PropertyIds();
+    required_pids.insert(pids.begin(), pids.end());
+  }
+
+  for (const auto &index : meta_info.GetVertexVectorIndexes()) {
+    bool old_label_match = old_lids.count(index->lid());
+    bool new_label_match = new_lids.count(index->lid());
+    if (!old_label_match && !new_label_match) {
+      continue;
+    }
+    if (!labels_changed && !touched_pids.count(index->pid())) {
+      continue;
+    }
+    required_pids.insert(index->pid());
+  }
+
+  return required_pids;
 }
 
 }  // namespace
@@ -373,9 +425,10 @@ void Vertex::AddLabels(const std::unordered_set<std::string> &labels) {
   auto updated_lids = labelIds;
   updated_lids.insert(new_lids.begin(), new_lids.end());
   std::unordered_set<uint32_t> touched_pids;
-  if (txn_->db()->meta_info().ShouldUpdateVertexIndexes(labelIds, updated_lids,
-                                                        touched_pids)) {
-    auto props = LoadVertexSerializedProperties(txn_, id_);
+  auto required_pids =
+      CollectVertexIndexPropertyIds(txn_, labelIds, updated_lids, touched_pids);
+  if (!required_pids.empty()) {
+    auto props = LoadVertexSerializedProperties(txn_, id_, required_pids);
     UpdateVertexIndexes(txn_, id_, labelIds, updated_lids, props, props,
                         touched_pids);
   }
@@ -422,9 +475,10 @@ void Vertex::DeleteLabels(const std::unordered_set<std::string> &labels) {
     remaining_lids.erase(id);
   }
   std::unordered_set<uint32_t> touched_pids;
-  if (txn_->db()->meta_info().ShouldUpdateVertexIndexes(
-          labelIds, remaining_lids, touched_pids)) {
-    auto props = LoadVertexSerializedProperties(txn_, id_);
+  auto required_pids = CollectVertexIndexPropertyIds(
+      txn_, labelIds, remaining_lids, touched_pids);
+  if (!required_pids.empty()) {
+    auto props = LoadVertexSerializedProperties(txn_, id_, required_pids);
     UpdateVertexIndexes(txn_, id_, labelIds, remaining_lids, props, props,
                         touched_pids);
   }
@@ -515,7 +569,8 @@ void Vertex::SetProperties(
   }
   Lock();
   auto lids = GetLabelIds();
-  if (!txn_->db()->meta_info().ShouldUpdateVertexIndexes(lids, lids, pids)) {
+  auto required_pids = CollectVertexIndexPropertyIds(txn_, lids, lids, pids);
+  if (required_pids.empty()) {
     for (auto &[pid, pval] : serialized) {
       std::string pkey(AsChars(id_), sizeof(id_));
       pkey.append(AsChars(pid), sizeof(pid));
@@ -525,7 +580,7 @@ void Vertex::SetProperties(
     }
     return;
   }
-  auto props = LoadVertexSerializedProperties(txn_, id_);
+  auto props = LoadVertexSerializedProperties(txn_, id_, required_pids);
   auto updated_props = props;
   for (const auto &[pid, pval] : serialized) {
     updated_props[pid] = pval;
@@ -581,7 +636,8 @@ void Vertex::RemoveProperty(const std::string &name) {
   pkey.append(AsChars(pid), sizeof(pid));
   Lock();
   auto lids = GetLabelIds();
-  if (!txn_->db()->meta_info().ShouldUpdateVertexIndexes(lids, lids, {pid})) {
+  auto required_pids = CollectVertexIndexPropertyIds(txn_, lids, lids, {pid});
+  if (required_pids.empty()) {
     rocksdb::ReadOptions ro;
     rocksdb::PinnableSlice pval;
     auto s = txn_->dbtxn()->Get(ro, txn_->db()->graph_cf().vertex_property,
@@ -595,7 +651,7 @@ void Vertex::RemoveProperty(const std::string &name) {
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
     return;
   }
-  auto props = LoadVertexSerializedProperties(txn_, id_);
+  auto props = LoadVertexSerializedProperties(txn_, id_, required_pids);
   if (!props.count(pid)) {
     return;
   }
