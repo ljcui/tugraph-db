@@ -110,6 +110,23 @@ class GraphDB {
   void PersistVertexVectorIndexMeta(
       const std::shared_ptr<VertexVectorIndex>& index);
   void SyncIdGeneratorFromRaftBatch(const rocksdb::WriteBatch& wb);
+  void ApplyRaftWriteBatch(uint64_t index, const meta::RaftRequest& request);
+  void ApplyGraphIndexDdlRequest(uint64_t index,
+                                 const meta::GraphIndexDdlRequest& request);
+  void ProposeGraphIndexDdl(meta::GraphIndexDdlRequest::Operation operation,
+                            std::string payload);
+  void ApplyCreateVertexPropertyIndex(uint64_t apply_index,
+                                      meta::VertexPropertyIndex meta);
+  void ApplyDeleteVertexPropertyIndex(uint64_t apply_index,
+                                      const meta::VertexPropertyIndex& meta);
+  void ApplyCreateVertexFullTextIndex(uint64_t apply_index,
+                                      meta::VertexFullTextIndex meta);
+  void ApplyDeleteVertexFullTextIndex(uint64_t apply_index,
+                                      const meta::VertexFullTextIndex& meta);
+  void ApplyCreateVertexVectorIndex(uint64_t apply_index,
+                                    meta::VertexVectorIndex meta);
+  void ApplyDeleteVertexVectorIndex(uint64_t apply_index,
+                                    const meta::VertexVectorIndex& meta);
   void ScheduleVertexPropertyIndexBuild(
       const std::shared_ptr<VertexPropertyIndex>& index, bool reset_existing);
   void ScheduleVertexFullTextIndexBuild(
@@ -130,6 +147,7 @@ class GraphDB {
   std::unique_ptr<raft::RaftDriver> raft_driver_;
   bool drop_on_close_ = false;
   std::mutex clear_data_mutex_;
+  std::mutex index_ddl_propose_mutex_;
   std::mutex index_ddl_mutex_;
   std::mutex property_index_commit_mutex_;
   std::mutex fulltext_index_commit_mutex_;

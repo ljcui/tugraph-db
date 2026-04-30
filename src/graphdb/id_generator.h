@@ -67,6 +67,7 @@ class IdGenerator {
   int64_t GetNextVid();
   int64_t GetNextEid();
   uint32_t GetNextIndexId();
+  void ReserveIndexId(uint32_t native_index_id);
   std::optional<uint32_t> GetLid(const std::string& name);
   std::optional<uint32_t> GetPid(const std::string& name);
   std::optional<uint32_t> GetTid(const std::string& name);

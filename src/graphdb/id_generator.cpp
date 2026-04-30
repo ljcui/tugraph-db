@@ -272,6 +272,10 @@ uint32_t IdGenerator::GetNextIndexId() {
   return native_to_big(index_next_id_++);
 }
 
+void IdGenerator::ReserveIndexId(uint32_t native_index_id) {
+  StoreMax(&index_next_id_, native_index_id + 1);
+}
+
 std::optional<uint32_t> IdGenerator::GetLid(const std::string &name) {
   if (name.empty()) {
     THROW_CODE(InvalidParameter, "label name is empty");

@@ -36,9 +36,11 @@
 #include "common/value.h"
 #include "etcd-raft-cpp/raft.h"
 #include "graphdb/graph_db.h"
+#include "graphdb/vertex_iterator.h"
 #include "proto/meta.pb.h"
 #include "raft/raft_driver.h"
 #include "server/lgraph_server.h"
+#include "test_util.h"
 #include "transaction/transaction.h"
 
 using namespace graphdb;
@@ -70,6 +72,12 @@ bool WaitUntil(
   }
   return condition();
 }
+
+class TestServerCluster;
+
+bool WaitForAllPropertyIndexesReady(
+    const TestServerCluster& cluster, const std::string& index_name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(10));
 
 int32_t AllocateFreePort() {
   boost::asio::io_service service;
@@ -752,6 +760,121 @@ std::optional<size_t> WaitForLeaderIndexExcluding(
   return leader_index;
 }
 
+bool WaitForAllPropertyIndexesReady(const TestServerCluster& cluster,
+                                    const std::string& index_name,
+                                    std::chrono::milliseconds timeout) {
+  return WaitUntil(
+      [&cluster, &index_name]() {
+        for (auto* server : cluster.servers()) {
+          auto graph = server->galaxy()->OpenGraph(kGraphName);
+          if (!graph->meta_info().GetReadyVertexPropertyIndex(index_name)) {
+            auto index = graph->meta_info().GetVertexPropertyIndex(index_name);
+            if (index && index->state() == meta::IndexBuildState::FAILED) {
+              ADD_FAILURE() << "property index build failed: "
+                            << index->meta().build_error();
+            }
+            return false;
+          }
+        }
+        return true;
+      },
+      timeout);
+}
+
+bool WaitForAllFullTextIndexDefinitions(
+    const TestServerCluster& cluster, const std::string& index_name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
+  return WaitUntil(
+      [&cluster, &index_name]() {
+        for (auto* server : cluster.servers()) {
+          auto graph = server->galaxy()->OpenGraph(kGraphName);
+          auto index = graph->meta_info().GetVertexFullTextIndex(index_name);
+          if (!index || index->state() == meta::IndexBuildState::FAILED) {
+            return false;
+          }
+        }
+        return true;
+      },
+      timeout);
+}
+
+bool WaitForAllVectorIndexDefinitions(
+    const TestServerCluster& cluster, const std::string& index_name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
+  return WaitUntil(
+      [&cluster, &index_name]() {
+        for (auto* server : cluster.servers()) {
+          auto graph = server->galaxy()->OpenGraph(kGraphName);
+          auto index = graph->meta_info().GetVertexVectorIndex(index_name);
+          if (!index || index->state() == meta::IndexBuildState::FAILED) {
+            return false;
+          }
+        }
+        return true;
+      },
+      timeout);
+}
+
+bool WaitForAllPropertyIndexesDeleted(
+    const TestServerCluster& cluster, const std::string& index_name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
+  return WaitUntil(
+      [&cluster, &index_name]() {
+        for (auto* server : cluster.servers()) {
+          auto graph = server->galaxy()->OpenGraph(kGraphName);
+          if (graph->meta_info().GetVertexPropertyIndex(index_name)) {
+            return false;
+          }
+        }
+        return true;
+      },
+      timeout);
+}
+
+bool WaitForAllFullTextIndexesDeleted(
+    const TestServerCluster& cluster, const std::string& index_name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
+  return WaitUntil(
+      [&cluster, &index_name]() {
+        for (auto* server : cluster.servers()) {
+          auto graph = server->galaxy()->OpenGraph(kGraphName);
+          if (graph->meta_info().GetVertexFullTextIndex(index_name)) {
+            return false;
+          }
+        }
+        return true;
+      },
+      timeout);
+}
+
+bool WaitForAllVectorIndexesDeleted(
+    const TestServerCluster& cluster, const std::string& index_name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
+  return WaitUntil(
+      [&cluster, &index_name]() {
+        for (auto* server : cluster.servers()) {
+          auto graph = server->galaxy()->OpenGraph(kGraphName);
+          if (graph->meta_info().GetVertexVectorIndex(index_name)) {
+            return false;
+          }
+        }
+        return true;
+      },
+      timeout);
+}
+
+size_t CountPropertyIndexResults(GraphDB* graph, const std::string& index_name,
+                                 const Value& query) {
+  auto txn = graph->BeginTransaction();
+  auto result = txn->QueryVertexByPropertyIndex(index_name, query);
+  size_t count = 0;
+  for (; result->Valid(); result->Next()) {
+    ++count;
+  }
+  txn->Commit();
+  return count;
+}
+
 TEST(RaftCluster, threeServersElectLeaderAndReplicateTransaction) {
   TestServerCluster cluster("testdb_raft_cluster");
   ASSERT_NO_THROW(cluster.Start());
@@ -785,6 +908,157 @@ TEST(RaftCluster, threeServersElectLeaderAndReplicateTransaction) {
     EXPECT_EQ(persisted_e1.GetAllProperty(), kProperties);
     read_txn->Commit();
   }
+}
+
+TEST(RaftCluster, replicatesVertexPropertyIndexDdlAndIndexedWrites) {
+  TestServerCluster cluster("testdb_raft_cluster");
+  ASSERT_NO_THROW(cluster.Start());
+
+  auto* leader = cluster.WaitForLeader(std::chrono::seconds(15));
+  ASSERT_NE(leader, nullptr) << cluster.StatusSummary();
+  auto leader_graph = leader->galaxy()->OpenGraph(kGraphName);
+
+  {
+    auto txn = leader_graph->BeginTransaction();
+    txn->CreateVertex({"person"}, {{"name", Value::String("alice")},
+                                   {"age", Value::Integer(31)}});
+    txn->CreateVertex({"person"}, {{"name", Value::String("bob")},
+                                   {"age", Value::Integer(41)}});
+    txn->Commit();
+  }
+  uint64_t applied_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+
+  ASSERT_NO_THROW(leader_graph->AddVertexPropertyIndex("person_age", false,
+                                                       "person", {"age"}));
+  applied_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+  ASSERT_TRUE(WaitForAllPropertyIndexesReady(cluster, "person_age",
+                                             std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+
+  {
+    auto txn = leader_graph->BeginTransaction();
+    txn->CreateVertex({"person"}, {{"name", Value::String("carol")},
+                                   {"age", Value::Integer(31)}});
+    txn->Commit();
+  }
+  applied_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+
+  for (auto* server : cluster.servers()) {
+    auto graph = server->galaxy()->OpenGraph(kGraphName);
+    ASSERT_EQ(CountPropertyIndexResults(graph.get(), "person_age",
+                                        Value::Integer(31)),
+              2U);
+  }
+
+  ASSERT_NO_THROW(leader_graph->DeleteVertexPropertyIndex("person_age"));
+  applied_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+  ASSERT_TRUE(WaitForAllPropertyIndexesDeleted(cluster, "person_age",
+                                               std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+}
+
+TEST(RaftCluster, replicatesFullTextAndVectorIndexDefinitions) {
+  TestServerCluster cluster("testdb_raft_cluster");
+  ASSERT_NO_THROW(cluster.Start());
+
+  auto* leader = cluster.WaitForLeader(std::chrono::seconds(15));
+  ASSERT_NE(leader, nullptr) << cluster.StatusSummary();
+  auto leader_graph = leader->galaxy()->OpenGraph(kGraphName);
+
+  ASSERT_NO_THROW(leader_graph->AddVertexFullTextIndex("person_bio_ft",
+                                                       {"person"}, {"bio"}));
+  auto applied_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+  ASSERT_TRUE(WaitForAllFullTextIndexDefinitions(cluster, "person_bio_ft",
+                                                 std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+
+  ASSERT_NO_THROW(leader_graph->AddVertexVectorIndex(
+      "person_embedding_vt", "person", "embedding", 4, "l2", 16, 100));
+  applied_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+  ASSERT_TRUE(WaitForAllVectorIndexDefinitions(cluster, "person_embedding_vt",
+                                               std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+
+  for (auto* server : cluster.servers()) {
+    auto graph = server->galaxy()->OpenGraph(kGraphName);
+    auto ft_index = graph->meta_info().GetVertexFullTextIndex("person_bio_ft");
+    ASSERT_NE(ft_index, nullptr);
+    EXPECT_EQ(ft_index->meta().path().find(graph->path()), 0U);
+    auto vt_index =
+        graph->meta_info().GetVertexVectorIndex("person_embedding_vt");
+    ASSERT_NE(vt_index, nullptr);
+    EXPECT_EQ(vt_index->meta().path().find(graph->path()), 0U);
+  }
+
+  ASSERT_NO_THROW(leader_graph->DeleteVertexFullTextIndex("person_bio_ft"));
+  applied_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+  ASSERT_TRUE(WaitForAllFullTextIndexesDeleted(cluster, "person_bio_ft",
+                                               std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+
+  ASSERT_NO_THROW(leader_graph->DeleteVertexVectorIndex("person_embedding_vt"));
+  applied_index = leader_graph->GetRaftApplyIndex();
+  ASSERT_TRUE(
+      cluster.WaitForApplyIndex(applied_index, std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+  ASSERT_TRUE(WaitForAllVectorIndexesDeleted(cluster, "person_embedding_vt",
+                                             std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+}
+
+TEST(RaftCluster, followerRejectsVertexPropertyIndexDdl) {
+  TestServerCluster cluster("testdb_raft_cluster");
+  ASSERT_NO_THROW(cluster.Start());
+
+  auto leader_index = cluster.WaitForLeaderIndex(std::chrono::seconds(15));
+  ASSERT_TRUE(leader_index.has_value()) << cluster.StatusSummary();
+  auto* leader = cluster.server(*leader_index);
+  ASSERT_NE(leader, nullptr);
+  auto leader_graph = leader->galaxy()->OpenGraph(kGraphName);
+  {
+    auto txn = leader_graph->BeginTransaction();
+    txn->CreateVertex({"person"}, {{"age", Value::Integer(10)}});
+    txn->Commit();
+  }
+  ASSERT_TRUE(cluster.WaitForApplyIndex(leader_graph->GetRaftApplyIndex(),
+                                        std::chrono::seconds(15)))
+      << cluster.StatusSummary();
+
+  auto follower_index = FirstFollowerIndex(cluster, *leader_index);
+  auto* follower = cluster.server(follower_index);
+  ASSERT_NE(follower, nullptr);
+
+  auto follower_graph = follower->galaxy()->OpenGraph(kGraphName);
+  const auto before_apply_index = follower_graph->GetRaftApplyIndex();
+
+  EXPECT_THROW_CODE(follower_graph->AddVertexPropertyIndex(
+                        "follower_local_index", false, "person", {"age"}),
+                    StorageEngineError);
+  EXPECT_EQ(follower_graph->GetRaftApplyIndex(), before_apply_index);
+  EXPECT_EQ(follower_graph->meta_info().GetVertexPropertyIndex(
+                "follower_local_index"),
+            nullptr);
 }
 
 TEST(RaftCluster, multipleRaftGraphsElectLeadersAndReplicateWrites) {

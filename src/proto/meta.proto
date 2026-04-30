@@ -119,6 +119,20 @@ enum WriteBatchKind {
     GALAXY_CREATE_GRAPH = 3;
     GALAXY_DELETE_GRAPH = 4;
     GALAXY_CLEAR_GRAPH = 5;
+    GRAPH_INDEX_DDL = 6;
+}
+
+message GraphIndexDdlRequest {
+    enum Operation {
+        CREATE_VERTEX_PROPERTY_INDEX = 0;
+        DELETE_VERTEX_PROPERTY_INDEX = 1;
+        CREATE_VERTEX_FULLTEXT_INDEX = 2;
+        DELETE_VERTEX_FULLTEXT_INDEX = 3;
+        CREATE_VERTEX_VECTOR_INDEX = 4;
+        DELETE_VERTEX_VECTOR_INDEX = 5;
+    }
+    Operation operation = 1;
+    bytes payload = 2;
 }
 
 message RaftRequest {

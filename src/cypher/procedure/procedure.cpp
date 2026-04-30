@@ -737,6 +737,11 @@ void BuiltinProcedure::DbIndexVectorApplyWal(
                                args.size()))
   std::string name = ctx->txn_->db()->db_meta().graph_name();
   auto graphdb = ctx->galaxy_->OpenGraph(name);
+  if (graphdb->db_meta().enable_raft()) {
+    THROW_CODE(InvalidParameter,
+               "db.index.vector.applyWal is not supported on raft graph [{}]",
+               name);
+  }
   for (const auto &index : graphdb->meta_info().GetVertexVectorIndexes()) {
     LOG_INFO("Manually apply WAL for Vector index {}", index->meta().name());
     index->ApplyWAL();
@@ -842,6 +847,11 @@ void BuiltinProcedure::DbIndexFullTextApplyWal(
                                args.size()))
   std::string name = ctx->txn_->db()->db_meta().graph_name();
   auto graphdb = ctx->galaxy_->OpenGraph(name);
+  if (graphdb->db_meta().enable_raft()) {
+    THROW_CODE(InvalidParameter,
+               "db.index.fulltext.applyWal is not supported on raft graph [{}]",
+               name);
+  }
   for (const auto &index : graphdb->meta_info().GetVertexFullTextIndexes()) {
     LOG_INFO("Manually apply WAL for FullText index {}", index->Name());
     index->ApplyWAL();
