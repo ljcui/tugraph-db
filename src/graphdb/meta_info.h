@@ -32,9 +32,9 @@ namespace graphdb {
 struct MetaInfo {
   // property index
   void Init(rocksdb::TransactionDB* db, boost::asio::io_service& service,
-            GraphCF* graph_cf, size_t ft_commit_interval,
-            size_t ft_writer_threads, size_t ft_writer_memory_budget,
-            size_t vt_commit_interval);
+            boost::asio::io_service::strand* strand, GraphCF* graph_cf,
+            size_t ft_commit_interval, size_t ft_writer_threads,
+            size_t ft_writer_memory_budget, size_t vt_commit_interval);
   IdGenerator& id_generator() { return id_generator_; }
   std::shared_ptr<VertexPropertyIndex> GetReadyVertexPropertyIndex(
       uint32_t lid, uint32_t pid);

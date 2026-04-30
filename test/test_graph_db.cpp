@@ -41,9 +41,17 @@ static std::unordered_map<std::string, Value> properties = {
     {"property7", Value::StringArray({"string1", "string2"})},
     {"property8", Value::DoubleArray({11.11, 22.22})}};
 
+TEST(GraphDB, assistantPoolRequired) {
+  fs::remove_all(testdb);
+  EXPECT_THROW_CODE_MSG(GraphDB::Open(testdb, {}), InvalidParameter,
+                        "assistant_pool");
+  EXPECT_THROW_CODE_MSG(AssistantPool(0), InvalidParameter,
+                        "assistant thread num");
+}
+
 TEST(GraphDB, basicCreate) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -84,7 +92,7 @@ TEST(GraphDB, basicCreate) {
 
 TEST(GraphDB, reOpen) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -102,7 +110,7 @@ TEST(GraphDB, reOpen) {
   txn.reset();
   graphDB.reset();
   // reopen
-  graphDB = GraphDB::Open(testdb, {});
+  graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   txn = graphDB->BeginTransaction();
   v1 = txn->GetVertexById(v1.GetId());
   v2 = txn->GetVertexById(v2.GetId());
@@ -139,7 +147,7 @@ TEST(GraphDB, reOpen) {
 
 TEST(GraphDB, entityIdRangeReOpen) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   auto v1 = txn->CreateVertex({"label1"}, {});
   auto v2 = txn->CreateVertex({"label2"}, {});
@@ -151,7 +159,7 @@ TEST(GraphDB, entityIdRangeReOpen) {
   txn.reset();
   graphDB.reset();
 
-  graphDB = GraphDB::Open(testdb, {});
+  graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   txn = graphDB->BeginTransaction();
   auto existing = txn->GetVertexById(v2.GetId());
   auto v3 = txn->CreateVertex({"label3"}, {});
@@ -163,7 +171,7 @@ TEST(GraphDB, entityIdRangeReOpen) {
 
 TEST(GraphDB, entityIdRangeRefill) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
 
   std::vector<int64_t> vids;
@@ -196,7 +204,7 @@ TEST(GraphDB, entityIdRangeRefill) {
 TEST(GraphDB, raftIdGeneratorPersistsStateAndApplyIndex) {
   const std::string raft_testdb = "testdb_raft_id_generator";
   fs::remove_all(raft_testdb);
-  auto graphDB = GraphDB::Open(raft_testdb, {});
+  auto graphDB = GraphDB::Open(raft_testdb, testutil::NewGraphDBOptions());
   graphDB->db_meta().set_graph_name("id_generator_graph");
 
   auto raft_driver = testutil::NewSingleNodeRaftDriver(
@@ -222,7 +230,7 @@ TEST(GraphDB, raftIdGeneratorPersistsStateAndApplyIndex) {
   EXPECT_EQ(graphDB->id_generator().GetTid("knows"), tid);
 
   graphDB.reset();
-  graphDB = GraphDB::Open(raft_testdb, {});
+  graphDB = GraphDB::Open(raft_testdb, testutil::NewGraphDBOptions());
   graphDB->db_meta().set_graph_name("id_generator_graph");
   EXPECT_EQ(graphDB->GetRaftApplyIndex(), apply_index);
   EXPECT_EQ(graphDB->id_generator().GetLid("person"), lid);
@@ -249,7 +257,7 @@ TEST(GraphDB, raftIdGeneratorPersistsStateAndApplyIndex) {
 TEST(GraphDB, raftApplyUpdatesIdGeneratorCacheWithoutRestart) {
   const std::string raft_testdb = "testdb_raft_apply_id_generator_cache";
   fs::remove_all(raft_testdb);
-  auto graphDB = GraphDB::Open(raft_testdb, {});
+  auto graphDB = GraphDB::Open(raft_testdb, testutil::NewGraphDBOptions());
   graphDB->db_meta().set_graph_name("id_generator_graph");
 
   constexpr uint32_t kLabelId = 7;
@@ -309,7 +317,7 @@ TEST(GraphDB, raftApplyUpdatesIdGeneratorCacheWithoutRestart) {
 
 TEST(GraphDB, updateProperty) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -346,7 +354,7 @@ TEST(GraphDB, updateProperty) {
 
 TEST(GraphDB, vertexIterator) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -445,7 +453,7 @@ TEST(GraphDB, vertexIterator) {
 
 TEST(GraphDB, edgeIterator) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -617,7 +625,7 @@ TEST(GraphDB, edgeIterator) {
 
 TEST(GraphDB, deleteVertex) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -678,7 +686,7 @@ TEST(GraphDB, deleteVertex) {
 
 TEST(GraphDB, deleteEdge) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -731,7 +739,7 @@ TEST(GraphDB, deleteEdge) {
 
 TEST(GraphDB, deleteAllVertex) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -773,7 +781,7 @@ TEST(GraphDB, deleteAllVertex) {
 
 TEST(GraphDB, scanAndUpdate) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -819,7 +827,7 @@ TEST(GraphDB, scanAndUpdate) {
 
 TEST(GraphDB, addDeleteLabel) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   auto v1 = txn->CreateVertex(v1_labels, properties);
@@ -858,7 +866,7 @@ TEST(GraphDB, addDeleteLabel) {
 
 TEST(GraphDB, expandEdge) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -922,7 +930,7 @@ TEST(GraphDB, expandEdge) {
 
 TEST(GraphDB, graphTypes) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -952,7 +960,7 @@ TEST(GraphDB, graphTypes) {
 
 TEST(GraphDB, pointToSelf) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   auto v1 = txn->CreateVertex(v1_labels, properties);

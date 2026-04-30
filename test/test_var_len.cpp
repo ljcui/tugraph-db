@@ -20,13 +20,14 @@
 #include "common/value.h"
 #include "cypher/execution_plan/result_iterator.h"
 #include "graphdb/graph_db.h"
+#include "test_util.h"
 using namespace graphdb;
 namespace fs = std::filesystem;
 static std::string testdb = "varlendb";
 
 TEST(VarLenDB, db) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   txn->Execute(&rtx,

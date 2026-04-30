@@ -52,7 +52,7 @@ TEST(Transaction, raftRequestCarriesWbData) {
 
 TEST(Transaction, commitAndRollback) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   std::unordered_set<std::string> v2_labels = {"label3", "label4"};
@@ -124,7 +124,7 @@ TEST(Transaction, commitAndRollback) {
 TEST(Transaction, commitWithRaftPersistsDataAndApplyIndex) {
   const std::string raft_testdb = "testdb_raft_txn_commit";
   fs::remove_all(raft_testdb);
-  auto graphDB = GraphDB::Open(raft_testdb, {});
+  auto graphDB = GraphDB::Open(raft_testdb, testutil::NewGraphDBOptions());
   graphDB->db_meta().set_graph_name("txn_commit_graph");
 
   auto raft_driver = testutil::NewSingleNodeRaftDriver(
@@ -161,7 +161,7 @@ TEST(Transaction, commitWithRaftPersistsDataAndApplyIndex) {
 
   txn.reset();
   graphDB.reset();
-  graphDB = GraphDB::Open(raft_testdb, {});
+  graphDB = GraphDB::Open(raft_testdb, testutil::NewGraphDBOptions());
   EXPECT_EQ(graphDB->GetRaftApplyIndex(), after_commit_index);
 
   txn = graphDB->BeginTransaction();
@@ -175,7 +175,7 @@ TEST(Transaction, commitWithRaftPersistsDataAndApplyIndex) {
 TEST(Transaction, rollbackWithRaftDoesNotAdvanceApplyIndex) {
   const std::string raft_testdb = "testdb_raft_txn_rollback";
   fs::remove_all(raft_testdb);
-  auto graphDB = GraphDB::Open(raft_testdb, {});
+  auto graphDB = GraphDB::Open(raft_testdb, testutil::NewGraphDBOptions());
   graphDB->db_meta().set_graph_name("txn_rollback_graph");
 
   auto raft_driver = testutil::NewSingleNodeRaftDriver(

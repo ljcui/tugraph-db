@@ -303,7 +303,7 @@ static std::unordered_map<std::string, Value> properties = {
 
 TEST(FTIndex, indexVertex) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
   ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
   auto txn = graphDB->BeginTransaction();
@@ -350,7 +350,7 @@ TEST(FTIndex, indexVertex) {
 
 TEST(FTIndex, committedWalIsAppliedByPeriodicTimer) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 1;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
@@ -381,7 +381,7 @@ TEST(FTIndex, committedWalIsAppliedByPeriodicTimer) {
 
 TEST(FTIndex, corruptedWalIsRejected) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
@@ -401,7 +401,7 @@ TEST(FTIndex, corruptedWalIsRejected) {
 
 TEST(FTIndex, periodicTimerSurvivesWalApplyFailure) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 1;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
@@ -438,7 +438,7 @@ TEST(FTIndex, periodicTimerSurvivesWalApplyFailure) {
 
 TEST(FTIndex, deleteIndexRejectsPendingTransactionCommit) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
   ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
@@ -471,7 +471,7 @@ TEST(FTIndex, deleteIndexRejectsPendingTransactionCommit) {
 
 TEST(FTIndex, rollbackDoesNotBreakWalApply) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
@@ -511,7 +511,7 @@ TEST(FTIndex, rollbackDoesNotBreakWalApply) {
 
 TEST(FTIndex, createVertexWritesSingleAddWal) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
@@ -535,7 +535,7 @@ TEST(FTIndex, createVertexWritesSingleAddWal) {
 
 TEST(FTIndex, createVertexAndRewriteInOneTransactionPreservesWalOrder) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
@@ -563,7 +563,7 @@ TEST(FTIndex, createVertexAndRewriteInOneTransactionPreservesWalOrder) {
 
 TEST(FTIndex, updatingIndexedVertexWritesDeleteThenAddWal) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
@@ -597,7 +597,7 @@ TEST(FTIndex, updatingIndexedVertexWritesDeleteThenAddWal) {
 
 TEST(FTIndex, outOfOrderCommitsApplyCleanly) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
@@ -636,7 +636,7 @@ TEST(FTIndex, outOfOrderCommitsApplyCleanly) {
 
 TEST(FTIndex, buildDeduplicatesVerticesWithMultipleMatchedLabels) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
 
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1", "label2"},
@@ -666,7 +666,7 @@ TEST(FTIndex, buildDeduplicatesVerticesWithMultipleMatchedLabels) {
 
 TEST(FTIndex, deleteVertex) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
   ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
   auto txn = graphDB->BeginTransaction();
@@ -755,7 +755,7 @@ TEST(FTIndex, deleteVertex) {
 
 TEST(FTIndex, buildDoesNotBlockWrites) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
 
   auto txn = graphDB->BeginTransaction();
   for (int i = 0; i < 20000; ++i) {
@@ -800,7 +800,7 @@ TEST(FTIndex, buildDoesNotBlockWrites) {
 
 TEST(FTIndex, updateVertex) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
   ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
   auto txn = graphDB->BeginTransaction();
@@ -864,7 +864,7 @@ TEST(FTIndex, updateVertex) {
 
 TEST(FTIndex, repeatedUpdatesInSingleTransactionApplyLatestDocument) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 1;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
@@ -900,7 +900,7 @@ TEST(FTIndex, repeatedUpdatesInSingleTransactionApplyLatestDocument) {
 
 TEST(FTIndex, deleteOneMatchedLabelKeepsDocumentIndexed) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   graphDB->AddVertexFullTextIndex("ft_index", {"label1", "label2"}, {"str"});
   ASSERT_TRUE(WaitUntilFullTextIndexReady(graphDB.get(), "ft_index"));
 
@@ -957,7 +957,7 @@ TEST(FTIndex, deleteOneMatchedLabelKeepsDocumentIndexed) {
 
 TEST(FTIndex, reopenRecoversPendingWalAndContinuesFromPayload) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 1;
   {
     auto graphDB = GraphDB::Open(testdb, options);
@@ -1025,7 +1025,7 @@ TEST(FTIndex, reopenRecoversPendingWalAndContinuesFromPayload) {
 
 TEST(FTIndex, createIndexClearsStaleArtifactsFromPreviousFailedBuild) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
 
   std::string stale_path = testdb + "/ft/ft_index_1";
   ::rust::Vec<::rust::String> properties = {"str"};
@@ -1109,7 +1109,7 @@ TEST(FTIndex, createIndexClearsStaleArtifactsFromPreviousFailedBuild) {
 
 TEST(FTIndex, applyWalDoesNotWriteIndexMarkers) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});
@@ -1163,7 +1163,7 @@ TEST(FTIndex, applyWalDoesNotWriteIndexMarkers) {
 
 TEST(FTIndex, buildingSetPropertiesWritesDeleteWalFromPreviousProperties) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.ft_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   graphDB->AddVertexFullTextIndex("ft_index", {"label1"}, {"str"});

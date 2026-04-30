@@ -243,6 +243,7 @@ set(BOLT_SOURCES
 )
 
 set(GRAPHDB_SOURCES
+    src/graphdb/assistant_pool.cpp
     src/graphdb/graph_db.cpp
     src/graphdb/id_generator.cpp
     src/graphdb/vertex_iterator.cpp

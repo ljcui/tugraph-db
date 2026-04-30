@@ -121,10 +121,11 @@ class VertexFullTextIndex
     : public std::enable_shared_from_this<VertexFullTextIndex> {
  public:
   VertexFullTextIndex(rocksdb::TransactionDB* db,
-                      boost::asio::io_service& service, GraphCF* graph_cf,
-                      IdGenerator* id_generator, meta::VertexFullTextIndex meta,
-                      uint32_t index_id, size_t writer_threads,
-                      size_t writer_memory_budget,
+                      boost::asio::io_service& service,
+                      boost::asio::io_service::strand* strand,
+                      GraphCF* graph_cf, IdGenerator* id_generator,
+                      meta::VertexFullTextIndex meta, uint32_t index_id,
+                      size_t writer_threads, size_t writer_memory_budget,
                       const std::unordered_set<uint32_t>& lids,
                       const std::unordered_set<uint32_t>& pids,
                       size_t commit_interval);
@@ -198,6 +199,7 @@ class VertexFullTextIndex
   size_t interval_ = 1;
   size_t writer_threads_ = 1;
   size_t writer_memory_budget_ = 0;
+  boost::asio::io_service::strand* strand_;
   boost::asio::steady_timer timer_;
 };
 
@@ -205,7 +207,8 @@ class VertexVectorIndex
     : public std::enable_shared_from_this<VertexVectorIndex> {
  public:
   VertexVectorIndex(rocksdb::TransactionDB* db,
-                    boost::asio::io_service& service, GraphCF* graph_cf,
+                    boost::asio::io_service& service,
+                    boost::asio::io_service::strand* strand, GraphCF* graph_cf,
                     uint32_t index_id, uint32_t lid, uint32_t pid,
                     meta::VertexVectorIndex meta, size_t commit_interval);
   std::vector<std::pair<int64_t, float>> KnnSearch(const float* query,
@@ -255,6 +258,7 @@ class VertexVectorIndex
   bool started_ = false;
   bool stopped_ = false;
   size_t interval_ = 5;
+  boost::asio::io_service::strand* strand_;
   boost::asio::steady_timer timer_;
   std::atomic<bool> deleted_{false};
 };

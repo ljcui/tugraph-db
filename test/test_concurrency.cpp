@@ -46,7 +46,7 @@ static void CreateVertex(GraphDB* db) {
 
 TEST(Concurrency, vertex) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::vector<std::thread> threads;
   for (size_t i = 0; i < 10; i++) {
     threads.emplace_back(CreateVertex, graphDB.get());
@@ -90,7 +90,7 @@ static void CreateEdge(GraphDB* db, int index) {
 
 TEST(Concurrency, edge) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   for (auto i = 0; i < 100; i++) {
@@ -123,7 +123,7 @@ TEST(Concurrency, edge) {
 
 TEST(Concurrency, vertexConflict) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
   ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
   auto txn1 = graphDB->BeginTransaction();
@@ -148,7 +148,7 @@ TEST(Concurrency, vertexConflict) {
 
 TEST(Concurrency, edgeConflict) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   for (auto i = 0; i < 3; i++) {
@@ -216,7 +216,7 @@ TEST(Concurrency, edgeConflict) {
 
 TEST(Concurrency, edgeEntityLockSerializesDifferentPropertyUpdates) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
 
   auto setup = graphDB->BeginTransaction();
   auto v1 = setup->CreateVertex({"label1"}, {{"id", Value::Integer(1)}});

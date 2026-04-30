@@ -28,7 +28,7 @@ static std::string testdb = "cypher_testdb";
 
 TEST(Cypher, unwind_create_three_vertices) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
 
   auto txn = graphDB->BeginTransaction();
@@ -52,7 +52,7 @@ TEST(Cypher, unwind_create_three_vertices) {
 
 TEST(Cypher, create_redefine_local_alias_should_fail) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
 
   auto txn = graphDB->BeginTransaction();
@@ -63,7 +63,7 @@ TEST(Cypher, create_redefine_local_alias_should_fail) {
 
 TEST(Cypher, fulltext_query_rejects_non_positive_top_n) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   graphDB->AddVertexFullTextIndex("ft_index", {"test"}, {"name"});
   cypher::RTContext rtx;
 

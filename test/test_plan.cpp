@@ -19,13 +19,14 @@
 
 #include "cypher/execution_plan/result_iterator.h"
 #include "graphdb/graph_db.h"
+#include "test_util.h"
 namespace fs = std::filesystem;
 using namespace graphdb;
 static std::string testdb = "testdb";
 
 TEST(ExecutionPlan, all_node_scan) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   cypher::RTContext rtx;
   auto iter = txn->Execute(&rtx, "explain match(n) return n");
@@ -40,7 +41,7 @@ Produce Results
 }
 TEST(ExecutionPlan, unique_index) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   cypher::RTContext rtx;
   txn->Execute(&rtx,
@@ -71,7 +72,7 @@ Produce Results
 
 TEST(ExecutionPlan, scan_by_label) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   cypher::RTContext rtx;
   txn->Execute(&rtx,
@@ -99,7 +100,7 @@ Produce Results
 
 TEST(ExecutionPlan, no_vertex) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   cypher::RTContext rtx;
   auto iter = txn->Execute(&rtx, "explain match(n:person) return n");

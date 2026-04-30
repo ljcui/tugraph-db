@@ -20,6 +20,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <memory>
 #include <string_view>
 #include <thread>
 
@@ -110,6 +111,12 @@ inline void CleanupTestDataDirectories() {
     ec.clear();
     std::filesystem::remove_all(std::filesystem::path(dir), ec);
   }
+}
+
+inline graphdb::GraphDBOptions NewGraphDBOptions() {
+  graphdb::GraphDBOptions options;
+  options.assistant_pool = std::make_shared<graphdb::AssistantPool>(1);
+  return options;
 }
 
 inline void ApplyRaftRequest(graphdb::GraphDB* graph_db, uint64_t index,

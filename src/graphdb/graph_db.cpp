@@ -253,6 +253,9 @@ void ThrowIfIteratorError(rocksdb::Iterator* iter, std::string_view action) {
 
 std::unique_ptr<GraphDB> GraphDB::Open(const std::string& path,
                                        const GraphDBOptions& graph_options) {
+  if (!graph_options.assistant_pool) {
+    THROW_CODE(InvalidParameter, "GraphDB assistant_pool must be provided");
+  }
   std::string rocksdb_path = path + "/data";
   std::filesystem::create_directories(rocksdb_path);
   rocksdb::Options options;
@@ -308,13 +311,12 @@ std::unique_ptr<GraphDB> GraphDB::Open(const std::string& path,
   graph_db->graph_cf_.wal = cf_handles[8];
   graph_db->cf_handles_ = std::move(cf_handles);
   graph_db->options_ = graph_options;
-  auto* self = graph_db.get();
-  graph_db->service_threads_.emplace_back([self]() {
-    pthread_setname_np(pthread_self(), "assistant");
-    boost::asio::io_service::work holder(self->assistant_);
-    self->assistant_.run();
-  });
-  graph_db->meta_info_.Init(graph_db->db_, graph_db->assistant_,
+  graph_db->assistant_pool_ = graph_options.assistant_pool;
+  graph_db->assistant_strand_ =
+      std::make_unique<boost::asio::io_service::strand>(
+          graph_db->assistant_pool_->Service());
+  graph_db->meta_info_.Init(graph_db->db_, graph_db->assistant_pool_->Service(),
+                            graph_db->assistant_strand_.get(),
                             &graph_db->graph_cf_,
                             graph_db->options_.ft_apply_interval_,
                             graph_db->options_.ft_writer_threads_,
@@ -334,10 +336,7 @@ GraphDB::~GraphDB() {
   for (const auto& index : meta_info_.GetVertexFullTextIndexes()) {
     index->Stop();
   }
-  assistant_.stop();
-  for (auto& t : service_threads_) {
-    t.join();
-  }
+  DrainAssistant();
   meta_info_.ClearVertexVectorIndexes();
   meta_info_.ClearVertexFullTextIndexes();
   for (auto handle : cf_handles_) {
@@ -503,15 +502,21 @@ void GraphDB::ResumeBackgroundIndexBuilds() {
 }
 
 void GraphDB::DrainAssistant() {
+  if (!assistant_strand_) {
+    return;
+  }
+  if (assistant_strand_->running_in_this_thread()) {
+    return;
+  }
   std::promise<void> drained;
   auto future = drained.get_future();
-  boost::asio::post(assistant_, [&drained]() mutable { drained.set_value(); });
+  assistant_strand_->post([&drained]() mutable { drained.set_value(); });
   future.wait();
 }
 
 void GraphDB::ScheduleVertexPropertyIndexBuild(
     const std::shared_ptr<VertexPropertyIndex>& index, bool reset_existing) {
-  boost::asio::post(assistant_, [this, index, reset_existing]() {
+  assistant_strand_->post([this, index, reset_existing]() {
     const rocksdb::Snapshot* snapshot = nullptr;
     try {
       if (reset_existing) {
@@ -589,7 +594,7 @@ void GraphDB::ScheduleVertexPropertyIndexBuild(
 
 void GraphDB::ScheduleVertexFullTextIndexBuild(
     const std::shared_ptr<VertexFullTextIndex>& index, bool reset_existing) {
-  boost::asio::post(assistant_, [this, index, reset_existing]() {
+  assistant_strand_->post([this, index, reset_existing]() {
     const rocksdb::Snapshot* snapshot = nullptr;
     try {
       if (reset_existing) {
@@ -669,7 +674,7 @@ void GraphDB::ScheduleVertexFullTextIndexBuild(
 
 void GraphDB::ScheduleVertexVectorIndexBuild(
     const std::shared_ptr<VertexVectorIndex>& index, bool reset_existing) {
-  boost::asio::post(assistant_, [this, index, reset_existing]() {
+  assistant_strand_->post([this, index, reset_existing]() {
     const rocksdb::Snapshot* snapshot = nullptr;
     try {
       if (reset_existing) {
@@ -957,9 +962,10 @@ void GraphDB::AddVertexFullTextIndex(
   *meta.mutable_property_ids() = {native_pids.begin(), native_pids.end()};
 
   auto v_ft_index = std::make_shared<VertexFullTextIndex>(
-      db_, assistant_, &graph_cf_, &id_generator(), meta, index_id,
-      options_.ft_writer_threads_, options_.ft_writer_memory_budget_, lids,
-      pids, options_.ft_apply_interval_);
+      db_, assistant_pool_->Service(), assistant_strand_.get(), &graph_cf_,
+      &id_generator(), meta, index_id, options_.ft_writer_threads_,
+      options_.ft_writer_memory_budget_, lids, pids,
+      options_.ft_apply_interval_);
   auto s = db_->Put({}, graph_cf_.meta_info,
                     BuildMetaKey(MetaDataType::VertexFullTextIndex, index_name),
                     meta.SerializeAsString());
@@ -1077,9 +1083,9 @@ void GraphDB::AddVertexVectorIndex(const std::string& index_name,
   meta.set_applied_wal_id(0);
   meta.clear_build_error();
 
-  auto vvi = std::make_shared<VertexVectorIndex>(db_, assistant_, &graph_cf_,
-                                                 index_id, lid, pid, meta,
-                                                 options_.vt_apply_interval_);
+  auto vvi = std::make_shared<VertexVectorIndex>(
+      db_, assistant_pool_->Service(), assistant_strand_.get(), &graph_cf_,
+      index_id, lid, pid, meta, options_.vt_apply_interval_);
   auto s = db_->Put({}, graph_cf_.meta_info,
                     BuildMetaKey(MetaDataType::VertexVectorIndex, index_name),
                     meta.SerializeAsString());

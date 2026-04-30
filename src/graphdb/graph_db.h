@@ -26,6 +26,7 @@
 #include <shared_mutex>
 #include <string>
 
+#include "assistant_pool.h"
 #include "common/value.h"
 #include "graph_cf.h"
 #include "id_generator.h"
@@ -41,6 +42,7 @@ namespace graphdb {
 struct GraphDBOptions {
   std::shared_ptr<rocksdb::Cache> block_cache;
   std::shared_ptr<rocksdb::RowCache> row_cache;
+  std::shared_ptr<AssistantPool> assistant_pool;
   size_t ft_apply_interval_ = 1;
   size_t ft_writer_threads_ = 1;
   size_t ft_writer_memory_budget_ = 50 * 1000 * 1000;
@@ -118,11 +120,11 @@ class GraphDB {
   std::string path_;
   rocksdb::TransactionDB* db_ = nullptr;
   std::vector<rocksdb::ColumnFamilyHandle*> cf_handles_;
-  boost::asio::io_service assistant_;
+  std::shared_ptr<AssistantPool> assistant_pool_;
+  std::unique_ptr<boost::asio::io_service::strand> assistant_strand_;
   GraphCF graph_cf_;
   MetaInfo meta_info_;
   meta::GraphDBMetaInfo db_meta_;
-  std::vector<std::thread> service_threads_;
   GraphDBOptions options_;
   mutable std::shared_mutex raft_mutex_;
   std::unique_ptr<raft::RaftDriver> raft_driver_;

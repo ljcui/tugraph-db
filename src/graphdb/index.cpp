@@ -727,7 +727,7 @@ void VertexFullTextIndex::StartTimer() {
     }
   }
   timer_.expires_after(std::chrono::seconds(interval_));
-  timer_.async_wait([this](const boost::system::error_code& e) {
+  timer_.async_wait(strand_->wrap([this](const boost::system::error_code& e) {
     if (e) {
       if (e != boost::asio::error::operation_aborted) {
         LOG_ERROR("timer async_wait error: {}", e.message());
@@ -761,7 +761,7 @@ void VertexFullTextIndex::StartTimer() {
     if (restart) {
       StartTimer();
     }
-  });
+  }));
 }
 
 void VertexFullTextIndex::Start() {
@@ -787,9 +787,15 @@ void VertexFullTextIndex::Stop() {
     }
   }
 
+  if (strand_->running_in_this_thread()) {
+    boost::system::error_code ec;
+    timer_.cancel(ec);
+    return;
+  }
+
   std::promise<void> cancelled;
   auto future = cancelled.get_future();
-  boost::asio::post(timer_.get_executor(), [this, &cancelled]() mutable {
+  strand_->post([this, &cancelled]() mutable {
     boost::system::error_code ec;
     timer_.cancel(ec);
     cancelled.set_value();
@@ -832,9 +838,10 @@ void VertexFullTextIndex::ResetForClear() {
 
 VertexFullTextIndex::VertexFullTextIndex(
     rocksdb::TransactionDB* db, boost::asio::io_service& service,
-    GraphCF* graph_cf, IdGenerator* id_generator,
-    meta::VertexFullTextIndex meta, uint32_t index_id, size_t writer_threads,
-    size_t writer_memory_budget, const std::unordered_set<uint32_t>& lids,
+    boost::asio::io_service::strand* strand, GraphCF* graph_cf,
+    IdGenerator* id_generator, meta::VertexFullTextIndex meta,
+    uint32_t index_id, size_t writer_threads, size_t writer_memory_budget,
+    const std::unordered_set<uint32_t>& lids,
     const std::unordered_set<uint32_t>& pids, size_t commit_interval)
     : db_(db),
       graph_cf_(graph_cf),
@@ -846,6 +853,7 @@ VertexFullTextIndex::VertexFullTextIndex(
       interval_(commit_interval),
       writer_threads_(writer_threads),
       writer_memory_budget_(writer_memory_budget),
+      strand_(strand),
       timer_(service) {
   ::rust::Vec<::rust::String> fields;
   for (auto& prop : meta_.properties()) {
@@ -1124,6 +1132,7 @@ void VertexFullTextIndex::ApplyWAL() {
 
 VertexVectorIndex::VertexVectorIndex(rocksdb::TransactionDB* db,
                                      boost::asio::io_service& service,
+                                     boost::asio::io_service::strand* strand,
                                      graphdb::GraphCF* graph_cf,
                                      uint32_t index_id, uint32_t lid,
                                      uint32_t pid, meta::VertexVectorIndex meta,
@@ -1135,6 +1144,7 @@ VertexVectorIndex::VertexVectorIndex(rocksdb::TransactionDB* db,
       pid_(pid),
       meta_(std::move(meta)),
       interval_(commit_interval),
+      strand_(strand),
       timer_(service) {
   if (meta_.distance_type() != meta::VectorDistanceType::L2 &&
       meta_.distance_type() != meta::VectorDistanceType::IP) {
@@ -1195,7 +1205,7 @@ void VertexVectorIndex::StartTimer() {
     }
   }
   timer_.expires_after(std::chrono::seconds(interval_));
-  timer_.async_wait([this](const boost::system::error_code& e) {
+  timer_.async_wait(strand_->wrap([this](const boost::system::error_code& e) {
     if (e) {
       if (e != boost::asio::error::operation_aborted) {
         LOG_ERROR("timer async_wait error: {}", e.message());
@@ -1229,7 +1239,7 @@ void VertexVectorIndex::StartTimer() {
     if (restart) {
       StartTimer();
     }
-  });
+  }));
 }
 
 void VertexVectorIndex::Start() {
@@ -1255,9 +1265,15 @@ void VertexVectorIndex::Stop() {
     }
   }
 
+  if (strand_->running_in_this_thread()) {
+    boost::system::error_code ec;
+    timer_.cancel(ec);
+    return;
+  }
+
   std::promise<void> cancelled;
   auto future = cancelled.get_future();
-  boost::asio::post(timer_.get_executor(), [this, &cancelled]() mutable {
+  strand_->post([this, &cancelled]() mutable {
     boost::system::error_code ec;
     timer_.cancel(ec);
     cancelled.set_value();

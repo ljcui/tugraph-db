@@ -120,7 +120,7 @@ size_t CountKeysWithPrefix(GraphDB* graph_db, rocksdb::ColumnFamilyHandle* cf,
 
 TEST(VectorIndex, build) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::string index_name = "vector_index";
   auto txn = graphDB->BeginTransaction();
   txn->CreateVertex({"label1"},
@@ -152,7 +152,7 @@ TEST(VectorIndex, build) {
 
 TEST(VectorIndex, invalidCreateParametersAreRejectedSynchronously) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
 
   EXPECT_THROW_CODE_MSG(
       graphDB->AddVertexVectorIndex("invalid_dimension_zero", "label1",
@@ -176,7 +176,7 @@ class VectorIndexParamTest : public ::testing::TestWithParam<int> {};
 
 TEST_P(VectorIndexParamTest, dim) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::string index_name = "vector_index";
   int dim = GetParam();
   graphDB->AddVertexVectorIndex(index_name, "person", "embedding", dim, "l2",
@@ -216,7 +216,7 @@ INSTANTIATE_TEST_SUITE_P(VectorIndex, VectorIndexParamTest,
 
 TEST(VectorIndex, DISABLED_read_benchmark) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::string index_name = "vector_index";
   int vector_count = 100000;
   int dim = 1024;
@@ -261,7 +261,7 @@ TEST(VectorIndex, DISABLED_read_benchmark) {
 
 TEST(VectorIndex, del) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::string index_name = "vector_index";
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
@@ -323,7 +323,7 @@ TEST(VectorIndex, restart) {
   fs::remove_all(testdb);
   std::string index_name = "vector_index";
   {
-    auto graphDB = GraphDB::Open(testdb, {});
+    auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
     graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2",
                                   16, 100);
     ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
@@ -343,7 +343,7 @@ TEST(VectorIndex, restart) {
     txn->Commit();
   }
   {
-    auto graphDB = GraphDB::Open(testdb, {});
+    auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
     for (const auto& index : graphDB->meta_info().GetVertexVectorIndexes()) {
       index->ApplyWAL();
     }
@@ -365,7 +365,7 @@ TEST(VectorIndex, serialize) {
   std::string index_name = "vector_index";
   ScopedSerializeInterval scoped_interval(3);
   {
-    auto graphDB = GraphDB::Open(testdb, {});
+    auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
     graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2",
                                   16, 100);
     ASSERT_TRUE(WaitUntilVectorIndexReady(graphDB.get(), index_name));
@@ -389,7 +389,7 @@ TEST(VectorIndex, serialize) {
   }
   {
     LOG_INFO("restart graphdb");
-    auto graphDB = GraphDB::Open(testdb, {});
+    auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
     for (const auto& index : graphDB->meta_info().GetVertexVectorIndexes()) {
       index->ApplyWAL();
     }
@@ -409,7 +409,7 @@ TEST(VectorIndex, serialize) {
 TEST(VectorIndex, usesDedicatedVectorStore) {
   fs::remove_all(testdb);
   ScopedSerializeInterval interval(1);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::string index_name = "vector_index";
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
@@ -477,7 +477,7 @@ TEST(VectorIndex, usesDedicatedVectorStore) {
 
 TEST(VectorIndex, createIndexClearsStaleArtifactsFromPreviousFailedBuild) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::string index_name = "vector_index";
   std::string stale_path = testdb + "/vt/" + index_name;
 
@@ -522,7 +522,7 @@ TEST(VectorIndex, createIndexClearsStaleArtifactsFromPreviousFailedBuild) {
 TEST(VectorIndex, vectorStorePersistsOnlyAtCheckpoint) {
   fs::remove_all(testdb);
   ScopedSerializeInterval interval(1000);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.vt_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   std::string index_name = "vector_index";
@@ -592,7 +592,7 @@ TEST(VectorIndex, vectorStorePersistsOnlyAtCheckpoint) {
 
 TEST(VectorIndex, corruptedWalIsRejected) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.vt_apply_interval_ = 3600;
   auto graphDB = GraphDB::Open(testdb, options);
   std::string index_name = "vector_index";
@@ -614,7 +614,7 @@ TEST(VectorIndex, corruptedWalIsRejected) {
 
 TEST(VectorIndex, periodicTimerSurvivesWalApplyFailure) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.vt_apply_interval_ = 1;
   auto graphDB = GraphDB::Open(testdb, options);
   std::string index_name = "vector_index";
@@ -653,7 +653,7 @@ TEST(VectorIndex, periodicTimerSurvivesWalApplyFailure) {
 
 TEST(VectorIndex, deleteOnlyWalIsCheckpointedAndTrimmed) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.vt_apply_interval_ = 3600;
   ScopedSerializeInterval interval(1);
   std::string index_name = "vector_index";
@@ -703,7 +703,7 @@ TEST(VectorIndex, deleteOnlyWalIsCheckpointedAndTrimmed) {
 
 TEST(VectorIndex, restartAfterCheckpointContinuesWalSequence) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.vt_apply_interval_ = 3600;
   ScopedSerializeInterval interval(1);
   std::string index_name = "vector_index";
@@ -755,7 +755,7 @@ TEST(VectorIndex, restartAfterCheckpointContinuesWalSequence) {
 
 TEST(VectorIndex, duplicateAddWalReplacesPreviousVector) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.vt_apply_interval_ = 3600;
   ScopedSerializeInterval interval(1000);
   auto graphDB = GraphDB::Open(testdb, options);
@@ -817,7 +817,7 @@ TEST(VectorIndex, duplicateAddWalReplacesPreviousVector) {
 
 TEST(VectorIndex, checkpointMetaWriteFailureIsReported) {
   fs::remove_all(testdb);
-  GraphDBOptions options;
+  GraphDBOptions options = testutil::NewGraphDBOptions();
   options.vt_apply_interval_ = 3600;
   ScopedSerializeInterval scoped_interval(1);
   std::string index_name = "vector_index";
@@ -862,7 +862,7 @@ TEST(VectorIndex, checkpointMetaWriteFailureIsReported) {
 
 TEST(VectorIndex, rollbackDoesNotBreakWalApply) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::string index_name = "vector_index";
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
@@ -903,7 +903,7 @@ TEST(VectorIndex, rollbackDoesNotBreakWalApply) {
 
 TEST(VectorIndex, outOfOrderCommitsApplyCleanly) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::string index_name = "vector_index";
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
@@ -942,7 +942,7 @@ TEST(VectorIndex, outOfOrderCommitsApplyCleanly) {
 
 TEST(VectorIndex, deleteLabelsUpdatesMembershipCorrectly) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::string index_name = "vector_index";
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
@@ -1014,7 +1014,7 @@ TEST(VectorIndex, deleteLabelsUpdatesMembershipCorrectly) {
 
 TEST(VectorIndex, updateAndRemoveEmbeddingMaintainMembership) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::string index_name = "vector_index";
   graphDB->AddVertexVectorIndex(index_name, "label1", "embedding", 4, "l2", 16,
                                 100);
@@ -1083,7 +1083,7 @@ TEST(VectorIndex, updateAndRemoveEmbeddingMaintainMembership) {
 
 TEST(VectorIndex, buildDoesNotBlockWrites) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   std::string index_name = "vector_index";
 
   auto txn = graphDB->BeginTransaction();

@@ -22,6 +22,7 @@
 #include "common/logger.h"
 #include "common/value.h"
 #include "graphdb/graph_db.h"
+#include "test_util.h"
 #include "transaction/transaction.h"
 namespace fs = std::filesystem;
 static std::string testdb = "testdb";
@@ -250,7 +251,7 @@ class BenchmarkLightningGraph {
 TEST(Benchmark, DISABLED_khop) {
   int n = FLAGS_num, thread = FLAGS_thread, depth = FLAGS_depth;
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   graphDB->AddVertexPropertyIndex("person_id", true, "Person", {"no"});
   BenchmarkLightningGraph bm(*graphDB, 0);
 

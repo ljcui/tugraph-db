@@ -77,7 +77,7 @@ std::vector<int64_t> CollectVertexIds(
 
 TEST(VertexUniqueIndex, basic) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   for (auto i = 0; i < 100; i++) {
@@ -123,7 +123,7 @@ TEST(VertexUniqueIndex, basic) {
 
 TEST(VertexUniqueIndex, delete) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   for (auto i = 0; i < 100; i++) {
@@ -160,7 +160,7 @@ TEST(VertexUniqueIndex, delete) {
 
 TEST(VertexUniqueIndex, addLabelMaintainsIndex) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   auto indexed = txn->CreateVertex(
       {"label1"}, {{"id", Value::Integer(1)}, {"str", Value::String("v1")}});
@@ -207,7 +207,7 @@ TEST(VertexUniqueIndex, addLabelMaintainsIndex) {
 
 TEST(VertexUniqueIndex, deleteLabelMaintainsIndex) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   auto removable = txn->CreateVertex(
       {"label1", "label2"},
@@ -251,7 +251,7 @@ TEST(VertexUniqueIndex, deleteLabelMaintainsIndex) {
 
 TEST(VertexUniqueIndex, update) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   for (auto i = 0; i < 100; i++) {
@@ -309,7 +309,7 @@ TEST(VertexUniqueIndex, update) {
 
 TEST(VertexUniqueIndex, idempotentUpdate) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   auto v = txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)},
                                           {"str", Value::String("before")}});
@@ -341,7 +341,7 @@ TEST(VertexUniqueIndex, idempotentUpdate) {
 
 TEST(VertexUniqueIndex, conflict) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   for (auto i = 0; i < 100; i++) {
@@ -378,7 +378,7 @@ TEST(VertexUniqueIndex, conflict) {
 
 TEST(VertexUniqueIndex, reopen) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   for (auto i = 0; i < 100; i++) {
@@ -390,7 +390,7 @@ TEST(VertexUniqueIndex, reopen) {
   ASSERT_TRUE(WaitUntilPropertyIndexReady(graphDB.get(), "label1_id"));
   txn.reset();
   graphDB.reset();
-  graphDB = GraphDB::Open(testdb, {});
+  graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   txn = graphDB->BeginTransaction();
   for (auto i = 0; i < 100; i++) {
     auto viter = txn->NewVertexIterator(
@@ -406,7 +406,7 @@ TEST(VertexUniqueIndex, reopen) {
 
 TEST(VertexUniqueIndex, buildConflict) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
   for (auto i = 0; i < 100; i++) {
@@ -430,10 +430,10 @@ TEST(VertexUniqueIndex, buildConflict) {
   txn->Rollback();
   txn.reset();
   graphDB.reset();
-  graphDB = GraphDB::Open(testdb, {});
+  graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   graphDB.reset();
   fs::remove_all(testdb);
-  graphDB = GraphDB::Open(testdb, {});
+  graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   txn = graphDB->BeginTransaction();
   for (auto i = 0; i < 100; i++) {
     txn->CreateVertex(v1_labels, {{"id", Value::Integer(i)},
@@ -449,7 +449,7 @@ TEST(VertexUniqueIndex, buildConflict) {
 
 TEST(VertexUniqueIndex, buildNonExists) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   graphDB->AddVertexPropertyIndex("label1_id", true, "label1", {"id"});
   auto txn = graphDB->BeginTransaction();
   std::unordered_set<std::string> v1_labels = {"label1", "label2"};
@@ -467,7 +467,7 @@ TEST(VertexUniqueIndex, buildNonExists) {
 
 TEST(VertexPropertyIndex, loadPreservesBuildStartWalId) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto lid = graphDB->id_generator().GetOrCreateLid("label1");
   auto pid = graphDB->id_generator().GetOrCreatePid("id");
   uint32_t index_id = graphDB->id_generator().GetNextIndexId();
@@ -496,7 +496,7 @@ TEST(VertexPropertyIndex, loadPreservesBuildStartWalId) {
 
 TEST(VertexUniqueIndex, onlineBuildConflictsWithConcurrentWrite) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto setup = graphDB->BeginTransaction();
   for (int i = 0; i < 50000; ++i) {
     setup->CreateVertex(
@@ -534,7 +534,7 @@ TEST(VertexUniqueIndex, onlineBuildConflictsWithConcurrentWrite) {
 
 TEST(VertexPropertyIndex, nonUniqueCompositeIndexMaintainsEntries) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   auto v1 = txn->CreateVertex(
       {"label1"}, {{"id", Value::Integer(1)}, {"str", Value::String("a")}});
@@ -602,7 +602,7 @@ TEST(VertexPropertyIndex, nonUniqueCompositeIndexMaintainsEntries) {
 
   txn.reset();
   graphDB.reset();
-  graphDB = GraphDB::Open(testdb, {});
+  graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   index = graphDB->meta_info().GetVertexPropertyIndex("label1_id_str");
   ASSERT_TRUE(index);
   EXPECT_FALSE(index->meta().is_unique());
@@ -623,7 +623,7 @@ TEST(VertexPropertyIndex, nonUniqueCompositeIndexMaintainsEntries) {
 
 TEST(VertexPropertyIndex, nonUniqueQueryAndRange) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   auto alice = txn->CreateVertex(
       {"person"},
@@ -690,7 +690,7 @@ TEST(VertexPropertyIndex, nonUniqueQueryAndRange) {
 
 TEST(VertexUniqueIndex, compositeLookupAndConflict) {
   fs::remove_all(testdb);
-  auto graphDB = GraphDB::Open(testdb, {});
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
   auto txn = graphDB->BeginTransaction();
   auto alpha = txn->CreateVertex({"label1"}, {{"id", Value::Integer(1)},
                                               {"country", Value::String("cn")},

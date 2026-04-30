@@ -21,6 +21,7 @@
 #include "common/value.h"
 #include "cypher/execution_plan/result_iterator.h"
 #include "graphdb/graph_db.h"
+#include "test_util.h"
 using namespace graphdb;
 namespace fs = std::filesystem;
 
@@ -146,7 +147,7 @@ TEST(Date, dateFromMap) {
 
 TEST(Date, truncateDate2Date) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIt =
@@ -246,7 +247,7 @@ TEST(Date, truncateDate2Date) {
 
 TEST(Date, truncateDatetime2Date) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIt = txn->Execute(
@@ -350,7 +351,7 @@ TEST(Date, truncateDatetime2Date) {
 
 TEST(Date, truncateLocaldatetime2Date) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIt = txn->Execute(
@@ -473,7 +474,7 @@ TEST(DateTime, dateTimeFromString) {
 
 TEST(DateTime, truncateDate2Datetime) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIt = txn->Execute(
@@ -612,7 +613,7 @@ TEST(DateTime, truncateDate2Datetime) {
 
 TEST(DateTime, truncateDatetime2Datetime) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIt = txn->Execute(
@@ -844,7 +845,7 @@ TEST(DateTime, truncateDatetime2Datetime) {
 
 TEST(DateTime, truncateLocaldatetime2Datetime) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIt = txn->Execute(
@@ -1459,7 +1460,7 @@ TEST(LocalDateTime, localDateTimeFromMap) {
 
 TEST(LocalDateTime, truncateDate2Localdatetime) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIt = txn->Execute(
@@ -1564,7 +1565,7 @@ TEST(LocalDateTime, truncateDate2Localdatetime) {
 
 TEST(LocalDateTime, truncateDatetime2Localdatetime) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIt = txn->Execute(
@@ -1715,7 +1716,7 @@ TEST(LocalDateTime, truncateDatetime2Localdatetime) {
 
 TEST(LocalDateTime, truncateLocaldatetime2Localdatetime) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIt = txn->Execute(
@@ -2392,7 +2393,7 @@ TEST(Time, localdatetimeNestedMap) {
 
 TEST(Time, truncate) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIterator = txn->Execute(
@@ -2457,7 +2458,7 @@ TEST(Time, truncate) {
 
 TEST(Time, createVE) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   txn->Execute(&rtx,
@@ -3328,7 +3329,7 @@ TEST(Duration, betweenFunction) {
 
 TEST(Date, getField) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIterator =
@@ -3499,7 +3500,7 @@ TEST(Date, getField) {
 
 TEST(Duration, timeExpression) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIterator =
@@ -3907,7 +3908,7 @@ TEST(Duration, timeExpression) {
 
 TEST(Time, tostring) {
   fs::remove_all(test_db);
-  auto graphDB = GraphDB::Open(test_db, {});
+  auto graphDB = GraphDB::Open(test_db, testutil::NewGraphDBOptions());
   cypher::RTContext rtx;
   auto txn = graphDB->BeginTransaction();
   auto resultIterator =

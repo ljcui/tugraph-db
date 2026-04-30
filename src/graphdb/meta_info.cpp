@@ -503,7 +503,8 @@ void MetaInfo::ClearVertexVectorIndexes() {
 }
 
 void MetaInfo::Init(rocksdb::TransactionDB* db,
-                    boost::asio::io_service& service, GraphCF* graph_cf,
+                    boost::asio::io_service& service,
+                    boost::asio::io_service::strand* strand, GraphCF* graph_cf,
                     size_t ft_commit_interval, size_t ft_writer_threads,
                     size_t ft_writer_memory_budget, size_t vt_commit_interval) {
   id_generator_.Bind(db, graph_cf);
@@ -588,7 +589,7 @@ void MetaInfo::Init(rocksdb::TransactionDB* db,
         pids.insert(native_to_big(id));
       }
       auto v_ft_index = std::make_shared<VertexFullTextIndex>(
-          db, service, graph_cf, &id_generator_, meta,
+          db, service, strand, graph_cf, &id_generator_, meta,
           native_to_big(meta.index_id()), ft_writer_threads,
           ft_writer_memory_budget, lids, pids, ft_commit_interval);
       AddVertexFullTextIndex(v_ft_index);
@@ -604,7 +605,7 @@ void MetaInfo::Init(rocksdb::TransactionDB* db,
       LOG_INFO("vertex vector index: [{}]", meta.ShortDebugString());
       max_index_id = std::max(max_index_id, meta.index_id());
       auto index = std::make_shared<VertexVectorIndex>(
-          db, service, graph_cf, native_to_big(meta.index_id()),
+          db, service, strand, graph_cf, native_to_big(meta.index_id()),
           native_to_big(meta.label_id()), native_to_big(meta.property_id()),
           meta, vt_commit_interval);
       AddVertexVectorIndex(index);

@@ -204,6 +204,7 @@ class LGraphDaemon : public Service {
              .block_cache_size = FLAGS_graph_block_cache,
              .row_cache_size = FLAGS_graph_row_cache,
              .raft_log_block_cache_size = FLAGS_raft_log_block_cache,
+             .assistant_thread_num = FLAGS_assistant_thread_num,
              .ft_apply_interval = FLAGS_ft_apply_interval,
              .ft_writer_threads = FLAGS_ft_writer_threads,
              .ft_writer_memory_budget = FLAGS_ft_writer_memory_budget,

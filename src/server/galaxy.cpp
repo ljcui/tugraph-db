@@ -199,6 +199,8 @@ std::unique_ptr<Galaxy> Galaxy::Open(
   galaxy->meta_db_ = db;
   galaxy->raft_log_block_cache_ =
       rocksdb::NewLRUCache(galaxy_options.raft_log_block_cache_size);
+  galaxy->assistant_pool_ = std::make_shared<graphdb::AssistantPool>(
+      galaxy_options.assistant_thread_num);
 
   rocksdb::ReadOptions ro;
   {
@@ -230,6 +232,7 @@ std::unique_ptr<Galaxy> Galaxy::Open(
         graph_path,
         {.block_cache = galaxy->block_cache_,
          .row_cache = galaxy->row_cache_,
+         .assistant_pool = galaxy->assistant_pool_,
          .ft_apply_interval_ = galaxy->options_.ft_apply_interval,
          .ft_writer_threads_ = galaxy->options_.ft_writer_threads,
          .ft_writer_memory_budget_ = galaxy->options_.ft_writer_memory_budget,
@@ -345,6 +348,7 @@ GraphDB *Galaxy::CreateGraphWithId(const meta::GraphDBMetaInfo &meta,
   auto graph_db = GraphDB::Open(
       graph_path, {.block_cache = block_cache_,
                    .row_cache = row_cache_,
+                   .assistant_pool = assistant_pool_,
                    .ft_apply_interval_ = options_.ft_apply_interval,
                    .ft_writer_threads_ = options_.ft_writer_threads,
                    .ft_writer_memory_budget_ = options_.ft_writer_memory_budget,
