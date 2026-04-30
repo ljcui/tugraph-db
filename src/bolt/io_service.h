@@ -18,6 +18,7 @@
 #pragma once
 #include <pthread.h>
 
+#include <cstddef>
 #include <iostream>
 #include <thread>
 #include <unordered_map>
@@ -86,13 +87,22 @@ class IOServicePool : private boost::asio::noncopyable {
 template <typename T, typename F>
 class IOService : private boost::asio::noncopyable {
  public:
-  ~IOService() { io_service_pool_.Stop(); }
+  ~IOService() {
+    boost::system::error_code ec;
+    timer_.cancel(ec);
+    acceptor_.close(ec);
+    CloseAllConnections();
+    io_service_pool_.Stop();
+  }
   IOService(boost::asio::io_service& service, uint32_t port,
-            uint32_t thread_num, F handler)
+            uint32_t thread_num, size_t max_connections, F handler,
+            typename T::Options connection_options)
       : handler_(handler),
         acceptor_(service, tcp::endpoint(tcp::v4(), port),
                   /*reuse_addr*/ true),
         io_service_pool_(thread_num),
+        max_connections_(max_connections),
+        connection_options_(connection_options),
         interval_(10),
         timer_(service) {
     io_service_pool_.Run();
@@ -101,27 +111,16 @@ class IOService : private boost::asio::noncopyable {
   }
 
  private:
-  void invoke_async_accept() {
-    conn_.reset(new T(io_service_pool_.GetIOService(), handler_));
-    acceptor_.async_accept(
-        conn_->socket(), [this](boost::system::error_code ec) {
-          if (ec) {
-            LOG_WARN("accept error: {}", ec.message());
-          } else {
-            LOG_DEBUG("accept new bolt connection {}",
-                      boost::lexical_cast<std::string>(
-                          conn_->socket().remote_endpoint()));
-            socket_set_options(conn_->socket());
-            conn_->conn_id() = next_conn_id_;
-            connections_.emplace(next_conn_id_, conn_);
-            next_conn_id_++;
-            conn_->Start();
-          }
-
-          invoke_async_accept();
-        });
+  void CloseAllConnections() {
+    if (conn_) {
+      conn_->Close();
+    }
+    for (auto& pair : connections_) {
+      pair.second->Close();
+    }
   }
-  void clean_closed_conn() {
+
+  void PruneClosedConnections() {
     for (auto it = connections_.cbegin(); it != connections_.cend();) {
       if (it->second->has_closed()) {
         LOG_DEBUG("erase connection[id:{},use_count:{}] from pool",
@@ -131,8 +130,46 @@ class IOService : private boost::asio::noncopyable {
         ++it;
       }
     }
+  }
+
+  void invoke_async_accept() {
+    conn_.reset(
+        new T(io_service_pool_.GetIOService(), handler_, connection_options_));
+    acceptor_.async_accept(conn_->socket(), [this](
+                                                boost::system::error_code ec) {
+      if (ec) {
+        LOG_WARN("accept error: {}", ec.message());
+      } else {
+        PruneClosedConnections();
+        LOG_DEBUG("accept new bolt connection {}",
+                  boost::lexical_cast<std::string>(
+                      conn_->socket().remote_endpoint()));
+        if (max_connections_ != 0 && connections_.size() >= max_connections_) {
+          LOG_WARN("reject bolt connection: connection limit {} reached",
+                   max_connections_);
+          conn_->Close();
+          invoke_async_accept();
+          return;
+        }
+        socket_set_options(conn_->socket());
+        conn_->conn_id() = next_conn_id_;
+        connections_.emplace(next_conn_id_, conn_);
+        next_conn_id_++;
+        conn_->Start();
+      }
+
+      invoke_async_accept();
+    });
+  }
+  void clean_closed_conn() {
+    PruneClosedConnections();
     timer_.expires_from_now(interval_);
-    timer_.async_wait(std::bind(&IOService::clean_closed_conn, this));
+    timer_.async_wait([this](const boost::system::error_code& ec) {
+      if (ec) {
+        return;
+      }
+      clean_closed_conn();
+    });
   }
   std::shared_ptr<T> conn_;
   F handler_;
@@ -140,6 +177,8 @@ class IOService : private boost::asio::noncopyable {
   tcp::acceptor acceptor_;
   IOServicePool io_service_pool_;
   int next_conn_id_ = 0;
+  size_t max_connections_;
+  typename T::Options connection_options_;
   boost::posix_time::seconds interval_;
   boost::asio::deadline_timer timer_;
 };

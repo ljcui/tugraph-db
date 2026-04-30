@@ -30,7 +30,8 @@ bool LGraphServer::Start() {
   }
 
   try {
-    galaxy_ = Galaxy::Open(options_.data_path, options_.galaxy_options,options_.local_node_options,
+    galaxy_ = Galaxy::Open(options_.data_path, options_.galaxy_options,
+                           options_.local_node_options,
                            options_.galaxy_raft_node_infos);
   } catch (const std::exception& e) {
     LOG_ERROR("failed to open galaxy: {}", e.what());
@@ -44,9 +45,14 @@ bool LGraphServer::Start() {
     return false;
   }
 
-  if (!bolt_server_.Start(options_.local_node_options.bolt_port,
-                          options_.bolt_io_thread_num,
-                          NewBoltHandler(galaxy_.get()))) {
+  if (!bolt_server_.Start(
+          options_.local_node_options.bolt_port, options_.bolt_io_thread_num,
+          options_.max_bolt_connections, options_.bolt_connection_options,
+          NewBoltHandler(
+              galaxy_.get(),
+              {.worker_thread_num = options_.bolt_worker_thread_num,
+               .max_pending_messages_per_connection =
+                   options_.max_pending_bolt_messages_per_connection}))) {
     raft_server_.Stop();
     galaxy_.reset();
     return false;

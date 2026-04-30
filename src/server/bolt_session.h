@@ -17,7 +17,10 @@
 //
 
 #pragma once
+#include <atomic>
 #include <boost/asio.hpp>
+#include <cstddef>
+#include <mutex>
 
 #include "bolt/blocking_queue.h"
 #include "bolt/messages.h"
@@ -42,12 +45,17 @@ struct BoltMsgDetail {
 };
 
 struct BoltSession {
+  explicit BoltSession(size_t max_pending_messages = 0)
+      : msgs(max_pending_messages) {}
+
   std::optional<BoltMsgDetail> streaming_msg;
   PackStream ps;
   std::string user;
   SessionState state;
   BlockingQueue<BoltMsgDetail> msgs;
-  std::thread fsm_thread;
+  std::mutex schedule_mutex;
+  bool scheduled = false;
+  std::atomic<bool> interrupt_requested = false;
   bool utc_patch = false;
   bool python_driver = false;
 };

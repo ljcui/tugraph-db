@@ -339,6 +339,7 @@ set(TEST_CASE_SOURCES
     test/test_concurrency.cpp
     test/test_ftindex.cpp
     test/test_galaxy.cpp
+    test/test_bolt.cpp
     test/test_value.cpp
     test/test_vector_index.cpp
     test/test_var_len.cpp

@@ -18,8 +18,10 @@
 #pragma once
 #include <pthread.h>
 
+#include <atomic>
 #include <boost/asio.hpp>
 #include <boost/beast/websocket.hpp>
+#include <cstdint>
 #include <deque>
 #include <fstream>
 #include <functional>
@@ -38,6 +40,12 @@ using boost::asio::ip::tcp;
 namespace websocket = boost::beast::websocket;
 void socket_set_options(tcp::socket& socket);
 
+struct BoltConnectionOptions {
+  uint32_t handshake_timeout_seconds = 5;
+  uint32_t login_timeout_seconds = 10;
+  uint32_t idle_timeout_seconds = 1800;
+};
+
 class Connection : private boost::asio::noncopyable {
  public:
   explicit Connection(boost::asio::io_service& io_service)
@@ -50,6 +58,9 @@ class Connection : private boost::asio::noncopyable {
     ws_->binary(true);
   }
   virtual void Close() {
+    if (has_closed_.exchange(true)) {
+      return;
+    }
     boost::system::error_code ec;
     if (ws_) {
       ws_->close(websocket::close_code::normal, ec);
@@ -59,9 +70,8 @@ class Connection : private boost::asio::noncopyable {
     if (ec) {
       LOG_WARN("Close error: {}", ec.message());
     }
-    has_closed_ = true;
   }
-  bool has_closed() { return has_closed_; }
+  bool has_closed() const { return has_closed_.load(); }
   int64_t& conn_id() { return conn_id_; }
   boost::asio::io_service& io_service() { return io_service_; }
   virtual void Start() = 0;
@@ -77,17 +87,24 @@ class Connection : private boost::asio::noncopyable {
 class BoltConnection : public Connection,
                        public std::enable_shared_from_this<BoltConnection> {
  public:
+  using Options = BoltConnectionOptions;
   BoltConnection(boost::asio::io_service& io_service,
                  std::function<void(BoltConnection& conn, BoltMsg msg,
-                                    const std::vector<std::any>& fields)>
-                     handle)
-      : Connection(io_service), handle_(std::move(handle)) {}
+                                    std::vector<std::any> fields)>
+                     handle,
+                 BoltConnectionOptions options = {})
+      : Connection(io_service),
+        timeout_timer_(io_service),
+        handle_(std::move(handle)),
+        options_(options) {}
   void Start() override;
   void Close() override;
   void PostResponse(std::string res);
   void Respond(std::string str);
   void SetContext(std::shared_ptr<void> ctx) { context_ = std::move(ctx); }
   void* GetContext() { return context_.get(); }
+  std::shared_ptr<void> GetContextShared() { return context_; }
+  void MarkAuthenticated();
 
  private:
   enum class Protocol { None = 0, Socket, WebSocket };
@@ -105,10 +122,15 @@ class BoltConnection : public Connection,
   void WebSocketReadSomeDone(const boost::system::error_code& ec,
                              std::size_t bytes_transferred);
   void DoSend();
+  void ArmTimeout(uint32_t seconds, const char* reason);
+  void TimeoutDone(const boost::system::error_code& ec);
+  void RefreshIdleTimeout();
 
+  boost::asio::deadline_timer timeout_timer_;
   std::function<void(BoltConnection& conn, BoltMsg msg,
                      std::vector<std::any> fields)>
       handle_;
+  BoltConnectionOptions options_;
   const uint8_t bolt_magic_[4] = {0x60, 0x60, 0xB0, 0x17};
   const uint8_t ws_magic_[4] = {'G', 'E', 'T', ' '};  // websocket
   uint8_t buffer4_[4] = {0};
@@ -126,6 +148,8 @@ class BoltConnection : public Connection,
   size_t ws_buffer_size_ = 0;
   size_t ws_total_read_ = 0;
   std::function<void(const boost::system::error_code& ec)> ws_cb_;
+  std::atomic<bool> authenticated_{false};
+  const char* timeout_reason_ = "bolt connection";
 };
 
 }  // namespace bolt

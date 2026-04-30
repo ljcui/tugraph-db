@@ -49,6 +49,18 @@ DEFINE_string(host, "0.0.0.0", "Host ip");
 DEFINE_uint32(bolt_port, 7687, "Bolt port");
 DEFINE_uint32(raft_port, 7688, "Raft port");
 DEFINE_uint32(bolt_io_thread_num, 2, "Number of Bolt io thread");
+DEFINE_uint32(bolt_worker_thread_num, 64, "Number of Bolt worker threads");
+DEFINE_uint64(max_bolt_connections, 10000,
+              "Maximum number of open Bolt connections. 0 means unlimited.");
+DEFINE_uint64(max_pending_bolt_messages_per_connection, 1024,
+              "Maximum pending Bolt messages per connection. 0 means "
+              "unlimited.");
+DEFINE_uint32(bolt_handshake_timeout_seconds, 5,
+              "Bolt protocol handshake timeout in seconds. 0 disables it.");
+DEFINE_uint32(bolt_login_timeout_seconds, 10,
+              "Bolt HELLO/login timeout in seconds. 0 disables it.");
+DEFINE_uint32(bolt_idle_timeout_seconds, 1800,
+              "Bolt idle connection timeout in seconds. 0 disables it.");
 
 DEFINE_uint64(block_cache, (uint64_t)8 * 1024 * 1024 * 1024,
               "Block data cache size, in bytes.");

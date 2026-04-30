@@ -31,7 +31,8 @@ class BoltServer final {
   DISABLE_COPY(BoltServer);
   DISABLE_MOVE(BoltServer);
   bool Start(
-      uint32_t port, uint32_t io_thread_num,
+      uint32_t port, uint32_t io_thread_num, size_t max_connections,
+      BoltConnectionOptions connection_options,
       const std::function<void(bolt::BoltConnection& conn, bolt::BoltMsg msg,
                                std::vector<std::any> fields)>& handler);
   void Stop();

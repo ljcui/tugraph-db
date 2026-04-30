@@ -26,7 +26,8 @@
 
 namespace bolt {
 bool BoltServer::Start(
-    uint32_t port, uint32_t io_thread_num,
+    uint32_t port, uint32_t io_thread_num, size_t max_connections,
+    BoltConnectionOptions connection_options,
     const std::function<void(bolt::BoltConnection& conn, bolt::BoltMsg msg,
                              std::vector<std::any> fields)>& handler) {
   if (started_.load()) {
@@ -41,13 +42,15 @@ bool BoltServer::Start(
 
   std::promise<bool> promise;
   auto future = promise.get_future();
-  threads_.emplace_back([this, port, io_thread_num, handler, &promise]() {
+  threads_.emplace_back([this, port, io_thread_num, max_connections,
+                         connection_options, handler, &promise]() {
     bool promise_done = false;
     try {
       bolt::IOService<bolt::BoltConnection,
                       std::function<void(bolt::BoltConnection&, bolt::BoltMsg,
                                          std::vector<std::any> fields)>>
-          bolt_service(listener_, port, io_thread_num, handler);
+          bolt_service(listener_, port, io_thread_num, max_connections, handler,
+                       connection_options);
       boost::asio::io_service::work holder(listener_);
 
       started_.store(true);
