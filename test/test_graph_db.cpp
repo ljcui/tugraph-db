@@ -49,6 +49,16 @@ TEST(GraphDB, assistantPoolRequired) {
                         "assistant thread num");
 }
 
+TEST(GraphDB, clearDataRejectsRaftGraph) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
+  graphDB->db_meta().set_graph_name("raft_graph");
+  graphDB->db_meta().set_enable_raft(true);
+
+  EXPECT_THROW_CODE_MSG(graphDB->ClearData(), InvalidParameter,
+                        "Galaxy::ClearGraph");
+}
+
 TEST(GraphDB, basicCreate) {
   fs::remove_all(testdb);
   auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());

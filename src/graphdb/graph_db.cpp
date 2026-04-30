@@ -880,6 +880,16 @@ void GraphDB::ScheduleVertexVectorIndexBuild(
 }
 
 void GraphDB::ClearData() {
+  if (db_meta_.enable_raft()) {
+    THROW_CODE(InvalidParameter,
+               "ClearData is not supported on raft graph [{}]; use "
+               "Galaxy::ClearGraph instead",
+               db_meta_.graph_name());
+  }
+  ClearDataInternal();
+}
+
+void GraphDB::ClearDataInternal() {
   std::lock_guard<std::mutex> clear_lock(clear_data_mutex_);
   std::vector<std::shared_ptr<VertexFullTextIndex>> ft_indexes;
   std::vector<std::shared_ptr<VertexVectorIndex>> vector_indexes;

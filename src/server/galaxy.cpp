@@ -565,7 +565,7 @@ void Galaxy::ApplyDeleteGraphWithRaft(
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
 
   const auto graph_path = graph->path();
-  graph->ClearData();
+  graph->ClearDataInternal();
   RemoveRaftLogDirectory(graph_path);
   graph->drop_on_close() = true;
   LOG_INFO("Erase raft graph:{}, path:{}", request.graph_name(), graph_path);
@@ -600,7 +600,7 @@ GraphDB *Galaxy::ApplyClearGraphWithRaft(
 
   LOG_INFO("Clear raft graph:{}, path:{}", request.graph_name(),
            iter->second->path());
-  iter->second->ClearData();
+  iter->second->ClearDataInternal();
 
   rocksdb::WriteBatch wb;
   auto s = SetGalaxyRaftApplyIndex(apply_index, &wb);

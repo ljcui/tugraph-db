@@ -37,6 +37,9 @@
 namespace txn {
 class Transaction;
 }
+namespace server {
+class Galaxy;
+}
 namespace graphdb {
 
 struct GraphDBOptions {
@@ -50,6 +53,8 @@ struct GraphDBOptions {
 };
 
 class GraphDB {
+  friend class server::Galaxy;
+
  public:
   GraphDB() = default;
   ~GraphDB();
@@ -101,6 +106,7 @@ class GraphDB {
   std::mutex& vector_index_commit_mutex() { return vector_index_commit_mutex_; }
 
  private:
+  void ClearDataInternal();
   void DrainAssistant();
   void ResumeBackgroundIndexBuilds();
   void PersistVertexPropertyIndexMeta(
