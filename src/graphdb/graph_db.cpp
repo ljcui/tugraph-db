@@ -325,7 +325,6 @@ std::unique_ptr<GraphDB> GraphDB::Open(const std::string& path,
   options.IncreaseParallelism();
   options.OptimizeLevelStyleCompaction();
   std::vector<std::string> built_in_cfs = {rocksdb::kDefaultColumnFamilyName,
-                                           "graph_topology",
                                            "vertex_property",
                                            "vertex_vector_property",
                                            "edge_property",
@@ -348,15 +347,15 @@ std::unique_ptr<GraphDB> GraphDB::Open(const std::string& path,
   auto graph_db = std::make_unique<GraphDB>();
   graph_db->db_ = db;
   graph_db->path_ = path;
-  graph_db->graph_cf_.graph_topology = cf_handles[1];
-  graph_db->graph_cf_.vertex_property = cf_handles[2];
-  graph_db->graph_cf_.vertex_vector_property = cf_handles[3];
-  graph_db->graph_cf_.edge_property = cf_handles[4];
-  graph_db->graph_cf_.vertex_label_vid = cf_handles[5];
-  graph_db->graph_cf_.edge_type_eid = cf_handles[6];
-  graph_db->graph_cf_.meta_info = cf_handles[7];
-  graph_db->graph_cf_.index = cf_handles[8];
-  graph_db->graph_cf_.wal = cf_handles[9];
+  graph_db->graph_cf_.graph_topology = cf_handles[0];
+  graph_db->graph_cf_.vertex_property = cf_handles[1];
+  graph_db->graph_cf_.vertex_vector_property = cf_handles[2];
+  graph_db->graph_cf_.edge_property = cf_handles[3];
+  graph_db->graph_cf_.vertex_label_vid = cf_handles[4];
+  graph_db->graph_cf_.edge_type_eid = cf_handles[5];
+  graph_db->graph_cf_.meta_info = cf_handles[6];
+  graph_db->graph_cf_.index = cf_handles[7];
+  graph_db->graph_cf_.wal = cf_handles[8];
   graph_db->cf_handles_ = std::move(cf_handles);
   graph_db->options_ = graph_options;
   graph_db->assistant_pool_ = graph_options.assistant_pool;
