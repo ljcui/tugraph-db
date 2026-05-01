@@ -123,34 +123,22 @@ meta::FullTextIndexUpdate BuildFullTextAddUpdate(int64_t vid,
 std::optional<std::vector<float>> BuildVectorValues(
     const std::shared_ptr<VertexVectorIndex>& index,
     const std::unordered_set<uint32_t>& lids,
-    const VertexSerializedProperties& properties) {
+    const VertexVectorProperties& vector_properties) {
   if (!lids.count(index->lid())) {
     return std::nullopt;
   }
-  auto iter = properties.find(index->pid());
-  if (iter == properties.end()) {
+  auto iter = vector_properties.find(index->pid());
+  if (iter == vector_properties.end()) {
     return std::nullopt;
   }
-  auto value = DeserializePropertyValue(iter->second);
-  if (!value.IsArray()) {
-    return std::nullopt;
+  if (iter->second.size() != index->meta().dimensions()) {
+    THROW_CODE(InvalidParameter,
+               "vector field [label:{}, property:{}] dimension mismatch, "
+               "expect {}, actual {}",
+               index->meta().label(), index->meta().property(),
+               index->meta().dimensions(), iter->second.size());
   }
-  const auto& array = value.AsArray();
-  if (array.size() != index->meta().dimensions()) {
-    return std::nullopt;
-  }
-  std::vector<float> vector;
-  vector.reserve(array.size());
-  for (const auto& item : array) {
-    if (item.IsFloat()) {
-      vector.push_back(item.AsFloat());
-    } else if (item.IsDouble()) {
-      vector.push_back(static_cast<float>(item.AsDouble()));
-    } else {
-      return std::nullopt;
-    }
-  }
-  return vector;
+  return iter->second;
 }
 
 meta::VectorIndexUpdate BuildVectorAddUpdate(const std::vector<float>& vector) {
@@ -236,8 +224,8 @@ void UpdateFullTextIndexes(txn::Transaction* txn, int64_t vid,
 void UpdateVectorIndexes(txn::Transaction* txn, int64_t vid,
                          const std::unordered_set<uint32_t>& old_lids,
                          const std::unordered_set<uint32_t>& new_lids,
-                         const VertexSerializedProperties& old_properties,
-                         const VertexSerializedProperties& new_properties,
+                         const VertexVectorProperties& old_vector_properties,
+                         const VertexVectorProperties& new_vector_properties,
                          const std::unordered_set<uint32_t>& touched_pids,
                          bool labels_changed) {
   for (const auto& index : txn->db()->meta_info().GetVertexVectorIndexes()) {
@@ -249,8 +237,8 @@ void UpdateVectorIndexes(txn::Transaction* txn, int64_t vid,
     if (!labels_changed && !touched_pids.count(index->pid())) {
       continue;
     }
-    auto old_vector = BuildVectorValues(index, old_lids, old_properties);
-    auto new_vector = BuildVectorValues(index, new_lids, new_properties);
+    auto old_vector = BuildVectorValues(index, old_lids, old_vector_properties);
+    auto new_vector = BuildVectorValues(index, new_lids, new_vector_properties);
     if (IsSameVectorValues(old_vector, new_vector)) {
       continue;
     }
@@ -271,6 +259,8 @@ void UpdateVertexIndexes(txn::Transaction* txn, int64_t vid,
                          const std::unordered_set<uint32_t>& new_lids,
                          const VertexSerializedProperties& old_properties,
                          const VertexSerializedProperties& new_properties,
+                         const VertexVectorProperties& old_vector_properties,
+                         const VertexVectorProperties& new_vector_properties,
                          const std::unordered_set<uint32_t>& touched_pids) {
   bool labels_changed = old_lids != new_lids;
   auto effective_touched_pids = touched_pids;
@@ -286,8 +276,9 @@ void UpdateVertexIndexes(txn::Transaction* txn, int64_t vid,
                         new_properties, effective_touched_pids, labels_changed);
   UpdateFullTextIndexes(txn, vid, old_lids, new_lids, old_properties,
                         new_properties, effective_touched_pids, labels_changed);
-  UpdateVectorIndexes(txn, vid, old_lids, new_lids, old_properties,
-                      new_properties, effective_touched_pids, labels_changed);
+  UpdateVectorIndexes(txn, vid, old_lids, new_lids, old_vector_properties,
+                      new_vector_properties, effective_touched_pids,
+                      labels_changed);
 }
 
 }  // namespace graphdb

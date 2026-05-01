@@ -43,6 +43,11 @@ class VertexVectorIndexDefaultTypeInternal {
   ::google::protobuf::internal::ExplicitlyConstructed<VertexVectorIndex>
       _instance;
 } _VertexVectorIndex_default_instance_;
+class VertexVectorFieldDefaultTypeInternal {
+ public:
+  ::google::protobuf::internal::ExplicitlyConstructed<VertexVectorField>
+      _instance;
+} _VertexVectorField_default_instance_;
 class GraphDBMetaInfoDefaultTypeInternal {
  public:
   ::google::protobuf::internal::ExplicitlyConstructed<GraphDBMetaInfo>
@@ -146,6 +151,20 @@ static void InitDefaultsVertexVectorIndex() {
 
 ::google::protobuf::internal::SCCInfo<0> scc_info_VertexVectorIndex =
     {{ATOMIC_VAR_INIT(::google::protobuf::internal::SCCInfoBase::kUninitialized), 0, InitDefaultsVertexVectorIndex}, {}};
+
+static void InitDefaultsVertexVectorField() {
+  GOOGLE_PROTOBUF_VERIFY_VERSION;
+
+  {
+    void* ptr = &::meta::_VertexVectorField_default_instance_;
+    new (ptr) ::meta::VertexVectorField();
+    ::google::protobuf::internal::OnShutdownDestroyMessage(ptr);
+  }
+  ::meta::VertexVectorField::InitAsDefaultInstance();
+}
+
+::google::protobuf::internal::SCCInfo<0> scc_info_VertexVectorField =
+    {{ATOMIC_VAR_INIT(::google::protobuf::internal::SCCInfoBase::kUninitialized), 0, InitDefaultsVertexVectorField}, {}};
 
 static void InitDefaultsGraphDBMetaInfo() {
   GOOGLE_PROTOBUF_VERIFY_VERSION;
@@ -322,6 +341,7 @@ void InitDefaults() {
   ::google::protobuf::internal::InitSCC(&scc_info_VertexPropertyIndex.base);
   ::google::protobuf::internal::InitSCC(&scc_info_VertexFullTextIndex.base);
   ::google::protobuf::internal::InitSCC(&scc_info_VertexVectorIndex.base);
+  ::google::protobuf::internal::InitSCC(&scc_info_VertexVectorField.base);
   ::google::protobuf::internal::InitSCC(&scc_info_GraphDBMetaInfo.base);
   ::google::protobuf::internal::InitSCC(&scc_info_FullTextIndexUpdate.base);
   ::google::protobuf::internal::InitSCC(&scc_info_VectorIndexUpdate.base);
@@ -336,7 +356,7 @@ void InitDefaults() {
   ::google::protobuf::internal::InitSCC(&scc_info_GraphLifecycleRequest.base);
 }
 
-::google::protobuf::Metadata file_level_metadata[15];
+::google::protobuf::Metadata file_level_metadata[16];
 const ::google::protobuf::EnumDescriptor* file_level_enum_descriptors[6];
 
 const ::google::protobuf::uint32 TableStruct::offsets[] GOOGLE_PROTOBUF_ATTRIBUTE_SECTION_VARIABLE(protodesc_cold) = {
@@ -393,6 +413,16 @@ const ::google::protobuf::uint32 TableStruct::offsets[] GOOGLE_PROTOBUF_ATTRIBUT
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VertexVectorIndex, build_start_wal_id_),
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VertexVectorIndex, applied_wal_id_),
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VertexVectorIndex, build_error_),
+  ~0u,  // no _has_bits_
+  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VertexVectorField, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VertexVectorField, label_),
+  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VertexVectorField, label_id_),
+  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VertexVectorField, property_),
+  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VertexVectorField, property_id_),
+  GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::VertexVectorField, dimensions_),
   ~0u,  // no _has_bits_
   GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET(::meta::GraphDBMetaInfo, _internal_metadata_),
   ~0u,  // no _extensions_
@@ -495,24 +525,26 @@ static const ::google::protobuf::internal::MigrationSchema schemas[] GOOGLE_PROT
   { 0, -1, sizeof(::meta::VertexPropertyIndex)},
   { 16, -1, sizeof(::meta::VertexFullTextIndex)},
   { 32, -1, sizeof(::meta::VertexVectorIndex)},
-  { 53, -1, sizeof(::meta::GraphDBMetaInfo)},
-  { 61, -1, sizeof(::meta::FullTextIndexUpdate)},
-  { 70, -1, sizeof(::meta::VectorIndexUpdate)},
-  { 78, -1, sizeof(::meta::PropertyIndexUpdate)},
-  { 86, -1, sizeof(::meta::GraphIndexDdlRequest)},
-  { 93, -1, sizeof(::meta::RaftRequest)},
-  { 101, -1, sizeof(::meta::RaftMessage)},
-  { 108, -1, sizeof(::meta::RaftNodeInfo)},
-  { 120, 127, sizeof(::meta::RaftNodeInfos_NodesEntry_DoNotUse)},
-  { 129, -1, sizeof(::meta::RaftNodeInfos)},
-  { 135, -1, sizeof(::meta::CreateGraphRequest)},
-  { 143, -1, sizeof(::meta::GraphLifecycleRequest)},
+  { 53, -1, sizeof(::meta::VertexVectorField)},
+  { 63, -1, sizeof(::meta::GraphDBMetaInfo)},
+  { 71, -1, sizeof(::meta::FullTextIndexUpdate)},
+  { 80, -1, sizeof(::meta::VectorIndexUpdate)},
+  { 88, -1, sizeof(::meta::PropertyIndexUpdate)},
+  { 96, -1, sizeof(::meta::GraphIndexDdlRequest)},
+  { 103, -1, sizeof(::meta::RaftRequest)},
+  { 111, -1, sizeof(::meta::RaftMessage)},
+  { 118, -1, sizeof(::meta::RaftNodeInfo)},
+  { 130, 137, sizeof(::meta::RaftNodeInfos_NodesEntry_DoNotUse)},
+  { 139, -1, sizeof(::meta::RaftNodeInfos)},
+  { 145, -1, sizeof(::meta::CreateGraphRequest)},
+  { 153, -1, sizeof(::meta::GraphLifecycleRequest)},
 };
 
 static ::google::protobuf::Message const * const file_default_instances[] = {
   reinterpret_cast<const ::google::protobuf::Message*>(&::meta::_VertexPropertyIndex_default_instance_),
   reinterpret_cast<const ::google::protobuf::Message*>(&::meta::_VertexFullTextIndex_default_instance_),
   reinterpret_cast<const ::google::protobuf::Message*>(&::meta::_VertexVectorIndex_default_instance_),
+  reinterpret_cast<const ::google::protobuf::Message*>(&::meta::_VertexVectorField_default_instance_),
   reinterpret_cast<const ::google::protobuf::Message*>(&::meta::_GraphDBMetaInfo_default_instance_),
   reinterpret_cast<const ::google::protobuf::Message*>(&::meta::_FullTextIndexUpdate_default_instance_),
   reinterpret_cast<const ::google::protobuf::Message*>(&::meta::_VectorIndexUpdate_default_instance_),
@@ -542,7 +574,7 @@ void protobuf_AssignDescriptorsOnce() {
 void protobuf_RegisterTypes(const ::std::string&) GOOGLE_PROTOBUF_ATTRIBUTE_COLD;
 void protobuf_RegisterTypes(const ::std::string&) {
   protobuf_AssignDescriptorsOnce();
-  ::google::protobuf::internal::RegisterAllTypes(file_level_metadata, 15);
+  ::google::protobuf::internal::RegisterAllTypes(file_level_metadata, 16);
 }
 
 void AddDescriptorsImpl() {
@@ -571,51 +603,54 @@ void AddDescriptorsImpl() {
       "struction\030\n \001(\r\022\020\n\010index_id\030\013 \001(\r\022\014\n\004pat"
       "h\030\014 \001(\t\022$\n\005state\030\r \001(\0162\025.meta.IndexBuild"
       "State\022\032\n\022build_start_wal_id\030\016 \001(\004\022\026\n\016app"
-      "lied_wal_id\030\017 \001(\004\022\023\n\013build_error\030\020 \001(\t\"L"
-      "\n\017GraphDBMetaInfo\022\022\n\ngraph_name\030\001 \001(\t\022\020\n"
-      "\010graph_id\030\002 \001(\r\022\023\n\013enable_raft\030\003 \001(\010\"b\n\023"
-      "FullTextIndexUpdate\022\036\n\004type\030\001 \001(\0162\020.meta"
-      ".UpdateType\022\013\n\003vid\030\002 \001(\003\022\016\n\006fields\030\003 \003(\t"
-      "\022\016\n\006values\030\004 \003(\t\"P\n\021VectorIndexUpdate\022\036\n"
-      "\004type\030\001 \001(\0162\020.meta.UpdateType\022\013\n\003vid\030\002 \001"
-      "(\003\022\016\n\006vector\030\003 \003(\002\"R\n\023PropertyIndexUpdat"
-      "e\022\036\n\004type\030\001 \001(\0162\020.meta.UpdateType\022\013\n\003vid"
-      "\030\002 \001(\003\022\016\n\006values\030\003 \003(\014\"\266\002\n\024GraphIndexDdl"
-      "Request\0227\n\toperation\030\001 \001(\0162$.meta.GraphI"
-      "ndexDdlRequest.Operation\022\017\n\007payload\030\002 \001("
-      "\014\"\323\001\n\tOperation\022 \n\034CREATE_VERTEX_PROPERT"
-      "Y_INDEX\020\000\022 \n\034DELETE_VERTEX_PROPERTY_INDE"
-      "X\020\001\022 \n\034CREATE_VERTEX_FULLTEXT_INDEX\020\002\022 \n"
-      "\034DELETE_VERTEX_FULLTEXT_INDEX\020\003\022\036\n\032CREAT"
-      "E_VERTEX_VECTOR_INDEX\020\004\022\036\n\032DELETE_VERTEX"
-      "_VECTOR_INDEX\020\005\"Q\n\013RaftRequest\022\n\n\002id\030\001 \001"
-      "(\004\022%\n\007wb_kind\030\002 \001(\0162\024.meta.WriteBatchKin"
-      "d\022\017\n\007wb_data\030\003 \001(\014\">\n\013RaftMessage\022\r\n\005gra"
-      "ph\030\001 \001(\t\022 \n\007message\030\002 \001(\0132\017.raftpb.Messa"
-      "ge\"\207\001\n\014RaftNodeInfo\022\017\n\007node_id\030\001 \001(\004\022\n\n\002"
-      "ip\030\002 \001(\t\022\021\n\tbolt_port\030\003 \001(\005\022\021\n\traft_poft"
-      "\030\004 \001(\005\022\021\n\tis_leader\030\005 \001(\010\022\022\n\nis_learner\030"
-      "\006 \001(\010\022\r\n\005graph\030\007 \001(\t\"\200\001\n\rRaftNodeInfos\022-"
-      "\n\005nodes\030\001 \003(\0132\036.meta.RaftNodeInfos.Nodes"
-      "Entry\032@\n\nNodesEntry\022\013\n\003key\030\001 \001(\004\022!\n\005valu"
-      "e\030\002 \001(\0132\022.meta.RaftNodeInfo:\0028\001\"c\n\022Creat"
-      "eGraphRequest\022\022\n\ngraph_name\030\001 \001(\t\022\020\n\010gra"
-      "ph_id\030\002 \001(\r\022\'\n\nnode_infos\030\003 \001(\0132\023.meta.R"
-      "aftNodeInfos\"=\n\025GraphLifecycleRequest\022\022\n"
-      "\ngraph_name\030\001 \001(\t\022\020\n\010graph_id\030\002 \001(\r*0\n\022V"
-      "ectorDistanceType\022\006\n\002L2\020\000\022\006\n\002IP\020\001\022\n\n\006COS"
-      "INE\020\002*)\n\017VectorIndexType\022\010\n\004HNSW\020\000\022\014\n\010IV"
-      "F_FLAT\020\001*G\n\017IndexBuildState\022\014\n\010BUILDING\020"
-      "\000\022\017\n\013CATCHING_UP\020\001\022\t\n\005READY\020\002\022\n\n\006FAILED\020"
-      "\003*!\n\nUpdateType\022\007\n\003Add\020\000\022\n\n\006Delete\020\001*\237\001\n"
-      "\016WriteBatchKind\022\013\n\007UNKNOWN\020\000\022\017\n\013GRAPH_WR"
-      "ITE\020\001\022\020\n\014ID_GENERATOR\020\002\022\027\n\023GALAXY_CREATE"
-      "_GRAPH\020\003\022\027\n\023GALAXY_DELETE_GRAPH\020\004\022\026\n\022GAL"
-      "AXY_CLEAR_GRAPH\020\005\022\023\n\017GRAPH_INDEX_DDL\020\006b\006"
-      "proto3"
+      "lied_wal_id\030\017 \001(\004\022\023\n\013build_error\030\020 \001(\t\"o"
+      "\n\021VertexVectorField\022\r\n\005label\030\001 \001(\t\022\020\n\010la"
+      "bel_id\030\002 \001(\r\022\020\n\010property\030\003 \001(\t\022\023\n\013proper"
+      "ty_id\030\004 \001(\r\022\022\n\ndimensions\030\005 \001(\r\"L\n\017Graph"
+      "DBMetaInfo\022\022\n\ngraph_name\030\001 \001(\t\022\020\n\010graph_"
+      "id\030\002 \001(\r\022\023\n\013enable_raft\030\003 \001(\010\"b\n\023FullTex"
+      "tIndexUpdate\022\036\n\004type\030\001 \001(\0162\020.meta.Update"
+      "Type\022\013\n\003vid\030\002 \001(\003\022\016\n\006fields\030\003 \003(\t\022\016\n\006val"
+      "ues\030\004 \003(\t\"P\n\021VectorIndexUpdate\022\036\n\004type\030\001"
+      " \001(\0162\020.meta.UpdateType\022\013\n\003vid\030\002 \001(\003\022\016\n\006v"
+      "ector\030\003 \003(\002\"R\n\023PropertyIndexUpdate\022\036\n\004ty"
+      "pe\030\001 \001(\0162\020.meta.UpdateType\022\013\n\003vid\030\002 \001(\003\022"
+      "\016\n\006values\030\003 \003(\014\"\326\002\n\024GraphIndexDdlRequest"
+      "\0227\n\toperation\030\001 \001(\0162$.meta.GraphIndexDdl"
+      "Request.Operation\022\017\n\007payload\030\002 \001(\014\"\363\001\n\tO"
+      "peration\022 \n\034CREATE_VERTEX_PROPERTY_INDEX"
+      "\020\000\022 \n\034DELETE_VERTEX_PROPERTY_INDEX\020\001\022 \n\034"
+      "CREATE_VERTEX_FULLTEXT_INDEX\020\002\022 \n\034DELETE"
+      "_VERTEX_FULLTEXT_INDEX\020\003\022\036\n\032CREATE_VERTE"
+      "X_VECTOR_INDEX\020\004\022\036\n\032DELETE_VERTEX_VECTOR"
+      "_INDEX\020\005\022\036\n\032CREATE_VERTEX_VECTOR_FIELD\020\006"
+      "\"Q\n\013RaftRequest\022\n\n\002id\030\001 \001(\004\022%\n\007wb_kind\030\002"
+      " \001(\0162\024.meta.WriteBatchKind\022\017\n\007wb_data\030\003 "
+      "\001(\014\">\n\013RaftMessage\022\r\n\005graph\030\001 \001(\t\022 \n\007mes"
+      "sage\030\002 \001(\0132\017.raftpb.Message\"\207\001\n\014RaftNode"
+      "Info\022\017\n\007node_id\030\001 \001(\004\022\n\n\002ip\030\002 \001(\t\022\021\n\tbol"
+      "t_port\030\003 \001(\005\022\021\n\traft_poft\030\004 \001(\005\022\021\n\tis_le"
+      "ader\030\005 \001(\010\022\022\n\nis_learner\030\006 \001(\010\022\r\n\005graph\030"
+      "\007 \001(\t\"\200\001\n\rRaftNodeInfos\022-\n\005nodes\030\001 \003(\0132\036"
+      ".meta.RaftNodeInfos.NodesEntry\032@\n\nNodesE"
+      "ntry\022\013\n\003key\030\001 \001(\004\022!\n\005value\030\002 \001(\0132\022.meta."
+      "RaftNodeInfo:\0028\001\"c\n\022CreateGraphRequest\022\022"
+      "\n\ngraph_name\030\001 \001(\t\022\020\n\010graph_id\030\002 \001(\r\022\'\n\n"
+      "node_infos\030\003 \001(\0132\023.meta.RaftNodeInfos\"=\n"
+      "\025GraphLifecycleRequest\022\022\n\ngraph_name\030\001 \001"
+      "(\t\022\020\n\010graph_id\030\002 \001(\r*0\n\022VectorDistanceTy"
+      "pe\022\006\n\002L2\020\000\022\006\n\002IP\020\001\022\n\n\006COSINE\020\002*)\n\017Vector"
+      "IndexType\022\010\n\004HNSW\020\000\022\014\n\010IVF_FLAT\020\001*G\n\017Ind"
+      "exBuildState\022\014\n\010BUILDING\020\000\022\017\n\013CATCHING_U"
+      "P\020\001\022\t\n\005READY\020\002\022\n\n\006FAILED\020\003*!\n\nUpdateType"
+      "\022\007\n\003Add\020\000\022\n\n\006Delete\020\001*\237\001\n\016WriteBatchKind"
+      "\022\013\n\007UNKNOWN\020\000\022\017\n\013GRAPH_WRITE\020\001\022\020\n\014ID_GEN"
+      "ERATOR\020\002\022\027\n\023GALAXY_CREATE_GRAPH\020\003\022\027\n\023GAL"
+      "AXY_DELETE_GRAPH\020\004\022\026\n\022GALAXY_CLEAR_GRAPH"
+      "\020\005\022\023\n\017GRAPH_INDEX_DDL\020\006b\006proto3"
   };
   ::google::protobuf::DescriptorPool::InternalAddGeneratedFile(
-      descriptor, 2566);
+      descriptor, 2711);
   ::google::protobuf::MessageFactory::InternalRegisterGeneratedFile(
     "meta.proto", &protobuf_RegisterTypes);
   ::protobuf_raft_2eproto::AddDescriptors();
@@ -645,6 +680,7 @@ bool GraphIndexDdlRequest_Operation_IsValid(int value) {
     case 3:
     case 4:
     case 5:
+    case 6:
       return true;
     default:
       return false;
@@ -658,6 +694,7 @@ const GraphIndexDdlRequest_Operation GraphIndexDdlRequest::CREATE_VERTEX_FULLTEX
 const GraphIndexDdlRequest_Operation GraphIndexDdlRequest::DELETE_VERTEX_FULLTEXT_INDEX;
 const GraphIndexDdlRequest_Operation GraphIndexDdlRequest::CREATE_VERTEX_VECTOR_INDEX;
 const GraphIndexDdlRequest_Operation GraphIndexDdlRequest::DELETE_VERTEX_VECTOR_INDEX;
+const GraphIndexDdlRequest_Operation GraphIndexDdlRequest::CREATE_VERTEX_VECTOR_FIELD;
 const GraphIndexDdlRequest_Operation GraphIndexDdlRequest::Operation_MIN;
 const GraphIndexDdlRequest_Operation GraphIndexDdlRequest::Operation_MAX;
 const int GraphIndexDdlRequest::Operation_ARRAYSIZE;
@@ -3059,6 +3096,423 @@ void VertexVectorIndex::InternalSwap(VertexVectorIndex* other) {
 }
 
 ::google::protobuf::Metadata VertexVectorIndex::GetMetadata() const {
+  protobuf_meta_2eproto::protobuf_AssignDescriptorsOnce();
+  return ::protobuf_meta_2eproto::file_level_metadata[kIndexInFileMessages];
+}
+
+
+// ===================================================================
+
+void VertexVectorField::InitAsDefaultInstance() {
+}
+#if !defined(_MSC_VER) || _MSC_VER >= 1900
+const int VertexVectorField::kLabelFieldNumber;
+const int VertexVectorField::kLabelIdFieldNumber;
+const int VertexVectorField::kPropertyFieldNumber;
+const int VertexVectorField::kPropertyIdFieldNumber;
+const int VertexVectorField::kDimensionsFieldNumber;
+#endif  // !defined(_MSC_VER) || _MSC_VER >= 1900
+
+VertexVectorField::VertexVectorField()
+  : ::google::protobuf::Message(), _internal_metadata_(NULL) {
+  ::google::protobuf::internal::InitSCC(
+      &protobuf_meta_2eproto::scc_info_VertexVectorField.base);
+  SharedCtor();
+  // @@protoc_insertion_point(constructor:meta.VertexVectorField)
+}
+VertexVectorField::VertexVectorField(const VertexVectorField& from)
+  : ::google::protobuf::Message(),
+      _internal_metadata_(NULL) {
+  _internal_metadata_.MergeFrom(from._internal_metadata_);
+  label_.UnsafeSetDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+  if (from.label().size() > 0) {
+    label_.AssignWithDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), from.label_);
+  }
+  property_.UnsafeSetDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+  if (from.property().size() > 0) {
+    property_.AssignWithDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), from.property_);
+  }
+  ::memcpy(&label_id_, &from.label_id_,
+    static_cast<size_t>(reinterpret_cast<char*>(&dimensions_) -
+    reinterpret_cast<char*>(&label_id_)) + sizeof(dimensions_));
+  // @@protoc_insertion_point(copy_constructor:meta.VertexVectorField)
+}
+
+void VertexVectorField::SharedCtor() {
+  label_.UnsafeSetDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+  property_.UnsafeSetDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+  ::memset(&label_id_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&dimensions_) -
+      reinterpret_cast<char*>(&label_id_)) + sizeof(dimensions_));
+}
+
+VertexVectorField::~VertexVectorField() {
+  // @@protoc_insertion_point(destructor:meta.VertexVectorField)
+  SharedDtor();
+}
+
+void VertexVectorField::SharedDtor() {
+  label_.DestroyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+  property_.DestroyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+}
+
+void VertexVectorField::SetCachedSize(int size) const {
+  _cached_size_.Set(size);
+}
+const ::google::protobuf::Descriptor* VertexVectorField::descriptor() {
+  ::protobuf_meta_2eproto::protobuf_AssignDescriptorsOnce();
+  return ::protobuf_meta_2eproto::file_level_metadata[kIndexInFileMessages].descriptor;
+}
+
+const VertexVectorField& VertexVectorField::default_instance() {
+  ::google::protobuf::internal::InitSCC(&protobuf_meta_2eproto::scc_info_VertexVectorField.base);
+  return *internal_default_instance();
+}
+
+
+void VertexVectorField::Clear() {
+// @@protoc_insertion_point(message_clear_start:meta.VertexVectorField)
+  ::google::protobuf::uint32 cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  label_.ClearToEmptyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+  property_.ClearToEmptyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+  ::memset(&label_id_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&dimensions_) -
+      reinterpret_cast<char*>(&label_id_)) + sizeof(dimensions_));
+  _internal_metadata_.Clear();
+}
+
+bool VertexVectorField::MergePartialFromCodedStream(
+    ::google::protobuf::io::CodedInputStream* input) {
+#define DO_(EXPRESSION) if (!GOOGLE_PREDICT_TRUE(EXPRESSION)) goto failure
+  ::google::protobuf::uint32 tag;
+  // @@protoc_insertion_point(parse_start:meta.VertexVectorField)
+  for (;;) {
+    ::std::pair<::google::protobuf::uint32, bool> p = input->ReadTagWithCutoffNoLastTag(127u);
+    tag = p.first;
+    if (!p.second) goto handle_unusual;
+    switch (::google::protobuf::internal::WireFormatLite::GetTagFieldNumber(tag)) {
+      // string label = 1;
+      case 1: {
+        if (static_cast< ::google::protobuf::uint8>(tag) ==
+            static_cast< ::google::protobuf::uint8>(10u /* 10 & 0xFF */)) {
+          DO_(::google::protobuf::internal::WireFormatLite::ReadString(
+                input, this->mutable_label()));
+          DO_(::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+            this->label().data(), static_cast<int>(this->label().length()),
+            ::google::protobuf::internal::WireFormatLite::PARSE,
+            "meta.VertexVectorField.label"));
+        } else {
+          goto handle_unusual;
+        }
+        break;
+      }
+
+      // uint32 label_id = 2;
+      case 2: {
+        if (static_cast< ::google::protobuf::uint8>(tag) ==
+            static_cast< ::google::protobuf::uint8>(16u /* 16 & 0xFF */)) {
+
+          DO_((::google::protobuf::internal::WireFormatLite::ReadPrimitive<
+                   ::google::protobuf::uint32, ::google::protobuf::internal::WireFormatLite::TYPE_UINT32>(
+                 input, &label_id_)));
+        } else {
+          goto handle_unusual;
+        }
+        break;
+      }
+
+      // string property = 3;
+      case 3: {
+        if (static_cast< ::google::protobuf::uint8>(tag) ==
+            static_cast< ::google::protobuf::uint8>(26u /* 26 & 0xFF */)) {
+          DO_(::google::protobuf::internal::WireFormatLite::ReadString(
+                input, this->mutable_property()));
+          DO_(::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+            this->property().data(), static_cast<int>(this->property().length()),
+            ::google::protobuf::internal::WireFormatLite::PARSE,
+            "meta.VertexVectorField.property"));
+        } else {
+          goto handle_unusual;
+        }
+        break;
+      }
+
+      // uint32 property_id = 4;
+      case 4: {
+        if (static_cast< ::google::protobuf::uint8>(tag) ==
+            static_cast< ::google::protobuf::uint8>(32u /* 32 & 0xFF */)) {
+
+          DO_((::google::protobuf::internal::WireFormatLite::ReadPrimitive<
+                   ::google::protobuf::uint32, ::google::protobuf::internal::WireFormatLite::TYPE_UINT32>(
+                 input, &property_id_)));
+        } else {
+          goto handle_unusual;
+        }
+        break;
+      }
+
+      // uint32 dimensions = 5;
+      case 5: {
+        if (static_cast< ::google::protobuf::uint8>(tag) ==
+            static_cast< ::google::protobuf::uint8>(40u /* 40 & 0xFF */)) {
+
+          DO_((::google::protobuf::internal::WireFormatLite::ReadPrimitive<
+                   ::google::protobuf::uint32, ::google::protobuf::internal::WireFormatLite::TYPE_UINT32>(
+                 input, &dimensions_)));
+        } else {
+          goto handle_unusual;
+        }
+        break;
+      }
+
+      default: {
+      handle_unusual:
+        if (tag == 0) {
+          goto success;
+        }
+        DO_(::google::protobuf::internal::WireFormat::SkipField(
+              input, tag, _internal_metadata_.mutable_unknown_fields()));
+        break;
+      }
+    }
+  }
+success:
+  // @@protoc_insertion_point(parse_success:meta.VertexVectorField)
+  return true;
+failure:
+  // @@protoc_insertion_point(parse_failure:meta.VertexVectorField)
+  return false;
+#undef DO_
+}
+
+void VertexVectorField::SerializeWithCachedSizes(
+    ::google::protobuf::io::CodedOutputStream* output) const {
+  // @@protoc_insertion_point(serialize_start:meta.VertexVectorField)
+  ::google::protobuf::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // string label = 1;
+  if (this->label().size() > 0) {
+    ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+      this->label().data(), static_cast<int>(this->label().length()),
+      ::google::protobuf::internal::WireFormatLite::SERIALIZE,
+      "meta.VertexVectorField.label");
+    ::google::protobuf::internal::WireFormatLite::WriteStringMaybeAliased(
+      1, this->label(), output);
+  }
+
+  // uint32 label_id = 2;
+  if (this->label_id() != 0) {
+    ::google::protobuf::internal::WireFormatLite::WriteUInt32(2, this->label_id(), output);
+  }
+
+  // string property = 3;
+  if (this->property().size() > 0) {
+    ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+      this->property().data(), static_cast<int>(this->property().length()),
+      ::google::protobuf::internal::WireFormatLite::SERIALIZE,
+      "meta.VertexVectorField.property");
+    ::google::protobuf::internal::WireFormatLite::WriteStringMaybeAliased(
+      3, this->property(), output);
+  }
+
+  // uint32 property_id = 4;
+  if (this->property_id() != 0) {
+    ::google::protobuf::internal::WireFormatLite::WriteUInt32(4, this->property_id(), output);
+  }
+
+  // uint32 dimensions = 5;
+  if (this->dimensions() != 0) {
+    ::google::protobuf::internal::WireFormatLite::WriteUInt32(5, this->dimensions(), output);
+  }
+
+  if ((_internal_metadata_.have_unknown_fields() &&  ::google::protobuf::internal::GetProto3PreserveUnknownsDefault())) {
+    ::google::protobuf::internal::WireFormat::SerializeUnknownFields(
+        (::google::protobuf::internal::GetProto3PreserveUnknownsDefault()   ? _internal_metadata_.unknown_fields()   : _internal_metadata_.default_instance()), output);
+  }
+  // @@protoc_insertion_point(serialize_end:meta.VertexVectorField)
+}
+
+::google::protobuf::uint8* VertexVectorField::InternalSerializeWithCachedSizesToArray(
+    bool deterministic, ::google::protobuf::uint8* target) const {
+  (void)deterministic; // Unused
+  // @@protoc_insertion_point(serialize_to_array_start:meta.VertexVectorField)
+  ::google::protobuf::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // string label = 1;
+  if (this->label().size() > 0) {
+    ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+      this->label().data(), static_cast<int>(this->label().length()),
+      ::google::protobuf::internal::WireFormatLite::SERIALIZE,
+      "meta.VertexVectorField.label");
+    target =
+      ::google::protobuf::internal::WireFormatLite::WriteStringToArray(
+        1, this->label(), target);
+  }
+
+  // uint32 label_id = 2;
+  if (this->label_id() != 0) {
+    target = ::google::protobuf::internal::WireFormatLite::WriteUInt32ToArray(2, this->label_id(), target);
+  }
+
+  // string property = 3;
+  if (this->property().size() > 0) {
+    ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+      this->property().data(), static_cast<int>(this->property().length()),
+      ::google::protobuf::internal::WireFormatLite::SERIALIZE,
+      "meta.VertexVectorField.property");
+    target =
+      ::google::protobuf::internal::WireFormatLite::WriteStringToArray(
+        3, this->property(), target);
+  }
+
+  // uint32 property_id = 4;
+  if (this->property_id() != 0) {
+    target = ::google::protobuf::internal::WireFormatLite::WriteUInt32ToArray(4, this->property_id(), target);
+  }
+
+  // uint32 dimensions = 5;
+  if (this->dimensions() != 0) {
+    target = ::google::protobuf::internal::WireFormatLite::WriteUInt32ToArray(5, this->dimensions(), target);
+  }
+
+  if ((_internal_metadata_.have_unknown_fields() &&  ::google::protobuf::internal::GetProto3PreserveUnknownsDefault())) {
+    target = ::google::protobuf::internal::WireFormat::SerializeUnknownFieldsToArray(
+        (::google::protobuf::internal::GetProto3PreserveUnknownsDefault()   ? _internal_metadata_.unknown_fields()   : _internal_metadata_.default_instance()), target);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:meta.VertexVectorField)
+  return target;
+}
+
+size_t VertexVectorField::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:meta.VertexVectorField)
+  size_t total_size = 0;
+
+  if ((_internal_metadata_.have_unknown_fields() &&  ::google::protobuf::internal::GetProto3PreserveUnknownsDefault())) {
+    total_size +=
+      ::google::protobuf::internal::WireFormat::ComputeUnknownFieldsSize(
+        (::google::protobuf::internal::GetProto3PreserveUnknownsDefault()   ? _internal_metadata_.unknown_fields()   : _internal_metadata_.default_instance()));
+  }
+  // string label = 1;
+  if (this->label().size() > 0) {
+    total_size += 1 +
+      ::google::protobuf::internal::WireFormatLite::StringSize(
+        this->label());
+  }
+
+  // string property = 3;
+  if (this->property().size() > 0) {
+    total_size += 1 +
+      ::google::protobuf::internal::WireFormatLite::StringSize(
+        this->property());
+  }
+
+  // uint32 label_id = 2;
+  if (this->label_id() != 0) {
+    total_size += 1 +
+      ::google::protobuf::internal::WireFormatLite::UInt32Size(
+        this->label_id());
+  }
+
+  // uint32 property_id = 4;
+  if (this->property_id() != 0) {
+    total_size += 1 +
+      ::google::protobuf::internal::WireFormatLite::UInt32Size(
+        this->property_id());
+  }
+
+  // uint32 dimensions = 5;
+  if (this->dimensions() != 0) {
+    total_size += 1 +
+      ::google::protobuf::internal::WireFormatLite::UInt32Size(
+        this->dimensions());
+  }
+
+  int cached_size = ::google::protobuf::internal::ToCachedSize(total_size);
+  SetCachedSize(cached_size);
+  return total_size;
+}
+
+void VertexVectorField::MergeFrom(const ::google::protobuf::Message& from) {
+// @@protoc_insertion_point(generalized_merge_from_start:meta.VertexVectorField)
+  GOOGLE_DCHECK_NE(&from, this);
+  const VertexVectorField* source =
+      ::google::protobuf::internal::DynamicCastToGenerated<const VertexVectorField>(
+          &from);
+  if (source == NULL) {
+  // @@protoc_insertion_point(generalized_merge_from_cast_fail:meta.VertexVectorField)
+    ::google::protobuf::internal::ReflectionOps::Merge(from, this);
+  } else {
+  // @@protoc_insertion_point(generalized_merge_from_cast_success:meta.VertexVectorField)
+    MergeFrom(*source);
+  }
+}
+
+void VertexVectorField::MergeFrom(const VertexVectorField& from) {
+// @@protoc_insertion_point(class_specific_merge_from_start:meta.VertexVectorField)
+  GOOGLE_DCHECK_NE(&from, this);
+  _internal_metadata_.MergeFrom(from._internal_metadata_);
+  ::google::protobuf::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (from.label().size() > 0) {
+
+    label_.AssignWithDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), from.label_);
+  }
+  if (from.property().size() > 0) {
+
+    property_.AssignWithDefault(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), from.property_);
+  }
+  if (from.label_id() != 0) {
+    set_label_id(from.label_id());
+  }
+  if (from.property_id() != 0) {
+    set_property_id(from.property_id());
+  }
+  if (from.dimensions() != 0) {
+    set_dimensions(from.dimensions());
+  }
+}
+
+void VertexVectorField::CopyFrom(const ::google::protobuf::Message& from) {
+// @@protoc_insertion_point(generalized_copy_from_start:meta.VertexVectorField)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+void VertexVectorField::CopyFrom(const VertexVectorField& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:meta.VertexVectorField)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool VertexVectorField::IsInitialized() const {
+  return true;
+}
+
+void VertexVectorField::Swap(VertexVectorField* other) {
+  if (other == this) return;
+  InternalSwap(other);
+}
+void VertexVectorField::InternalSwap(VertexVectorField* other) {
+  using std::swap;
+  label_.Swap(&other->label_, &::google::protobuf::internal::GetEmptyStringAlreadyInited(),
+    GetArenaNoVirtual());
+  property_.Swap(&other->property_, &::google::protobuf::internal::GetEmptyStringAlreadyInited(),
+    GetArenaNoVirtual());
+  swap(label_id_, other->label_id_);
+  swap(property_id_, other->property_id_);
+  swap(dimensions_, other->dimensions_);
+  _internal_metadata_.Swap(&other->_internal_metadata_);
+}
+
+::google::protobuf::Metadata VertexVectorField::GetMetadata() const {
   protobuf_meta_2eproto::protobuf_AssignDescriptorsOnce();
   return ::protobuf_meta_2eproto::file_level_metadata[kIndexInFileMessages];
 }
@@ -5761,7 +6215,7 @@ void RaftNodeInfos_NodesEntry_DoNotUse::MergeFrom(const RaftNodeInfos_NodesEntry
 }
 ::google::protobuf::Metadata RaftNodeInfos_NodesEntry_DoNotUse::GetMetadata() const {
   ::protobuf_meta_2eproto::protobuf_AssignDescriptorsOnce();
-  return ::protobuf_meta_2eproto::file_level_metadata[11];
+  return ::protobuf_meta_2eproto::file_level_metadata[12];
 }
 void RaftNodeInfos_NodesEntry_DoNotUse::MergeFrom(
     const ::google::protobuf::Message& other) {
@@ -6698,6 +7152,9 @@ template<> GOOGLE_PROTOBUF_ATTRIBUTE_NOINLINE ::meta::VertexFullTextIndex* Arena
 }
 template<> GOOGLE_PROTOBUF_ATTRIBUTE_NOINLINE ::meta::VertexVectorIndex* Arena::CreateMaybeMessage< ::meta::VertexVectorIndex >(Arena* arena) {
   return Arena::CreateInternal< ::meta::VertexVectorIndex >(arena);
+}
+template<> GOOGLE_PROTOBUF_ATTRIBUTE_NOINLINE ::meta::VertexVectorField* Arena::CreateMaybeMessage< ::meta::VertexVectorField >(Arena* arena) {
+  return Arena::CreateInternal< ::meta::VertexVectorField >(arena);
 }
 template<> GOOGLE_PROTOBUF_ATTRIBUTE_NOINLINE ::meta::GraphDBMetaInfo* Arena::CreateMaybeMessage< ::meta::GraphDBMetaInfo >(Arena* arena) {
   return Arena::CreateInternal< ::meta::GraphDBMetaInfo >(arena);

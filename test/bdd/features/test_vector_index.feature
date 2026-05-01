@@ -3,6 +3,7 @@ Feature: test vector index
     Given an empty graph
     And having executed
       """
+      CALL db.index.vector.createNodeField('person', 'embedding', {dimension:4});
       CREATE (n1:person {id:1, age:10, embedding: [1.0,1.0,1.0,1.0]})
       CREATE (n2:person {id:2, age:20, embedding: [2.0,2.0,2.0,2.0]})
       CREATE (n3:person {id:3, age:30, embedding: [3.0,3.0,3.0,3.0]})
@@ -17,15 +18,15 @@ Feature: test vector index
       """
     Then the result should be, in any order
       | node             |
-      | (:person {age:20, embedding:[2.0,2.0,2.0,2.0], id:2})  |
-      | (:person {age:30, embedding:[3.0,3.0,3.0,3.0], id:3})  |
+      | (:person {age:20, id:2})  |
+      | (:person {age:30, id:3})  |
     When executing query
       """
       CALL db.index.vector.knnSearchNodes("vector_index", [1.0,2.0,3.0,4.0], {top_k:2}) YIELD node where node.age > 20 RETURN node
       """
     Then the result should be, in any order
       | node             |
-      | (:person {age:30, embedding:[3.0,3.0,3.0,3.0], id:3})  |
+      | (:person {age:30, id:3})  |
     When executing query
       """
       CALL db.index.vector.knnSearchNodes("vector_index", [1.0,2.0,3.0,4.0], {top_k:2})
@@ -34,11 +35,12 @@ Feature: test vector index
       """
     Then the result should be, in any order
       | m             |
-      | (:person {age:10, embedding:[1.0,1.0,1.0,1.0], id:1})  |
+      | (:person {age:10, id:1})  |
   Scenario: case02
     Given an empty graph
     And having executed
       """
+      CALL db.index.vector.createNodeField('person', 'embedding', {dimension:4});
       CREATE (n1:person {id:1, age:10, embedding: [1.0,1.0,1.0,1.0]})
       CREATE (n2:person {id:2, age:20, embedding: [2.0,2.0,2.0,2.0]})
       CREATE (n3:person {id:3, age:30, embedding: [3.0,3.0,3.0,3.0]})
@@ -69,6 +71,7 @@ Feature: test vector index
     Given an empty graph
     And having executed
       """
+      CALL db.index.vector.createNodeField('person', 'embedding', {dimension:4});
       CREATE (n1:person {id:1, age:10, embedding: [1.0,1.0,1.0,1.0]})
       CREATE (n2:person {id:2, age:20, embedding: [2.0,2.0,2.0,2.0]})
       CREATE (n3:person {id:3, age:30, embedding: [3.0,3.0,3.0,3.0]})
@@ -99,6 +102,7 @@ Feature: test vector index
     Given an empty graph
     And having executed
       """
+      CALL db.index.vector.createNodeField('person', 'embedding', {dimension:4});
       CREATE (n1:person {id:1, age:10, embedding: toFloat32List([1.0,1.0,1.0,1.0])})
       CREATE (n2:person {id:2, age:20, embedding: toFloat32List([2.0,2.0,2.0,2.0])})
       CREATE (n3:person {id:3, age:30, embedding: toFloat32List([3.0,3.0,3.0,3.0])})
@@ -113,8 +117,8 @@ Feature: test vector index
       """
     Then the result should be, in any order
       | node             |
-      | (:person {age:20, embedding:[2.0,2.0,2.0,2.0], id:2})  |
-      | (:person {age:30, embedding:[3.0,3.0,3.0,3.0], id:3})  |
+      | (:person {age:20, id:2})  |
+      | (:person {age:30, id:3})  |
 
   Scenario: case05
     Given an empty graph
@@ -126,6 +130,7 @@ Feature: test vector index
       CREATE (n1)-[:like]->(n2),
              (n2)-[:like]->(n3),
              (n3)-[:like]->(n1);
+      CALL db.index.vector.createNodeField('person', 'embedding', {dimension:4});
       CALL db.index.vector.createNodeIndex('vector_index','person', 'embedding', {dimension:4});
       MATCH(n:person {id:1}) set n.embedding = toFloat32List([1.0,1.0,1.0,1.0]);
       MATCH(n:person {id:2}) set n.embedding = toFloat32List([2.0,2.0,2.0,2.0]);
@@ -138,5 +143,5 @@ Feature: test vector index
       """
     Then the result should be, in any order
       | node             |
-      | (:person {age:20, embedding:[2.0,2.0,2.0,2.0], id:2})  |
-      | (:person {age:30, embedding:[3.0,3.0,3.0,3.0], id:3})  |
+      | (:person {age:20, id:2})  |
+      | (:person {age:30, id:3})  |

@@ -369,6 +369,7 @@ Feature: test function
     Given an empty graph
     And having executed
       """
+      CALL db.index.vector.createNodeField('person', 'embedding', {dimension:2});
       CREATE (:person {id:1, name:'target', embedding:[3.0,4.0]})
       CREATE (:person {id:2, name:'close_y', embedding:[0.0,5.0]})
       CREATE (:person {id:3, name:'close_x', embedding:[5.0,0.0]})

@@ -30,6 +30,7 @@
 #include "cypher/execution_plan/result_iterator.h"
 #include "graphdb/graph_db.h"
 #include "graphdb/index_error.h"
+#include "graphdb/vector_property.h"
 #include "graphdb/vertex_index_updater.h"
 using namespace graphdb;
 using namespace boost::endian;
@@ -141,11 +142,28 @@ Vertex Transaction::CreateVertex(
                                  buffer);
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   VertexSerializedProperties serialized_values;
+  VertexVectorProperties vector_values;
   std::unordered_set<uint32_t> pids;
   for (const auto& [name, value] : values) {
     uint32_t pid = db_->id_generator().GetOrCreatePid(name);
-    serialized_values.emplace(pid, value.Serialize());
     pids.insert(pid);
+    bool is_vector_property = false;
+    for (auto lid : lids) {
+      auto field = db_->meta_info().GetVertexVectorField(lid, pid);
+      if (!field) {
+        continue;
+      }
+      is_vector_property = true;
+      vector_values[pid] = ParseVectorValue(value, field->dimensions());
+      std::string key = VertexVectorPropertyKey(lid, pid, vid);
+      auto val = SerializeVector(vector_values.at(pid));
+      s = txn_->GetWriteBatch()->Put(db_->graph_cf().vertex_vector_property,
+                                     key, val);
+      if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    }
+    if (!is_vector_property) {
+      serialized_values.emplace(pid, value.Serialize());
+    }
   }
   for (const auto& [pid, val] : serialized_values) {
     buffer.clear();
@@ -157,8 +175,10 @@ Vertex Transaction::CreateVertex(
   }
   std::unordered_set<uint32_t> empty_lids;
   VertexSerializedProperties empty_properties;
+  VertexVectorProperties empty_vector_properties;
   UpdateVertexIndexes(this, vid, empty_lids, lids, empty_properties,
-                      serialized_values, pids);
+                      serialized_values, empty_vector_properties, vector_values,
+                      pids);
   return {this, vid};
 }
 

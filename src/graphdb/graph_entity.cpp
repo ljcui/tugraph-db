@@ -24,6 +24,7 @@
 #include "common/exceptions.h"
 #include "common/logger.h"
 #include "graph_db.h"
+#include "graphdb/vector_property.h"
 #include "graphdb/vertex_index_updater.h"
 #include "transaction/transaction.h"
 using namespace boost::endian;
@@ -40,14 +41,19 @@ std::string BuildEdgeLockKey(int64_t eid) {
   return key;
 }
 
+std::string VertexPropertyKey(int64_t vid, uint32_t pid) {
+  std::string key(AsChars(vid), sizeof(vid));
+  key.append(AsChars(pid), sizeof(pid));
+  return key;
+}
+
 VertexSerializedProperties LoadVertexSerializedProperties(
     txn::Transaction *txn, int64_t vid,
     const std::unordered_set<uint32_t> &pids) {
   VertexSerializedProperties props;
   rocksdb::ReadOptions ro;
   for (auto pid : pids) {
-    std::string pkey(AsChars(vid), sizeof(vid));
-    pkey.append(AsChars(pid), sizeof(pid));
+    std::string pkey = VertexPropertyKey(vid, pid);
     std::string value;
     auto s = txn->dbtxn()->Get(ro, txn->db()->graph_cf().vertex_property, pkey,
                                &value);
@@ -56,6 +62,58 @@ VertexSerializedProperties LoadVertexSerializedProperties(
     }
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
     props.emplace(pid, std::move(value));
+  }
+  return props;
+}
+
+VertexVectorProperties LoadVertexVectorProperties(
+    txn::Transaction *txn, int64_t vid,
+    const std::unordered_set<uint32_t> &lids,
+    const std::unordered_set<uint32_t> &pids) {
+  VertexVectorProperties props;
+  rocksdb::ReadOptions ro;
+  for (auto pid : pids) {
+    for (const auto &field :
+         txn->db()->meta_info().GetVertexVectorFields(lids, pid)) {
+      uint32_t lid = native_to_big(field->label_id());
+      std::string key = VertexVectorPropertyKey(lid, pid, vid);
+      std::string value;
+      auto s = txn->dbtxn()->Get(
+          ro, txn->db()->graph_cf().vertex_vector_property, key, &value);
+      if (s.IsNotFound()) {
+        continue;
+      }
+      if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+      props[pid] = DeserializeVector(value, field->dimensions());
+    }
+  }
+  return props;
+}
+
+VertexVectorProperties LoadAllVertexVectorProperties(
+    txn::Transaction *txn, int64_t vid,
+    const std::unordered_set<uint32_t> &lids,
+    std::unordered_set<uint32_t> *pids, std::vector<std::string> *keys) {
+  VertexVectorProperties props;
+  rocksdb::ReadOptions ro;
+  for (const auto &field : txn->db()->meta_info().GetVertexVectorFields(lids)) {
+    uint32_t lid = native_to_big(field->label_id());
+    uint32_t pid = native_to_big(field->property_id());
+    std::string key = VertexVectorPropertyKey(lid, pid, vid);
+    std::string value;
+    auto s = txn->dbtxn()->Get(ro, txn->db()->graph_cf().vertex_vector_property,
+                               key, &value);
+    if (s.IsNotFound()) {
+      continue;
+    }
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    props[pid] = DeserializeVector(value, field->dimensions());
+    if (pids != nullptr) {
+      pids->insert(pid);
+    }
+    if (keys != nullptr) {
+      keys->push_back(std::move(key));
+    }
   }
   return props;
 }
@@ -293,7 +351,9 @@ int Vertex::Delete() {
       }
       std::unordered_set<uint32_t> pids;
       std::unordered_map<uint32_t, std::string> props;
+      VertexVectorProperties vector_props;
       std::vector<std::string> prop_keys;
+      std::vector<std::string> vector_prop_keys;
 
       std::unique_ptr<rocksdb::Iterator> vp_iter;
       rocksdb::Slice vp_prefix = key;
@@ -308,6 +368,8 @@ int Vertex::Delete() {
         props.emplace(pid, vp_iter->value().ToString());
         prop_keys.push_back(std::move(p_key));
       }
+      vector_props = LoadAllVertexVectorProperties(txn_, id_, labelIds, &pids,
+                                                   &vector_prop_keys);
       // delete label vid
       for (auto labelId : labelIds) {
         std::string labelVid;
@@ -319,11 +381,18 @@ int Vertex::Delete() {
       }
       std::unordered_set<uint32_t> empty_lids;
       VertexSerializedProperties empty_properties;
+      VertexVectorProperties empty_vector_properties;
       UpdateVertexIndexes(txn_, id_, labelIds, empty_lids, props,
-                          empty_properties, pids);
+                          empty_properties, vector_props,
+                          empty_vector_properties, pids);
       for (auto &p_key : prop_keys) {
         auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
             txn_->db()->graph_cf().vertex_property, p_key);
+        if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+      }
+      for (auto &p_key : vector_prop_keys) {
+        auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
+            txn_->db()->graph_cf().vertex_vector_property, p_key);
         if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
       }
       auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
@@ -427,10 +496,49 @@ void Vertex::AddLabels(const std::unordered_set<std::string> &labels) {
   std::unordered_set<uint32_t> touched_pids;
   auto required_pids =
       CollectVertexIndexPropertyIds(txn_, labelIds, updated_lids, touched_pids);
+  auto updated_vector_fields =
+      txn_->db()->meta_info().GetVertexVectorFields(updated_lids);
+  for (const auto &field : updated_vector_fields) {
+    required_pids.insert(native_to_big(field->property_id()));
+  }
+  std::vector<std::pair<std::string, std::string>> vector_writes;
   if (!required_pids.empty()) {
     auto props = LoadVertexSerializedProperties(txn_, id_, required_pids);
-    UpdateVertexIndexes(txn_, id_, labelIds, updated_lids, props, props,
-                        touched_pids);
+    auto updated_props = props;
+    auto vector_props =
+        LoadVertexVectorProperties(txn_, id_, labelIds, required_pids);
+    auto updated_vector_props =
+        LoadVertexVectorProperties(txn_, id_, updated_lids, required_pids);
+    for (const auto &field : updated_vector_fields) {
+      uint32_t lid = native_to_big(field->label_id());
+      uint32_t pid = native_to_big(field->property_id());
+      auto prop_iter = props.find(pid);
+      auto vector_iter = updated_vector_props.find(pid);
+      if (vector_iter == updated_vector_props.end() &&
+          prop_iter != props.end()) {
+        Value value;
+        value.Deserialize(prop_iter->second.data(), prop_iter->second.size());
+        auto vector = ParseVectorValue(value, field->dimensions());
+        vector_iter =
+            updated_vector_props.emplace(pid, std::move(vector)).first;
+      }
+      if (vector_iter != updated_vector_props.end()) {
+        if (vector_iter->second.size() != field->dimensions()) {
+          THROW_CODE(InvalidParameter,
+                     "vector field [label:{}, property:{}] dimension "
+                     "mismatch, expect {}, actual {}",
+                     field->label(), field->property(), field->dimensions(),
+                     vector_iter->second.size());
+        }
+        vector_writes.emplace_back(VertexVectorPropertyKey(lid, pid, id_),
+                                   SerializeVector(vector_iter->second));
+      }
+      if (prop_iter != props.end()) {
+        updated_props.erase(pid);
+      }
+    }
+    UpdateVertexIndexes(txn_, id_, labelIds, updated_lids, props, updated_props,
+                        vector_props, updated_vector_props, touched_pids);
   }
   labelIds = std::move(updated_lids);
   std::string buffer;
@@ -445,6 +553,11 @@ void Vertex::AddLabels(const std::unordered_set<std::string> &labels) {
     key.append(GetIdView());
     s = txn_->dbtxn()->GetWriteBatch()->Put(
         txn_->db()->graph_cf().vertex_label_vid, key, {});
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  }
+  for (const auto &[key, value] : vector_writes) {
+    s = txn_->dbtxn()->GetWriteBatch()->Put(
+        txn_->db()->graph_cf().vertex_vector_property, key, value);
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   }
 }
@@ -474,13 +587,24 @@ void Vertex::DeleteLabels(const std::unordered_set<std::string> &labels) {
   for (auto id : remove_lids) {
     remaining_lids.erase(id);
   }
+  std::vector<std::string> removed_vector_keys;
+  for (const auto &field :
+       txn_->db()->meta_info().GetVertexVectorFields(remove_lids)) {
+    uint32_t lid = native_to_big(field->label_id());
+    uint32_t pid = native_to_big(field->property_id());
+    removed_vector_keys.push_back(VertexVectorPropertyKey(lid, pid, id_));
+  }
   std::unordered_set<uint32_t> touched_pids;
   auto required_pids = CollectVertexIndexPropertyIds(
       txn_, labelIds, remaining_lids, touched_pids);
   if (!required_pids.empty()) {
     auto props = LoadVertexSerializedProperties(txn_, id_, required_pids);
+    auto vector_props =
+        LoadVertexVectorProperties(txn_, id_, labelIds, required_pids);
+    auto updated_vector_props =
+        LoadVertexVectorProperties(txn_, id_, remaining_lids, required_pids);
     UpdateVertexIndexes(txn_, id_, labelIds, remaining_lids, props, props,
-                        touched_pids);
+                        vector_props, updated_vector_props, touched_pids);
   }
   labelIds = std::move(remaining_lids);
   std::string buffer;
@@ -497,6 +621,11 @@ void Vertex::DeleteLabels(const std::unordered_set<std::string> &labels) {
         txn_->db()->graph_cf().vertex_label_vid, key);
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   }
+  for (const auto &key : removed_vector_keys) {
+    s = txn_->dbtxn()->GetWriteBatch()->Delete(
+        txn_->db()->graph_cf().vertex_vector_property, key);
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  }
 }
 
 Value Vertex::GetProperty(const std::string &name) {
@@ -508,6 +637,16 @@ Value Vertex::GetProperty(const std::string &name) {
 }
 
 Value Vertex::GetProperty(uint32_t pid) {
+  auto lids = GetLabelIds();
+  if (!txn_->db()->meta_info().GetVertexVectorFields(lids, pid).empty()) {
+    std::unordered_set<uint32_t> pids{pid};
+    auto vector_properties = LoadVertexVectorProperties(txn_, id_, lids, pids);
+    auto iter = vector_properties.find(pid);
+    if (iter != vector_properties.end()) {
+      return Value(iter->second);
+    }
+    return {};
+  }
   rocksdb::ReadOptions ro;
   rocksdb::PinnableSlice pval;
   Value ret;
@@ -527,6 +666,12 @@ std::unordered_map<std::string, Value> Vertex::GetAllProperty() {
   std::string prefix(AsChars(id_), sizeof(id_));
   rocksdb::ReadOptions ro;
   std::unordered_map<std::string, Value> ret;
+  auto lids = GetLabelIds();
+  std::unordered_set<uint32_t> vector_pids;
+  for (const auto &field :
+       txn_->db()->meta_info().GetVertexVectorFields(lids)) {
+    vector_pids.insert(native_to_big(field->property_id()));
+  }
   std::unique_ptr<rocksdb::Iterator> p_iter;
   p_iter.reset(
       txn_->dbtxn()->GetIterator(ro, txn_->db()->graph_cf().vertex_property));
@@ -536,6 +681,9 @@ std::unordered_map<std::string, Value> Vertex::GetAllProperty() {
     auto value = p_iter->value();
     key.remove_prefix(sizeof(int64_t));
     uint32_t pid = ReadValue<uint32_t>(key.data());
+    if (vector_pids.count(pid)) {
+      continue;
+    }
     auto optional = txn_->db()->id_generator().GetPropertyName(pid);
     if (optional.has_value()) {
       Value v;
@@ -561,37 +709,80 @@ void Vertex::SetProperties(
     return;
   }
   VertexSerializedProperties serialized;
+  VertexVectorProperties vector_properties;
   std::unordered_set<uint32_t> pids;
+  std::vector<std::pair<uint32_t, const Value *>> property_values;
+  property_values.reserve(values.size());
   for (const auto &[name, val] : values) {
     auto pid = txn_->db()->id_generator().GetOrCreatePid(name);
-    serialized[pid] = val.Serialize();
     pids.insert(pid);
+    property_values.emplace_back(pid, &val);
   }
   Lock();
   auto lids = GetLabelIds();
+  for (const auto &[pid, val] : property_values) {
+    bool is_vector_property = false;
+    for (const auto &field :
+         txn_->db()->meta_info().GetVertexVectorFields(lids, pid)) {
+      is_vector_property = true;
+      auto vector = ParseVectorValue(*val, field->dimensions());
+      vector_properties[pid] = vector;
+    }
+    if (!is_vector_property) {
+      serialized[pid] = val->Serialize();
+    }
+  }
   auto required_pids = CollectVertexIndexPropertyIds(txn_, lids, lids, pids);
   if (required_pids.empty()) {
     for (auto &[pid, pval] : serialized) {
-      std::string pkey(AsChars(id_), sizeof(id_));
-      pkey.append(AsChars(pid), sizeof(pid));
+      std::string pkey = VertexPropertyKey(id_, pid);
       auto s = txn_->dbtxn()->GetWriteBatch()->Put(
           txn_->db()->graph_cf().vertex_property, pkey, pval);
       if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
     }
+    for (const auto &[pid, vector] : vector_properties) {
+      for (const auto &field :
+           txn_->db()->meta_info().GetVertexVectorFields(lids, pid)) {
+        uint32_t lid = native_to_big(field->label_id());
+        std::string key = VertexVectorPropertyKey(lid, pid, id_);
+        auto s = txn_->dbtxn()->GetWriteBatch()->Put(
+            txn_->db()->graph_cf().vertex_vector_property, key,
+            SerializeVector(vector));
+        if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+      }
+    }
     return;
   }
   auto props = LoadVertexSerializedProperties(txn_, id_, required_pids);
+  auto vector_props =
+      LoadVertexVectorProperties(txn_, id_, lids, required_pids);
   auto updated_props = props;
+  auto updated_vector_props = vector_props;
   for (const auto &[pid, pval] : serialized) {
     updated_props[pid] = pval;
   }
-  UpdateVertexIndexes(txn_, id_, lids, lids, props, updated_props, pids);
+  for (const auto &[pid, vector] : vector_properties) {
+    updated_vector_props[pid] = vector;
+    updated_props.erase(pid);
+  }
+  UpdateVertexIndexes(txn_, id_, lids, lids, props, updated_props, vector_props,
+                      updated_vector_props, pids);
   for (auto &[pid, pval] : serialized) {
-    std::string pkey(AsChars(id_), sizeof(id_));
-    pkey.append(AsChars(pid), sizeof(pid));
+    std::string pkey = VertexPropertyKey(id_, pid);
     auto s = txn_->dbtxn()->GetWriteBatch()->Put(
         txn_->db()->graph_cf().vertex_property, pkey, pval);
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  }
+  for (const auto &[pid, vector] : vector_properties) {
+    for (const auto &field :
+         txn_->db()->meta_info().GetVertexVectorFields(lids, pid)) {
+      uint32_t lid = native_to_big(field->label_id());
+      std::string key = VertexVectorPropertyKey(lid, pid, id_);
+      auto s = txn_->dbtxn()->GetWriteBatch()->Put(
+          txn_->db()->graph_cf().vertex_vector_property, key,
+          SerializeVector(vector));
+      if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    }
   }
 }
 
@@ -602,7 +793,9 @@ void Vertex::RemoveAllProperty() {
   rocksdb::ReadOptions ro;
   std::unordered_set<uint32_t> pids;
   std::unordered_map<uint32_t, std::string> props;
+  VertexVectorProperties vector_props;
   std::vector<std::string> prop_keys;
+  std::vector<std::string> vector_prop_keys;
   std::unique_ptr<rocksdb::Iterator> p_iter;
   p_iter.reset(
       txn_->dbtxn()->GetIterator(ro, txn_->db()->graph_cf().vertex_property));
@@ -617,11 +810,20 @@ void Vertex::RemoveAllProperty() {
     pids.insert(pid);
   }
   p_iter.reset();
+  vector_props =
+      LoadAllVertexVectorProperties(txn_, id_, lids, &pids, &vector_prop_keys);
   VertexSerializedProperties empty_properties;
-  UpdateVertexIndexes(txn_, id_, lids, lids, props, empty_properties, pids);
+  VertexVectorProperties empty_vector_properties;
+  UpdateVertexIndexes(txn_, id_, lids, lids, props, empty_properties,
+                      vector_props, empty_vector_properties, pids);
   for (auto &key : prop_keys) {
     auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
         txn_->db()->graph_cf().vertex_property, key);
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  }
+  for (auto &key : vector_prop_keys) {
+    auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
+        txn_->db()->graph_cf().vertex_vector_property, key);
     if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
   }
 }
@@ -632,10 +834,34 @@ void Vertex::RemoveProperty(const std::string &name) {
     return;
   }
   auto pid = optional.value();
-  std::string pkey(AsChars(id_), sizeof(id_));
-  pkey.append(AsChars(pid), sizeof(pid));
   Lock();
   auto lids = GetLabelIds();
+  auto vector_fields = txn_->db()->meta_info().GetVertexVectorFields(lids, pid);
+  if (!vector_fields.empty()) {
+    std::unordered_set<uint32_t> touched_pids{pid};
+    auto props = LoadVertexSerializedProperties(txn_, id_, touched_pids);
+    auto vector_props =
+        LoadVertexVectorProperties(txn_, id_, lids, touched_pids);
+    if (props.empty() && vector_props.empty()) {
+      return;
+    }
+    VertexSerializedProperties empty_properties;
+    VertexVectorProperties empty_vector_properties;
+    UpdateVertexIndexes(txn_, id_, lids, lids, props, empty_properties,
+                        vector_props, empty_vector_properties, touched_pids);
+    for (const auto &field : vector_fields) {
+      uint32_t lid = native_to_big(field->label_id());
+      std::string key = VertexVectorPropertyKey(lid, pid, id_);
+      auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
+          txn_->db()->graph_cf().vertex_vector_property, key);
+      if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    }
+    auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
+        txn_->db()->graph_cf().vertex_property, VertexPropertyKey(id_, pid));
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+    return;
+  }
+  std::string pkey = VertexPropertyKey(id_, pid);
   auto required_pids = CollectVertexIndexPropertyIds(txn_, lids, lids, {pid});
   if (required_pids.empty()) {
     rocksdb::ReadOptions ro;
@@ -657,7 +883,9 @@ void Vertex::RemoveProperty(const std::string &name) {
   }
   auto updated_props = props;
   updated_props.erase(pid);
-  UpdateVertexIndexes(txn_, id_, lids, lids, props, updated_props, {pid});
+  VertexVectorProperties empty_vector_properties;
+  UpdateVertexIndexes(txn_, id_, lids, lids, props, updated_props,
+                      empty_vector_properties, empty_vector_properties, {pid});
   auto s = txn_->dbtxn()->GetWriteBatch()->Delete(
       txn_->db()->graph_cf().vertex_property, pkey);
   if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());

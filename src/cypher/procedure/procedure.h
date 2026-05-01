@@ -117,6 +117,10 @@ class BuiltinProcedure {
       cypher::RTContext *ctx, const cypher::Record *record,
       const cypher::VEC_EXPR &args, const cypher::VEC_STR &yield_items,
       std::vector<std::vector<ProcedureResult>> *records);
+  static void DbIndexVectorCreateNodeField(
+      cypher::RTContext *ctx, const cypher::Record *record,
+      const cypher::VEC_EXPR &args, const cypher::VEC_STR &yield_items,
+      std::vector<std::vector<ProcedureResult>> *records);
   static void DbIndexVectorKnnSearchNodes(
       RTContext *ctx, const Record *record, const VEC_EXPR &args,
       const VEC_STR &yield_items,

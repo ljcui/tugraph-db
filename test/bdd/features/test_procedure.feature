@@ -128,6 +128,7 @@ Feature: test procedure
       """
       CALL db.index.createNodeIndex('person_id', 'person', ['id'], {unique:true});
       CALL db.index.fulltext.createNodeIndex('namesAndTeams',['Employee','Manager'], ['name','team']);
+      CALL db.index.vector.createNodeField('person', 'embedding', {dimension:4});
       CALL db.index.vector.createNodeIndex('person_embedding','person', 'embedding', {dimension:4});
       """
     When executing query

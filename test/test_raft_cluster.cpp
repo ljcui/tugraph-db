@@ -987,6 +987,7 @@ TEST(RaftCluster, replicatesFullTextAndVectorIndexDefinitions) {
                                                  std::chrono::seconds(15)))
       << cluster.StatusSummary();
 
+  ASSERT_NO_THROW(leader_graph->AddVertexVectorField("person", "embedding", 4));
   ASSERT_NO_THROW(leader_graph->AddVertexVectorIndex(
       "person_embedding_vt", "person", "embedding", 4, "l2", 16, 100));
   applied_index = leader_graph->GetRaftApplyIndex();
@@ -1002,6 +1003,14 @@ TEST(RaftCluster, replicatesFullTextAndVectorIndexDefinitions) {
     auto ft_index = graph->meta_info().GetVertexFullTextIndex("person_bio_ft");
     ASSERT_NE(ft_index, nullptr);
     EXPECT_EQ(ft_index->meta().path().find(graph->path()), 0U);
+    auto lid = graph->id_generator().GetLid("person");
+    auto pid = graph->id_generator().GetPid("embedding");
+    ASSERT_TRUE(lid.has_value());
+    ASSERT_TRUE(pid.has_value());
+    auto vector_field =
+        graph->meta_info().GetVertexVectorField(lid.value(), pid.value());
+    ASSERT_NE(vector_field, nullptr);
+    EXPECT_EQ(vector_field->dimensions(), 4);
     auto vt_index =
         graph->meta_info().GetVertexVectorIndex("person_embedding_vt");
     ASSERT_NE(vt_index, nullptr);

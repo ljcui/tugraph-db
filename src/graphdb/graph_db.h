@@ -79,6 +79,8 @@ class GraphDB {
                             const std::string& property, int dimension,
                             std::string distance_type, int hnsw_m,
                             int hnsw_ef_construction);
+  void AddVertexVectorField(const std::string& label,
+                            const std::string& property, int dimension);
   void DeleteVertexVectorIndex(const std::string& index_name);
   std::vector<rocksdb::ColumnFamilyHandle*>& cf_handles() {
     return cf_handles_;
@@ -133,6 +135,8 @@ class GraphDB {
                                     meta::VertexVectorIndex meta);
   void ApplyDeleteVertexVectorIndex(uint64_t apply_index,
                                     const meta::VertexVectorIndex& meta);
+  void ApplyCreateVertexVectorField(uint64_t apply_index,
+                                    meta::VertexVectorField meta);
   void ScheduleVertexPropertyIndexBuild(
       const std::shared_ptr<VertexPropertyIndex>& index, bool reset_existing);
   void ScheduleVertexFullTextIndexBuild(

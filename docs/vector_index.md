@@ -2,10 +2,12 @@
 
 目前只有点类型上可以设置向量索引
 
-创建向量索引
-第一个参数是索引名字，第二个参数是点标签，第三个参数是存向量数据的字段，最后一个参数是个map，里面可以指定向量索引的一些参数。
+先定义向量字段，再创建向量索引。向量索引只能创建在已经定义过的向量字段上。
+createNodeField 第一个参数是点标签，第二个参数是存向量数据的字段，最后一个参数是个map，里面需要指定向量维度。
+createNodeIndex 第一个参数是索引名字，第二个参数是点标签，第三个参数是存向量数据的字段，最后一个参数是个map，里面可以指定向量索引的一些参数。
 ```
 #为Person类型点上的embedding字段创建向量索引，取名vector_index，维度是4, 其他向量参数默认。
+CALL db.index.vector.createNodeField('Person', 'embedding', {dimension:4});
 CALL db.index.vector.createNodeIndex('vector_index','Person', 'embedding', {dimension:4});
 ```
 
@@ -16,6 +18,9 @@ CALL dbms.graph.clearGraph('default');
 
 #为Person类型的点设置一个唯一属性索引，所有Person类型的点id字段的值是唯一的。
 CALL db.index.createNodeIndex('person_id', 'Person', ['id'], {unique:true});
+
+#定义Person类型点上的embedding向量字段，维度是4。
+CALL db.index.vector.createNodeField('Person', 'embedding', {dimension:4});
 
 #为Person类型点上的embedding字段创建向量索引，取名vector_index，维度是4, 其他向量参数默认。
 CALL db.index.vector.createNodeIndex('vector_index','Person', 'embedding', {dimension:4});
@@ -43,4 +48,13 @@ CALL db.index.vector.knnSearchNodes("vector_index", [1.0,2.0,3.0,4.0], {top_k:2}
 CALL db.index.vector.knnSearchNodes("vector_index", [1.0,2.0,3.0,4.0], {top_k:2})
 YIELD node where node.age > 20 with node as p
 match(p)-[r]->(m) return m;
+
+#先用普通 Cypher 查出候选点，再对候选点的向量做相似度计算。
+#RETURN node/properties(node) 默认不返回向量字段；显式访问 node.embedding 会读取向量值。
+MATCH (node:Person)
+WHERE node.age >= 10
+WITH node, vector.similarity.cosine(node.embedding, toFloat32List([1.0,2.0,3.0,4.0])) AS score
+RETURN node.id, score
+ORDER BY score DESC
+LIMIT 100;
 ```

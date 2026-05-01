@@ -1474,6 +1474,8 @@ Value BuiltinFunction::VectorSimilarityCosine(
     for (const auto &item : arr) {
       if (item.IsInteger()) {
         v.emplace_back(static_cast<double>(item.AsInteger()));
+      } else if (item.IsFloat()) {
+        v.emplace_back(static_cast<double>(item.AsFloat()));
       } else if (item.IsDouble()) {
         v.emplace_back(item.AsDouble());
       } else {
@@ -1530,6 +1532,8 @@ Value BuiltinFunction::VectorDistanceL2(
     for (const auto &item : arr) {
       if (item.IsInteger()) {
         v.emplace_back(static_cast<double>(item.AsInteger()));
+      } else if (item.IsFloat()) {
+        v.emplace_back(static_cast<double>(item.AsFloat()));
       } else if (item.IsDouble()) {
         v.emplace_back(item.AsDouble());
       } else {
@@ -1580,6 +1584,8 @@ Value BuiltinFunction::VectorSimilarityInnerProduct(
     for (const auto &item : arr) {
       if (item.IsInteger()) {
         v.emplace_back(static_cast<double>(item.AsInteger()));
+      } else if (item.IsFloat()) {
+        v.emplace_back(static_cast<double>(item.AsFloat()));
       } else if (item.IsDouble()) {
         v.emplace_back(item.AsDouble());
       } else {

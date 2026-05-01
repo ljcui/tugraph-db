@@ -43,7 +43,7 @@ namespace protobuf_meta_2eproto {
 struct TableStruct {
   static const ::google::protobuf::internal::ParseTableField entries[];
   static const ::google::protobuf::internal::AuxillaryParseTableField aux[];
-  static const ::google::protobuf::internal::ParseTable schema[15];
+  static const ::google::protobuf::internal::ParseTable schema[16];
   static const ::google::protobuf::internal::FieldMetadata field_metadata[];
   static const ::google::protobuf::internal::SerializationTable serialization_table[];
   static const ::google::protobuf::uint32 offsets[];
@@ -93,6 +93,9 @@ extern VertexFullTextIndexDefaultTypeInternal _VertexFullTextIndex_default_insta
 class VertexPropertyIndex;
 class VertexPropertyIndexDefaultTypeInternal;
 extern VertexPropertyIndexDefaultTypeInternal _VertexPropertyIndex_default_instance_;
+class VertexVectorField;
+class VertexVectorFieldDefaultTypeInternal;
+extern VertexVectorFieldDefaultTypeInternal _VertexVectorField_default_instance_;
 class VertexVectorIndex;
 class VertexVectorIndexDefaultTypeInternal;
 extern VertexVectorIndexDefaultTypeInternal _VertexVectorIndex_default_instance_;
@@ -113,6 +116,7 @@ template<> ::meta::RaftRequest* Arena::CreateMaybeMessage<::meta::RaftRequest>(A
 template<> ::meta::VectorIndexUpdate* Arena::CreateMaybeMessage<::meta::VectorIndexUpdate>(Arena*);
 template<> ::meta::VertexFullTextIndex* Arena::CreateMaybeMessage<::meta::VertexFullTextIndex>(Arena*);
 template<> ::meta::VertexPropertyIndex* Arena::CreateMaybeMessage<::meta::VertexPropertyIndex>(Arena*);
+template<> ::meta::VertexVectorField* Arena::CreateMaybeMessage<::meta::VertexVectorField>(Arena*);
 template<> ::meta::VertexVectorIndex* Arena::CreateMaybeMessage<::meta::VertexVectorIndex>(Arena*);
 }  // namespace protobuf
 }  // namespace google
@@ -125,12 +129,13 @@ enum GraphIndexDdlRequest_Operation {
   GraphIndexDdlRequest_Operation_DELETE_VERTEX_FULLTEXT_INDEX = 3,
   GraphIndexDdlRequest_Operation_CREATE_VERTEX_VECTOR_INDEX = 4,
   GraphIndexDdlRequest_Operation_DELETE_VERTEX_VECTOR_INDEX = 5,
+  GraphIndexDdlRequest_Operation_CREATE_VERTEX_VECTOR_FIELD = 6,
   GraphIndexDdlRequest_Operation_GraphIndexDdlRequest_Operation_INT_MIN_SENTINEL_DO_NOT_USE_ = ::google::protobuf::kint32min,
   GraphIndexDdlRequest_Operation_GraphIndexDdlRequest_Operation_INT_MAX_SENTINEL_DO_NOT_USE_ = ::google::protobuf::kint32max
 };
 bool GraphIndexDdlRequest_Operation_IsValid(int value);
 const GraphIndexDdlRequest_Operation GraphIndexDdlRequest_Operation_Operation_MIN = GraphIndexDdlRequest_Operation_CREATE_VERTEX_PROPERTY_INDEX;
-const GraphIndexDdlRequest_Operation GraphIndexDdlRequest_Operation_Operation_MAX = GraphIndexDdlRequest_Operation_DELETE_VERTEX_VECTOR_INDEX;
+const GraphIndexDdlRequest_Operation GraphIndexDdlRequest_Operation_Operation_MAX = GraphIndexDdlRequest_Operation_CREATE_VERTEX_VECTOR_FIELD;
 const int GraphIndexDdlRequest_Operation_Operation_ARRAYSIZE = GraphIndexDdlRequest_Operation_Operation_MAX + 1;
 
 const ::google::protobuf::EnumDescriptor* GraphIndexDdlRequest_Operation_descriptor();
@@ -969,6 +974,153 @@ class VertexVectorIndex : public ::google::protobuf::Message /* @@protoc_inserti
 };
 // -------------------------------------------------------------------
 
+class VertexVectorField : public ::google::protobuf::Message /* @@protoc_insertion_point(class_definition:meta.VertexVectorField) */ {
+ public:
+  VertexVectorField();
+  virtual ~VertexVectorField();
+
+  VertexVectorField(const VertexVectorField& from);
+
+  inline VertexVectorField& operator=(const VertexVectorField& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  #if LANG_CXX11
+  VertexVectorField(VertexVectorField&& from) noexcept
+    : VertexVectorField() {
+    *this = ::std::move(from);
+  }
+
+  inline VertexVectorField& operator=(VertexVectorField&& from) noexcept {
+    if (GetArenaNoVirtual() == from.GetArenaNoVirtual()) {
+      if (this != &from) InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+  #endif
+  static const ::google::protobuf::Descriptor* descriptor();
+  static const VertexVectorField& default_instance();
+
+  static void InitAsDefaultInstance();  // FOR INTERNAL USE ONLY
+  static inline const VertexVectorField* internal_default_instance() {
+    return reinterpret_cast<const VertexVectorField*>(
+               &_VertexVectorField_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    3;
+
+  void Swap(VertexVectorField* other);
+  friend void swap(VertexVectorField& a, VertexVectorField& b) {
+    a.Swap(&b);
+  }
+
+  // implements Message ----------------------------------------------
+
+  inline VertexVectorField* New() const final {
+    return CreateMaybeMessage<VertexVectorField>(NULL);
+  }
+
+  VertexVectorField* New(::google::protobuf::Arena* arena) const final {
+    return CreateMaybeMessage<VertexVectorField>(arena);
+  }
+  void CopyFrom(const ::google::protobuf::Message& from) final;
+  void MergeFrom(const ::google::protobuf::Message& from) final;
+  void CopyFrom(const VertexVectorField& from);
+  void MergeFrom(const VertexVectorField& from);
+  void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  bool MergePartialFromCodedStream(
+      ::google::protobuf::io::CodedInputStream* input) final;
+  void SerializeWithCachedSizes(
+      ::google::protobuf::io::CodedOutputStream* output) const final;
+  ::google::protobuf::uint8* InternalSerializeWithCachedSizesToArray(
+      bool deterministic, ::google::protobuf::uint8* target) const final;
+  int GetCachedSize() const final { return _cached_size_.Get(); }
+
+  private:
+  void SharedCtor();
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(VertexVectorField* other);
+  private:
+  inline ::google::protobuf::Arena* GetArenaNoVirtual() const {
+    return NULL;
+  }
+  inline void* MaybeArenaPtr() const {
+    return NULL;
+  }
+  public:
+
+  ::google::protobuf::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  // string label = 1;
+  void clear_label();
+  static const int kLabelFieldNumber = 1;
+  const ::std::string& label() const;
+  void set_label(const ::std::string& value);
+  #if LANG_CXX11
+  void set_label(::std::string&& value);
+  #endif
+  void set_label(const char* value);
+  void set_label(const char* value, size_t size);
+  ::std::string* mutable_label();
+  ::std::string* release_label();
+  void set_allocated_label(::std::string* label);
+
+  // string property = 3;
+  void clear_property();
+  static const int kPropertyFieldNumber = 3;
+  const ::std::string& property() const;
+  void set_property(const ::std::string& value);
+  #if LANG_CXX11
+  void set_property(::std::string&& value);
+  #endif
+  void set_property(const char* value);
+  void set_property(const char* value, size_t size);
+  ::std::string* mutable_property();
+  ::std::string* release_property();
+  void set_allocated_property(::std::string* property);
+
+  // uint32 label_id = 2;
+  void clear_label_id();
+  static const int kLabelIdFieldNumber = 2;
+  ::google::protobuf::uint32 label_id() const;
+  void set_label_id(::google::protobuf::uint32 value);
+
+  // uint32 property_id = 4;
+  void clear_property_id();
+  static const int kPropertyIdFieldNumber = 4;
+  ::google::protobuf::uint32 property_id() const;
+  void set_property_id(::google::protobuf::uint32 value);
+
+  // uint32 dimensions = 5;
+  void clear_dimensions();
+  static const int kDimensionsFieldNumber = 5;
+  ::google::protobuf::uint32 dimensions() const;
+  void set_dimensions(::google::protobuf::uint32 value);
+
+  // @@protoc_insertion_point(class_scope:meta.VertexVectorField)
+ private:
+
+  ::google::protobuf::internal::InternalMetadataWithArena _internal_metadata_;
+  ::google::protobuf::internal::ArenaStringPtr label_;
+  ::google::protobuf::internal::ArenaStringPtr property_;
+  ::google::protobuf::uint32 label_id_;
+  ::google::protobuf::uint32 property_id_;
+  ::google::protobuf::uint32 dimensions_;
+  mutable ::google::protobuf::internal::CachedSize _cached_size_;
+  friend struct ::protobuf_meta_2eproto::TableStruct;
+};
+// -------------------------------------------------------------------
+
 class GraphDBMetaInfo : public ::google::protobuf::Message /* @@protoc_insertion_point(class_definition:meta.GraphDBMetaInfo) */ {
  public:
   GraphDBMetaInfo();
@@ -1004,7 +1156,7 @@ class GraphDBMetaInfo : public ::google::protobuf::Message /* @@protoc_insertion
                &_GraphDBMetaInfo_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    3;
+    4;
 
   void Swap(GraphDBMetaInfo* other);
   friend void swap(GraphDBMetaInfo& a, GraphDBMetaInfo& b) {
@@ -1129,7 +1281,7 @@ class FullTextIndexUpdate : public ::google::protobuf::Message /* @@protoc_inser
                &_FullTextIndexUpdate_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    4;
+    5;
 
   void Swap(FullTextIndexUpdate* other);
   friend void swap(FullTextIndexUpdate& a, FullTextIndexUpdate& b) {
@@ -1285,7 +1437,7 @@ class VectorIndexUpdate : public ::google::protobuf::Message /* @@protoc_inserti
                &_VectorIndexUpdate_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    5;
+    6;
 
   void Swap(VectorIndexUpdate* other);
   friend void swap(VectorIndexUpdate& a, VectorIndexUpdate& b) {
@@ -1409,7 +1561,7 @@ class PropertyIndexUpdate : public ::google::protobuf::Message /* @@protoc_inser
                &_PropertyIndexUpdate_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    6;
+    7;
 
   void Swap(PropertyIndexUpdate* other);
   friend void swap(PropertyIndexUpdate& a, PropertyIndexUpdate& b) {
@@ -1542,7 +1694,7 @@ class GraphIndexDdlRequest : public ::google::protobuf::Message /* @@protoc_inse
                &_GraphIndexDdlRequest_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    7;
+    8;
 
   void Swap(GraphIndexDdlRequest* other);
   friend void swap(GraphIndexDdlRequest& a, GraphIndexDdlRequest& b) {
@@ -1605,6 +1757,8 @@ class GraphIndexDdlRequest : public ::google::protobuf::Message /* @@protoc_inse
     GraphIndexDdlRequest_Operation_CREATE_VERTEX_VECTOR_INDEX;
   static const Operation DELETE_VERTEX_VECTOR_INDEX =
     GraphIndexDdlRequest_Operation_DELETE_VERTEX_VECTOR_INDEX;
+  static const Operation CREATE_VERTEX_VECTOR_FIELD =
+    GraphIndexDdlRequest_Operation_CREATE_VERTEX_VECTOR_FIELD;
   static inline bool Operation_IsValid(int value) {
     return GraphIndexDdlRequest_Operation_IsValid(value);
   }
@@ -1694,7 +1848,7 @@ class RaftRequest : public ::google::protobuf::Message /* @@protoc_insertion_poi
                &_RaftRequest_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    8;
+    9;
 
   void Swap(RaftRequest* other);
   friend void swap(RaftRequest& a, RaftRequest& b) {
@@ -1819,7 +1973,7 @@ class RaftMessage : public ::google::protobuf::Message /* @@protoc_insertion_poi
                &_RaftMessage_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    9;
+    10;
 
   void Swap(RaftMessage* other);
   friend void swap(RaftMessage& a, RaftMessage& b) {
@@ -1943,7 +2097,7 @@ class RaftNodeInfo : public ::google::protobuf::Message /* @@protoc_insertion_po
                &_RaftNodeInfo_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    10;
+    11;
 
   void Swap(RaftNodeInfo* other);
   friend void swap(RaftNodeInfo& a, RaftNodeInfo& b) {
@@ -2125,7 +2279,7 @@ class RaftNodeInfos : public ::google::protobuf::Message /* @@protoc_insertion_p
                &_RaftNodeInfos_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    12;
+    13;
 
   void Swap(RaftNodeInfos* other);
   friend void swap(RaftNodeInfos& a, RaftNodeInfos& b) {
@@ -2237,7 +2391,7 @@ class CreateGraphRequest : public ::google::protobuf::Message /* @@protoc_insert
                &_CreateGraphRequest_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    13;
+    14;
 
   void Swap(CreateGraphRequest* other);
   friend void swap(CreateGraphRequest& a, CreateGraphRequest& b) {
@@ -2368,7 +2522,7 @@ class GraphLifecycleRequest : public ::google::protobuf::Message /* @@protoc_ins
                &_GraphLifecycleRequest_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    14;
+    15;
 
   void Swap(GraphLifecycleRequest* other);
   friend void swap(GraphLifecycleRequest& a, GraphLifecycleRequest& b) {
@@ -3644,6 +3798,158 @@ inline void VertexVectorIndex::set_allocated_build_error(::std::string* build_er
 
 // -------------------------------------------------------------------
 
+// VertexVectorField
+
+// string label = 1;
+inline void VertexVectorField::clear_label() {
+  label_.ClearToEmptyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+}
+inline const ::std::string& VertexVectorField::label() const {
+  // @@protoc_insertion_point(field_get:meta.VertexVectorField.label)
+  return label_.GetNoArena();
+}
+inline void VertexVectorField::set_label(const ::std::string& value) {
+
+  label_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), value);
+  // @@protoc_insertion_point(field_set:meta.VertexVectorField.label)
+}
+#if LANG_CXX11
+inline void VertexVectorField::set_label(::std::string&& value) {
+
+  label_.SetNoArena(
+    &::google::protobuf::internal::GetEmptyStringAlreadyInited(), ::std::move(value));
+  // @@protoc_insertion_point(field_set_rvalue:meta.VertexVectorField.label)
+}
+#endif
+inline void VertexVectorField::set_label(const char* value) {
+  GOOGLE_DCHECK(value != NULL);
+
+  label_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), ::std::string(value));
+  // @@protoc_insertion_point(field_set_char:meta.VertexVectorField.label)
+}
+inline void VertexVectorField::set_label(const char* value, size_t size) {
+
+  label_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(),
+      ::std::string(reinterpret_cast<const char*>(value), size));
+  // @@protoc_insertion_point(field_set_pointer:meta.VertexVectorField.label)
+}
+inline ::std::string* VertexVectorField::mutable_label() {
+
+  // @@protoc_insertion_point(field_mutable:meta.VertexVectorField.label)
+  return label_.MutableNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+}
+inline ::std::string* VertexVectorField::release_label() {
+  // @@protoc_insertion_point(field_release:meta.VertexVectorField.label)
+
+  return label_.ReleaseNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+}
+inline void VertexVectorField::set_allocated_label(::std::string* label) {
+  if (label != NULL) {
+
+  } else {
+
+  }
+  label_.SetAllocatedNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), label);
+  // @@protoc_insertion_point(field_set_allocated:meta.VertexVectorField.label)
+}
+
+// uint32 label_id = 2;
+inline void VertexVectorField::clear_label_id() {
+  label_id_ = 0u;
+}
+inline ::google::protobuf::uint32 VertexVectorField::label_id() const {
+  // @@protoc_insertion_point(field_get:meta.VertexVectorField.label_id)
+  return label_id_;
+}
+inline void VertexVectorField::set_label_id(::google::protobuf::uint32 value) {
+
+  label_id_ = value;
+  // @@protoc_insertion_point(field_set:meta.VertexVectorField.label_id)
+}
+
+// string property = 3;
+inline void VertexVectorField::clear_property() {
+  property_.ClearToEmptyNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+}
+inline const ::std::string& VertexVectorField::property() const {
+  // @@protoc_insertion_point(field_get:meta.VertexVectorField.property)
+  return property_.GetNoArena();
+}
+inline void VertexVectorField::set_property(const ::std::string& value) {
+
+  property_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), value);
+  // @@protoc_insertion_point(field_set:meta.VertexVectorField.property)
+}
+#if LANG_CXX11
+inline void VertexVectorField::set_property(::std::string&& value) {
+
+  property_.SetNoArena(
+    &::google::protobuf::internal::GetEmptyStringAlreadyInited(), ::std::move(value));
+  // @@protoc_insertion_point(field_set_rvalue:meta.VertexVectorField.property)
+}
+#endif
+inline void VertexVectorField::set_property(const char* value) {
+  GOOGLE_DCHECK(value != NULL);
+
+  property_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), ::std::string(value));
+  // @@protoc_insertion_point(field_set_char:meta.VertexVectorField.property)
+}
+inline void VertexVectorField::set_property(const char* value, size_t size) {
+
+  property_.SetNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(),
+      ::std::string(reinterpret_cast<const char*>(value), size));
+  // @@protoc_insertion_point(field_set_pointer:meta.VertexVectorField.property)
+}
+inline ::std::string* VertexVectorField::mutable_property() {
+
+  // @@protoc_insertion_point(field_mutable:meta.VertexVectorField.property)
+  return property_.MutableNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+}
+inline ::std::string* VertexVectorField::release_property() {
+  // @@protoc_insertion_point(field_release:meta.VertexVectorField.property)
+
+  return property_.ReleaseNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+}
+inline void VertexVectorField::set_allocated_property(::std::string* property) {
+  if (property != NULL) {
+
+  } else {
+
+  }
+  property_.SetAllocatedNoArena(&::google::protobuf::internal::GetEmptyStringAlreadyInited(), property);
+  // @@protoc_insertion_point(field_set_allocated:meta.VertexVectorField.property)
+}
+
+// uint32 property_id = 4;
+inline void VertexVectorField::clear_property_id() {
+  property_id_ = 0u;
+}
+inline ::google::protobuf::uint32 VertexVectorField::property_id() const {
+  // @@protoc_insertion_point(field_get:meta.VertexVectorField.property_id)
+  return property_id_;
+}
+inline void VertexVectorField::set_property_id(::google::protobuf::uint32 value) {
+
+  property_id_ = value;
+  // @@protoc_insertion_point(field_set:meta.VertexVectorField.property_id)
+}
+
+// uint32 dimensions = 5;
+inline void VertexVectorField::clear_dimensions() {
+  dimensions_ = 0u;
+}
+inline ::google::protobuf::uint32 VertexVectorField::dimensions() const {
+  // @@protoc_insertion_point(field_get:meta.VertexVectorField.dimensions)
+  return dimensions_;
+}
+inline void VertexVectorField::set_dimensions(::google::protobuf::uint32 value) {
+
+  dimensions_ = value;
+  // @@protoc_insertion_point(field_set:meta.VertexVectorField.dimensions)
+}
+
+// -------------------------------------------------------------------
+
 // GraphDBMetaInfo
 
 // string graph_name = 1;
@@ -4724,6 +5030,8 @@ inline void GraphLifecycleRequest::set_graph_id(::google::protobuf::uint32 value
 #ifdef __GNUC__
   #pragma GCC diagnostic pop
 #endif  // __GNUC__
+// -------------------------------------------------------------------
+
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------

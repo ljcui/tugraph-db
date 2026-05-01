@@ -18,6 +18,7 @@ def create_vector_index():
     driver = GraphDatabase.driver(url, auth=auth_token, encrypted=False)
     session = driver.session(database="default")
     indexes = [
+        "CALL db.index.vector.createNodeField('Chunk', 'embedding', {dimension:1000})",
         "CALL db.index.vector.createNodeIndex('chunk_embeding','Chunk', 'embedding', {dimension:1000})",
     ]
     for index in indexes:
@@ -53,5 +54,4 @@ if __name__ == '__main__':
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"cost: {elapsed_time:.6f} seconds")
-
 

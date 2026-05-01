@@ -113,10 +113,18 @@ CALL db.index.fulltext.applyWal();
 ```
 
 ## 点类型向量索引
+* db.index.vector.createNodeField
+
+定义点的向量字段。向量索引只能创建在已经定义过的向量字段上。
+```
+CALL db.index.vector.createNodeField('person', 'embedding', {dimension:4});
+```
+
 * db.index.vector.createNodeIndex
 
 创建点的向量索引
 ```
+CALL db.index.vector.createNodeField('person', 'embedding', {dimension:4});
 CALL db.index.vector.createNodeIndex('vector_index','person', 'embedding', {dimension:4});
 ```
 

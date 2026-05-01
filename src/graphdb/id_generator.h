@@ -46,7 +46,8 @@ enum class MetaDataType : char {
   VertexVectorIndex = 5,
   NextVertexId = 6,
   NextEdgeId = 7,
-  RaftApplyIndex = 8
+  RaftApplyIndex = 8,
+  VertexVectorField = 9
 };
 
 class IdGenerator {

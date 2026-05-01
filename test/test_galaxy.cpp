@@ -62,6 +62,7 @@ TEST(Galaxy, clearGraph) {
   old_graph->AddVertexPropertyIndex("person_id", true, "person", {"id"});
   ASSERT_TRUE(WaitUntilPropertyIndexReady(old_graph.get(), "person_id"));
   old_graph->AddVertexFullTextIndex("person_name_ft", {"person"}, {"name"});
+  old_graph->AddVertexVectorField("person", "embedding", 2);
   old_graph->AddVertexVectorIndex("person_embedding_vt", "person", "embedding",
                                   2, "l2", 16, 100);
 

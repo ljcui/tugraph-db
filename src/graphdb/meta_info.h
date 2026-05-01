@@ -77,6 +77,14 @@ struct MetaInfo {
   void ClearVertexFullTextIndexes();
 
   // vector index
+  std::shared_ptr<meta::VertexVectorField> GetVertexVectorField(uint32_t lid,
+                                                                uint32_t pid);
+  std::vector<std::shared_ptr<meta::VertexVectorField>> GetVertexVectorFields(
+      const std::unordered_set<uint32_t>& lids, uint32_t pid);
+  std::vector<std::shared_ptr<meta::VertexVectorField>> GetVertexVectorFields(
+      const std::unordered_set<uint32_t>& lids);
+  bool AddVertexVectorField(std::shared_ptr<meta::VertexVectorField> field);
+  std::vector<std::shared_ptr<meta::VertexVectorField>> GetVertexVectorFields();
   std::shared_ptr<VertexVectorIndex> GetReadyVertexVectorIndex(uint32_t lid,
                                                                uint32_t pid);
   std::shared_ptr<VertexVectorIndex> GetReadyVertexVectorIndex(
@@ -107,6 +115,8 @@ struct MetaInfo {
       ready_vertex_vector_indexes_;
   std::unordered_map<uint64_t, std::shared_ptr<VertexVectorIndex>>
       building_vertex_vector_indexes_;
+  std::unordered_map<uint64_t, std::shared_ptr<meta::VertexVectorField>>
+      vertex_vector_fields_;
   std::unordered_map<std::string, std::shared_ptr<VertexFullTextIndex>>
       ready_vertex_ft_indexes_;
   std::unordered_map<std::string, std::shared_ptr<VertexFullTextIndex>>

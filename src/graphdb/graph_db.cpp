@@ -49,6 +49,14 @@ std::string BuildMetaKey(MetaDataType type, const std::string& name) {
   return key;
 }
 
+std::string BuildVectorFieldMetaKey(const std::string& label,
+                                    const std::string& property) {
+  std::string key = label;
+  key.push_back('\0');
+  key.append(property);
+  return key;
+}
+
 const std::string kRaftApplyIndexKey(
     1, static_cast<char>(MetaDataType::RaftApplyIndex));
 
@@ -242,6 +250,44 @@ void DeleteAllEntriesInColumnFamily(rocksdb::TransactionDB* db,
   wb->DeleteRange(cf, begin, end);
 }
 
+void CheckNoVectorFieldForNormalIndex(MetaInfo& meta_info,
+                                      const std::unordered_set<uint32_t>& lids,
+                                      const std::unordered_set<uint32_t>& pids,
+                                      const std::string& index_name) {
+  for (auto lid : lids) {
+    for (auto pid : pids) {
+      auto field = meta_info.GetVertexVectorField(lid, pid);
+      if (field) {
+        THROW_CODE(InvalidParameter,
+                   "normal index [{}] can not use vector field [label:{}, "
+                   "property:{}]",
+                   index_name, field->label(), field->property());
+      }
+    }
+  }
+}
+
+void CheckNoNormalIndexForVectorField(MetaInfo& meta_info, uint32_t lid,
+                                      uint32_t pid, const std::string& label,
+                                      const std::string& property) {
+  for (const auto& index : meta_info.GetVertexPropertyIndexes()) {
+    if (index->lid() == lid && index->ContainsProperty(pid)) {
+      THROW_CODE(InvalidParameter,
+                 "vector field [label:{}, property:{}] can not use normal "
+                 "index [{}]",
+                 label, property, index->Name());
+    }
+  }
+  for (const auto& index : meta_info.GetVertexFullTextIndexes()) {
+    if (index->LabelIds().count(lid) && index->PropertyIds().count(pid)) {
+      THROW_CODE(InvalidParameter,
+                 "vector field [label:{}, property:{}] can not use normal "
+                 "index [{}]",
+                 label, property, index->Name());
+    }
+  }
+}
+
 void ThrowIfIteratorError(rocksdb::Iterator* iter, std::string_view action) {
   auto status = iter->status();
   if (!status.ok()) {
@@ -281,6 +327,7 @@ std::unique_ptr<GraphDB> GraphDB::Open(const std::string& path,
   std::vector<std::string> built_in_cfs = {rocksdb::kDefaultColumnFamilyName,
                                            "graph_topology",
                                            "vertex_property",
+                                           "vertex_vector_property",
                                            "edge_property",
                                            "vertex_label_vid",
                                            "edge_type_eid",
@@ -303,12 +350,13 @@ std::unique_ptr<GraphDB> GraphDB::Open(const std::string& path,
   graph_db->path_ = path;
   graph_db->graph_cf_.graph_topology = cf_handles[1];
   graph_db->graph_cf_.vertex_property = cf_handles[2];
-  graph_db->graph_cf_.edge_property = cf_handles[3];
-  graph_db->graph_cf_.vertex_label_vid = cf_handles[4];
-  graph_db->graph_cf_.edge_type_eid = cf_handles[5];
-  graph_db->graph_cf_.meta_info = cf_handles[6];
-  graph_db->graph_cf_.index = cf_handles[7];
-  graph_db->graph_cf_.wal = cf_handles[8];
+  graph_db->graph_cf_.vertex_vector_property = cf_handles[3];
+  graph_db->graph_cf_.edge_property = cf_handles[4];
+  graph_db->graph_cf_.vertex_label_vid = cf_handles[5];
+  graph_db->graph_cf_.edge_type_eid = cf_handles[6];
+  graph_db->graph_cf_.meta_info = cf_handles[7];
+  graph_db->graph_cf_.index = cf_handles[8];
+  graph_db->graph_cf_.wal = cf_handles[9];
   graph_db->cf_handles_ = std::move(cf_handles);
   graph_db->options_ = graph_options;
   graph_db->assistant_pool_ = graph_options.assistant_pool;
@@ -578,6 +626,17 @@ void GraphDB::ApplyGraphIndexDdlRequest(
                    db_meta_.graph_name(), index);
       }
       ApplyDeleteVertexVectorIndex(index, meta);
+      return;
+    }
+    case meta::GraphIndexDdlRequest::CREATE_VERTEX_VECTOR_FIELD: {
+      meta::VertexVectorField meta;
+      if (!meta.ParseFromString(request.payload())) {
+        THROW_CODE(InvalidParameter,
+                   "failed to parse create vertex vector field request for "
+                   "graph [{}] at index {}",
+                   db_meta_.graph_name(), index);
+      }
+      ApplyCreateVertexVectorField(index, std::move(meta));
       return;
     }
     default:
@@ -923,6 +982,7 @@ void GraphDB::ClearDataInternal() {
   rocksdb::WriteBatch wb;
   DeleteAllEntriesInColumnFamily(db_, graph_cf_.graph_topology, &wb);
   DeleteAllEntriesInColumnFamily(db_, graph_cf_.vertex_property, &wb);
+  DeleteAllEntriesInColumnFamily(db_, graph_cf_.vertex_vector_property, &wb);
   DeleteAllEntriesInColumnFamily(db_, graph_cf_.edge_property, &wb);
   DeleteAllEntriesInColumnFamily(db_, graph_cf_.vertex_label_vid, &wb);
   DeleteAllEntriesInColumnFamily(db_, graph_cf_.edge_type_eid, &wb);
@@ -983,6 +1043,9 @@ void GraphDB::AddVertexPropertyIndex(
     }
     pids.push_back(pid);
   }
+  CheckNoVectorFieldForNormalIndex(
+      meta_info_, {lid}, std::unordered_set<uint32_t>(pids.begin(), pids.end()),
+      index_name);
   if (meta_info_.GetVertexPropertyIndex(lid, pids)) {
     THROW_CODE(VertexIndexAlreadyExist,
                "Vertex index [label:{}, property_count:{}] already exists",
@@ -1047,6 +1110,9 @@ void GraphDB::ApplyCreateVertexPropertyIndex(
   for (auto pid : meta_val.property_ids()) {
     pids.push_back(native_to_big(pid));
   }
+  CheckNoVectorFieldForNormalIndex(
+      meta_info_, {lid}, std::unordered_set<uint32_t>(pids.begin(), pids.end()),
+      meta_val.name());
   if (meta_info_.GetVertexPropertyIndex(lid, pids)) {
     THROW_CODE(VertexIndexAlreadyExist,
                "Vertex index [label:{}, property_count:{}] already exists",
@@ -1173,6 +1239,7 @@ void GraphDB::AddVertexFullTextIndex(
     pids.insert(pid);
     native_pids.insert(big_to_native(pid));
   }
+  CheckNoVectorFieldForNormalIndex(meta_info_, lids, pids, index_name);
   uint32_t index_id = id_generator().GetNextIndexId();
   meta::VertexFullTextIndex meta;
   meta.set_index_id(big_to_native(index_id));
@@ -1235,6 +1302,7 @@ void GraphDB::ApplyCreateVertexFullTextIndex(uint64_t apply_index,
     native_pids.insert(id);
     pids.insert(native_to_big(id));
   }
+  CheckNoVectorFieldForNormalIndex(meta_info_, lids, pids, meta.name());
   meta.set_path(BuildFullTextIndexPath(path_, meta.name(), index_id));
   meta.set_state(meta::IndexBuildState::BUILDING);
   meta.set_build_start_wal_id(0);
@@ -1377,13 +1445,33 @@ void GraphDB::AddVertexVectorIndex(const std::string& index_name,
     THROW_CODE(VertexVectorIndexAlreadyExist,
                "Vertex vector index [{}] already exists", index_name);
   }
-  auto lid = id_generator().GetOrCreateLid(label);
-  auto pid = id_generator().GetOrCreatePid(property);
+  auto lid_opt = id_generator().GetLid(label);
+  auto pid_opt = id_generator().GetPid(property);
+  if (!lid_opt || !pid_opt) {
+    THROW_CODE(InvalidParameter,
+               "Vector field [label:{}, property:{}] is not defined", label,
+               property);
+  }
+  auto lid = lid_opt.value();
+  auto pid = pid_opt.value();
+  auto vector_field = meta_info_.GetVertexVectorField(lid, pid);
+  if (!vector_field) {
+    THROW_CODE(InvalidParameter,
+               "Vector field [label:{}, property:{}] is not defined", label,
+               property);
+  }
+  if (vector_field->dimensions() != static_cast<uint32_t>(dimension)) {
+    THROW_CODE(InvalidParameter,
+               "Vector field [label:{}, property:{}] dimension mismatch, "
+               "expect {}, actual {}",
+               label, property, vector_field->dimensions(), dimension);
+  }
   if (meta_info_.GetVertexVectorIndex(lid, pid)) {
     THROW_CODE(VertexVectorIndexAlreadyExist,
                "Vertex vector index [label:{}, property:{}] already exists",
                big_to_native(lid), big_to_native(pid));
   }
+  CheckNoNormalIndexForVectorField(meta_info_, lid, pid, label, property);
   uint32_t index_id = id_generator().GetNextIndexId();
   meta::VectorIndexType index_type = meta::VectorIndexType::HNSW;
   meta::VertexVectorIndex meta;
@@ -1412,6 +1500,92 @@ void GraphDB::AddVertexVectorIndex(const std::string& index_name,
   ApplyCreateVertexVectorIndex(0, std::move(meta));
 }
 
+void GraphDB::AddVertexVectorField(const std::string& label,
+                                   const std::string& property, int dimension) {
+  std::lock_guard<std::mutex> propose_lock(index_ddl_propose_mutex_);
+  if (label.empty() || property.empty()) {
+    THROW_CODE(InvalidParameter);
+  }
+  if (dimension < 1 || dimension > 4096) {
+    THROW_CODE(InvalidParameter,
+               "dimension should be an integer in the range [1, 4096]");
+  }
+
+  auto lid = id_generator().GetOrCreateLid(label);
+  auto pid = id_generator().GetOrCreatePid(property);
+  if (meta_info_.GetVertexVectorField(lid, pid)) {
+    THROW_CODE(InvalidParameter,
+               "Vector field [label:{}, property:{}] already exists", label,
+               property);
+  }
+  CheckNoNormalIndexForVectorField(meta_info_, lid, pid, label, property);
+
+  meta::VertexVectorField meta;
+  meta.set_label(label);
+  meta.set_label_id(big_to_native(lid));
+  meta.set_property(property);
+  meta.set_property_id(big_to_native(pid));
+  meta.set_dimensions(dimension);
+
+  auto* driver = raft_driver();
+  if (driver != nullptr) {
+    ProposeGraphIndexDdl(meta::GraphIndexDdlRequest::CREATE_VERTEX_VECTOR_FIELD,
+                         meta.SerializeAsString());
+    return;
+  }
+  ApplyCreateVertexVectorField(0, std::move(meta));
+}
+
+void GraphDB::ApplyCreateVertexVectorField(uint64_t apply_index,
+                                           meta::VertexVectorField meta) {
+  std::lock_guard<std::mutex> clear_lock(clear_data_mutex_);
+  std::lock_guard<std::mutex> ddl_lock(index_ddl_mutex_);
+  if (meta.label().empty() || meta.property().empty()) {
+    THROW_CODE(InvalidParameter);
+  }
+  if (meta.dimensions() < 1 || meta.dimensions() > 4096) {
+    THROW_CODE(InvalidParameter,
+               "dimension should be an integer in the range [1, 4096]");
+  }
+
+  auto lid = native_to_big(meta.label_id());
+  auto pid = native_to_big(meta.property_id());
+  auto existing_field = meta_info_.GetVertexVectorField(lid, pid);
+  if (existing_field) {
+    if (apply_index > 0 && existing_field->dimensions() == meta.dimensions()) {
+      rocksdb::WriteBatch wb;
+      auto s = SetRaftApplyIndex(apply_index, &wb);
+      if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+      s = db_->Write({}, {}, &wb);
+      if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+      return;
+    }
+    THROW_CODE(InvalidParameter,
+               "Vector field [label:{}, property:{}] already exists",
+               meta.label(), meta.property());
+  }
+  CheckNoNormalIndexForVectorField(meta_info_, lid, pid, meta.label(),
+                                   meta.property());
+
+  auto vector_field =
+      std::make_shared<meta::VertexVectorField>(std::move(meta));
+  rocksdb::WriteBatch wb;
+  auto s =
+      wb.Put(graph_cf_.meta_info,
+             BuildMetaKey(MetaDataType::VertexVectorField,
+                          BuildVectorFieldMetaKey(vector_field->label(),
+                                                  vector_field->property())),
+             vector_field->SerializeAsString());
+  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  if (apply_index > 0) {
+    s = SetRaftApplyIndex(apply_index, &wb);
+    if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  }
+  s = db_->Write({}, {}, &wb);
+  if (!s.ok()) THROW_CODE(StorageEngineError, s.ToString());
+  meta_info_.AddVertexVectorField(vector_field);
+}
+
 void GraphDB::ApplyCreateVertexVectorIndex(uint64_t apply_index,
                                            meta::VertexVectorIndex meta) {
   std::lock_guard<std::mutex> clear_lock(clear_data_mutex_);
@@ -1437,6 +1611,22 @@ void GraphDB::ApplyCreateVertexVectorIndex(uint64_t apply_index,
     THROW_CODE(VertexVectorIndexAlreadyExist,
                "Vertex vector index [label:{}, property:{}] already exists",
                meta.label_id(), meta.property_id());
+  }
+  CheckNoNormalIndexForVectorField(meta_info_, lid, pid, meta.label(),
+                                   meta.property());
+  auto existing_field = meta_info_.GetVertexVectorField(lid, pid);
+  if (existing_field) {
+    if (existing_field->dimensions() != meta.dimensions()) {
+      THROW_CODE(InvalidParameter,
+                 "Vector field [label:{}, property:{}] dimension mismatch, "
+                 "expect {}, actual {}",
+                 meta.label(), meta.property(), existing_field->dimensions(),
+                 meta.dimensions());
+    }
+  } else {
+    THROW_CODE(InvalidParameter,
+               "Vector field [label:{}, property:{}] is not defined",
+               meta.label(), meta.property());
   }
   uint32_t index_id = native_to_big(meta.index_id());
   id_generator().ReserveIndexId(meta.index_id());

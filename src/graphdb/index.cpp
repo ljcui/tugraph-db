@@ -21,6 +21,7 @@
 #include <rocksdb/utilities/write_batch_with_index.h>
 
 #include <limits>
+#include <optional>
 #include <string_view>
 #include <unordered_set>
 
@@ -29,6 +30,7 @@
 #include "common/logger.h"
 #include "ftindex/include/lib.rs.h"
 #include "graphdb/graph_db.h"
+#include "graphdb/vector_property.h"
 #include "spdlog/stopwatch.h"
 #include "transaction/transaction.h"
 
@@ -314,30 +316,6 @@ uint64_t LoadVisibleMaxWalId(rocksdb::TransactionDB* db, GraphCF* graph_cf,
                sizeof(uint64_t), key.size());
   }
   return big_to_native(ReadValue<uint64_t>(key.data()));
-}
-
-bool TryParseVectorArray(const Value& value, size_t dimensions,
-                         std::vector<float>* out) {
-  if (!value.IsArray()) {
-    return false;
-  }
-  const auto& array = value.AsArray();
-  if (array.empty() || array.size() != dimensions) {
-    return false;
-  }
-  out->clear();
-  out->reserve(array.size());
-  for (const auto& item : array) {
-    if (item.IsFloat()) {
-      out->push_back(item.AsFloat());
-    } else if (item.IsDouble()) {
-      out->push_back(static_cast<float>(item.AsDouble()));
-    } else {
-      out->clear();
-      return false;
-    }
-  }
-  return true;
 }
 
 }  // namespace
@@ -1462,31 +1440,20 @@ void VertexVectorIndex::Load(const rocksdb::Snapshot* snapshot,
   rocksdb::ReadOptions ro;
   ro.snapshot = snapshot;
   std::unique_ptr<rocksdb::Iterator> iter(
-      db_->NewIterator(ro, graph_cf_->vertex_label_vid));
+      db_->NewIterator(ro, graph_cf_->vertex_vector_property));
   SPDLOG_INFO("Begin to load vector index: {}", meta_.name());
   int count = 0;
-  rocksdb::Slice prefix(AsChars(lid_), sizeof(lid_));
+  std::string prefix = VertexVectorPropertyPrefix(lid_, pid_);
   for (iter->Seek(prefix); iter->Valid() && iter->key().starts_with(prefix);
        iter->Next()) {
     auto key = iter->key();
-    key.remove_prefix(sizeof(uint32_t));
+    key.remove_prefix(prefix.size());
+    if (key.size() != sizeof(int64_t)) {
+      THROW_CODE(StorageEngineError,
+                 "vertex vector property key has invalid vid size");
+    }
     int64_t vid = ReadValue<int64_t>(key.data());
-    std::string property_key = key.ToString();
-    property_key.append(AsChars(pid_), sizeof(pid_));
-    std::string property_val;
-    auto s =
-        db_->Get(ro, graph_cf_->vertex_property, property_key, &property_val);
-    if (s.IsNotFound()) {
-      continue;
-    } else if (!s.ok()) {
-      THROW_CODE(StorageEngineError, s.ToString());
-    }
-    Value pv;
-    pv.Deserialize(property_val.data(), property_val.size());
-    std::vector<float> embedding;
-    if (!TryParseVectorArray(pv, meta_.dimensions(), &embedding)) {
-      continue;
-    }
+    auto embedding = DeserializeVector(iter->value(), meta_.dimensions());
     {
       std::unique_lock write(mutex_);
       vector_store_->Add(vid, embedding.data());

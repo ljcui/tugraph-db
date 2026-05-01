@@ -123,6 +123,13 @@ std::vector<Procedure> global_procedures = {
                             {"parameter", {3, ProcedureResultType::Value}}},
         Procedure::SIG_SPEC{}),
     Procedure(
+        "db.index.vector.createNodeField",
+        BuiltinProcedure::DbIndexVectorCreateNodeField,
+        Procedure::SIG_SPEC{{"label", {0, ProcedureResultType::Value}},
+                            {"property", {1, ProcedureResultType::Value}},
+                            {"parameter", {2, ProcedureResultType::Value}}},
+        Procedure::SIG_SPEC{}),
+    Procedure(
         "db.index.vector.knnSearchNodes",
         BuiltinProcedure::DbIndexVectorKnnSearchNodes,
         Procedure::SIG_SPEC{{"index_name", {0, ProcedureResultType::Value}},
@@ -681,6 +688,35 @@ void BuiltinProcedure::DbIndexVectorCreateNodeIndex(
   ctx->txn_->db()->AddVertexVectorIndex(index_name, label, property, dimension,
                                         distance_type, hnsw_m,
                                         hnsw_ef_construction);
+}
+
+void BuiltinProcedure::DbIndexVectorCreateNodeField(
+    cypher::RTContext *ctx, const cypher::Record *record,
+    const cypher::VEC_EXPR &args, const cypher::VEC_STR &yield_items,
+    std::vector<std::vector<ProcedureResult>> *records) {
+  CYPHER_ARG_CHECK(
+      args.size() == 3,
+      fmt::format("Function requires 3 arguments, but {} are "
+                  "given. Usage: db.index.vector.createNodeField(label, "
+                  "property, parameter)",
+                  args.size()))
+  CYPHER_ARG_CHECK(args[0].IsString(), "label type should be String")
+  CYPHER_ARG_CHECK(args[1].IsString(), "property type should be String")
+  CYPHER_ARG_CHECK(args[2].IsMap(), "parameter type should be Map")
+  auto label = args[0].constant.AsString();
+  auto property = args[1].constant.AsString();
+  auto parameter = args[2].constant.AsMap();
+  int dimension = 128;
+  if (parameter.count("dimension")) {
+    dimension = (int)parameter.at("dimension").AsInteger();
+  } else {
+    THROW_CODE(InvalidParameter, "dimension is required");
+  }
+  CYPHER_ARG_CHECK(dimension >= 1 && dimension <= 4096,
+                   "dimension should be an integer in the range [1, 4096]");
+  LOG_INFO("Create node vector field, label:{}, property:{}, parameter:{}",
+           label, property, parameter);
+  ctx->txn_->db()->AddVertexVectorField(label, property, dimension);
 }
 
 void BuiltinProcedure::DbIndexVectorKnnSearchNodes(

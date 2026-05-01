@@ -25,6 +25,7 @@
 #include "common/byte_utils.h"
 #include "common/exceptions.h"
 #include "common/logger.h"
+#include "graphdb/vector_property.h"
 #include "proto/meta.pb.h"
 using namespace boost::endian;
 using common::AsChars;
@@ -41,10 +42,6 @@ std::string BuildVertexPropertyIndexKey(uint32_t lid,
     key.append(AsChars(pid), sizeof(pid));
   }
   return key;
-}
-
-uint64_t BuildVertexVectorIndexKey(uint32_t lid, uint32_t pid) {
-  return (static_cast<uint64_t>(lid) << 32) | static_cast<uint64_t>(pid);
 }
 
 template <typename Map>
@@ -367,9 +364,70 @@ void MetaInfo::ClearVertexFullTextIndexes() {
   building_vertex_ft_indexes_.clear();
 }
 
+std::shared_ptr<meta::VertexVectorField> MetaInfo::GetVertexVectorField(
+    uint32_t lid, uint32_t pid) {
+  auto field_key = VectorFieldKey(lid, pid);
+  std::shared_lock lock(mutex_);
+  auto iter = vertex_vector_fields_.find(field_key);
+  if (iter != vertex_vector_fields_.end()) {
+    return iter->second;
+  }
+  return nullptr;
+}
+
+std::vector<std::shared_ptr<meta::VertexVectorField>>
+MetaInfo::GetVertexVectorFields(const std::unordered_set<uint32_t>& lids,
+                                uint32_t pid) {
+  std::shared_lock lock(mutex_);
+  std::vector<std::shared_ptr<meta::VertexVectorField>> fields;
+  fields.reserve(lids.size());
+  for (auto lid : lids) {
+    auto iter = vertex_vector_fields_.find(VectorFieldKey(lid, pid));
+    if (iter != vertex_vector_fields_.end()) {
+      fields.push_back(iter->second);
+    }
+  }
+  return fields;
+}
+
+std::vector<std::shared_ptr<meta::VertexVectorField>>
+MetaInfo::GetVertexVectorFields(const std::unordered_set<uint32_t>& lids) {
+  std::shared_lock lock(mutex_);
+  std::vector<std::shared_ptr<meta::VertexVectorField>> fields;
+  for (const auto& [_, field] : vertex_vector_fields_) {
+    if (lids.count(native_to_big(field->label_id()))) {
+      fields.push_back(field);
+    }
+  }
+  return fields;
+}
+
+bool MetaInfo::AddVertexVectorField(
+    std::shared_ptr<meta::VertexVectorField> field) {
+  auto field_key = VectorFieldKey(native_to_big(field->label_id()),
+                                  native_to_big(field->property_id()));
+  std::unique_lock lock(mutex_);
+  if (vertex_vector_fields_.count(field_key)) {
+    return false;
+  }
+  vertex_vector_fields_.emplace(field_key, std::move(field));
+  return true;
+}
+
+std::vector<std::shared_ptr<meta::VertexVectorField>>
+MetaInfo::GetVertexVectorFields() {
+  std::shared_lock lock(mutex_);
+  std::vector<std::shared_ptr<meta::VertexVectorField>> fields;
+  fields.reserve(vertex_vector_fields_.size());
+  for (const auto& [_, field] : vertex_vector_fields_) {
+    fields.push_back(field);
+  }
+  return fields;
+}
+
 std::shared_ptr<VertexVectorIndex> MetaInfo::GetReadyVertexVectorIndex(
     uint32_t lid, uint32_t pid) {
-  auto index_key = BuildVertexVectorIndexKey(lid, pid);
+  auto index_key = VectorFieldKey(lid, pid);
   std::shared_lock lock(mutex_);
   auto iter = ready_vertex_vector_indexes_.find(index_key);
   if (iter != ready_vertex_vector_indexes_.end()) {
@@ -391,7 +449,7 @@ std::shared_ptr<VertexVectorIndex> MetaInfo::GetReadyVertexVectorIndex(
 
 std::shared_ptr<VertexVectorIndex> MetaInfo::GetVertexVectorIndex(
     uint32_t lid, uint32_t pid) {
-  auto index_key = BuildVertexVectorIndexKey(lid, pid);
+  auto index_key = VectorFieldKey(lid, pid);
   std::shared_lock lock(mutex_);
   auto iter = ready_vertex_vector_indexes_.find(index_key);
   if (iter != ready_vertex_vector_indexes_.end()) {
@@ -405,7 +463,7 @@ std::shared_ptr<VertexVectorIndex> MetaInfo::GetVertexVectorIndex(
 }
 
 void MetaInfo::AddVertexVectorIndex(std::shared_ptr<VertexVectorIndex> vvi) {
-  auto index_key = BuildVertexVectorIndexKey(vvi->lid(), vvi->pid());
+  auto index_key = VectorFieldKey(vvi->lid(), vvi->pid());
   std::unique_lock lock(mutex_);
   if (ready_vertex_vector_indexes_.count(index_key) ||
       building_vertex_vector_indexes_.count(index_key)) {
@@ -472,8 +530,7 @@ void MetaInfo::PublishVertexVectorIndex(const std::string& name) {
     auto index = iter->second;
     building_vertex_vector_indexes_.erase(iter);
     ready_vertex_vector_indexes_.emplace(
-        BuildVertexVectorIndexKey(index->lid(), index->pid()),
-        std::move(index));
+        VectorFieldKey(index->lid(), index->pid()), std::move(index));
     return;
   }
 }
@@ -596,6 +653,14 @@ void MetaInfo::Init(rocksdb::TransactionDB* db,
       if (meta.state() == meta::IndexBuildState::READY) {
         v_ft_index->Start();
       }
+      continue;
+    }
+    if (prefix == MetaDataType::VertexVectorField) {
+      auto field = std::make_shared<meta::VertexVectorField>();
+      bool ret = field->ParseFromString(val.ToString());
+      assert(ret);
+      LOG_INFO("vertex vector field: [{}]", field->ShortDebugString());
+      AddVertexVectorField(field);
       continue;
     }
     if (prefix == MetaDataType::VertexVectorIndex) {
