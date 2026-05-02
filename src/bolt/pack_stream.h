@@ -240,7 +240,6 @@ class PackStream {
     packer_.StructHeader(type, 0);
     End();
   }
-
   void AppendHello(const std::unordered_map<std::string, std::any>& meta) {
     AppendStructMessage(BoltMsg::Hello, meta);
   }
@@ -272,6 +271,10 @@ class PackStream {
 
   void AppendPullN(int64_t n) {
     AppendStructMessage(BoltMsg::PullN, {{"n", n}});
+  }
+
+  void AppendDiscardN(int64_t n) {
+    AppendStructMessage(BoltMsg::DiscardN, {{"n", n}});
   }
 
   void AppendRecord(const std::vector<std::any>& fields) {

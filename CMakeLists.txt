@@ -352,6 +352,13 @@ set(TEST_CASE_SOURCES
 
 set(LGRAPH_CLI_SOURCES src/toolkits/lgraph_cli.cpp src/toolkits/linenoise/linenoise.c)
 
+set(LGRAPH_PROXY_SOURCES
+    src/proxy/backend_session.cpp
+    src/proxy/proxy_main.cpp
+    src/proxy/proxy_server.cpp
+    src/proxy/shard_map.cpp
+)
+
 # Libraries
 add_static_library(bolt ${BOLT_SOURCES})
 add_static_library(graphdb ${GRAPHDB_SOURCES})
@@ -393,7 +400,10 @@ target_link_libraries(test_case PRIVATE ${TEST_LINK_LIBS})
 add_executable_target(lgraph_cli ${LGRAPH_CLI_SOURCES})
 target_link_libraries(lgraph_cli PRIVATE ${CLI_LINK_LIBS})
 
+add_executable_target(lgraph_proxy ${LGRAPH_PROXY_SOURCES})
+target_link_libraries(lgraph_proxy PRIVATE ${CLI_LINK_LIBS})
+
 include(${PROJECT_SOURCE_DIR}/cmake/Format.cmake)
 
 # Installation
-install(TARGETS lgraph_server lgraph_cli RUNTIME DESTINATION bin)
+install(TARGETS lgraph_server lgraph_cli lgraph_proxy RUNTIME DESTINATION bin)
