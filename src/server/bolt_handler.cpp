@@ -21,7 +21,6 @@
 #include <pthread.h>
 #include <spdlog/fmt/chrono.h>
 #include <spdlog/fmt/fmt.h>
-#include <spdlog/stopwatch.h>
 
 #include <boost/algorithm/string.hpp>
 #include <condition_variable>
@@ -44,7 +43,39 @@
 using namespace bolt;
 using std::chrono::duration_cast;
 using std::chrono::milliseconds;
+using std::chrono::steady_clock;
 DECLARE_bool(enable_query_log);
+
+namespace bolt {
+
+ActiveBoltQuery::~ActiveBoltQuery() { Rollback(); }
+
+void ActiveBoltQuery::Commit() {
+  result.reset();
+  if (txn && !transaction_closed) {
+    txn->Commit();
+    transaction_closed = true;
+  }
+  txn.reset();
+}
+
+void ActiveBoltQuery::Rollback() noexcept {
+  result.reset();
+  if (txn && !transaction_closed) {
+    try {
+      txn->Rollback();
+    } catch (const std::exception& e) {
+      LOG_WARN("bolt active query rollback failed: {}", e.what());
+    } catch (...) {
+      LOG_WARN("bolt active query rollback failed with unknown exception");
+    }
+    transaction_closed = true;
+  }
+  txn.reset();
+}
+
+}  // namespace bolt
+
 namespace server {
 
 namespace {
@@ -174,114 +205,119 @@ geax::frontend::Expr* ConvertParameters(
 
 namespace {
 
-static bool SendRecord(BoltConnection* conn, BoltSession* session,
-                       const std::vector<std::any>& record) {
+static void FlushSessionBuffer(const std::shared_ptr<BoltConnection>& conn,
+                               BoltSession* session) {
+  if (session->ps.ConstBuffer().empty()) {
+    return;
+  }
+  conn->PostResponse(std::move(session->ps.MutableBuffer()));
+  session->ps.Reset();
+}
+
+static void AbortActiveQuery(BoltSession* session) {
+  if (session->active_query) {
+    session->active_query->Rollback();
+    session->active_query.reset();
+  }
+  session->streaming_msg.reset();
+  session->ps.Reset();
+}
+
+static int64_t ExtractPullOrDiscardN(BoltMsg type,
+                                     const std::vector<std::any>& fields) {
+  if (fields.size() != 1) {
+    THROW_CODE(InputError, "{} msg fields size error, size: {}",
+               bolt::ToString(type), fields.size());
+  }
+  auto* metadata =
+      std::any_cast<std::unordered_map<std::string, std::any>>(&fields[0]);
+  if (metadata == nullptr) {
+    THROW_CODE(InputError, "{} metadata should be a map", bolt::ToString(type));
+  }
+  auto iter = metadata->find("n");
+  if (iter == metadata->end()) {
+    THROW_CODE(InputError, "{} metadata should contain n",
+               bolt::ToString(type));
+  }
+  auto* n = std::any_cast<int64_t>(&iter->second);
+  if (n == nullptr) {
+    THROW_CODE(InputError, "{} n should be an integer", bolt::ToString(type));
+  }
+  if (*n == 0) {
+    THROW_CODE(InputError, "{} n should not be 0", bolt::ToString(type));
+  }
+  return *n;
+}
+
+static void ProcessPullOrDiscard(const std::shared_ptr<BoltConnection>& conn,
+                                 BoltSession* session, BoltMsg type,
+                                 const std::vector<std::any>& fields) {
+  if (!session->active_query || !session->active_query->result) {
+    THROW_CODE(InputError, "{} requires an active result stream",
+               bolt::ToString(type));
+  }
+
+  const int64_t n = ExtractPullOrDiscardN(type, fields);
+  const bool unlimited = n < 0;
+  int64_t remaining = n;
+  auto* result = session->active_query->result.get();
+
+  while (!conn->has_closed() && result->Valid() &&
+         (unlimited || remaining > 0)) {
+    if (session->interrupt_requested.load()) {
+      session->state = SessionState::INTERRUPTED;
+      AbortActiveQuery(session);
+      LOG_INFO("The bolt session is interrupted, cancel the op execution.");
+      return;
+    }
+
+    if (type == BoltMsg::PullN) {
+      session->ps.AppendRecord(result->GetBoltRecord());
+      if (session->ps.ConstBuffer().size() > 1024) {
+        FlushSessionBuffer(conn, session);
+      }
+    }
+    result->Next();
+    if (!unlimited) {
+      --remaining;
+    }
+  }
+
   if (conn->has_closed()) {
+    AbortActiveQuery(session);
     LOG_INFO("The bolt connection is closed, cancel the op execution.");
-    return false;
+    return;
   }
   if (session->interrupt_requested.load()) {
-    session->state = bolt::SessionState::INTERRUPTED;
+    session->state = SessionState::INTERRUPTED;
+    AbortActiveQuery(session);
     LOG_INFO("The bolt session is interrupted, cancel the op execution.");
-    return false;
+    return;
   }
-  while (session->state == bolt::SessionState::STREAMING &&
-         !session->streaming_msg) {
-    session->streaming_msg = session->msgs.Pop(std::chrono::milliseconds(100));
-    if (conn->has_closed()) {
-      LOG_INFO("The bolt connection is closed, cancel the op execution.");
-      return false;
-    }
-    if (!session->streaming_msg) {
-      if (session->interrupt_requested.load()) {
-        session->state = bolt::SessionState::INTERRUPTED;
-        LOG_INFO("The bolt session is interrupted, cancel the op execution.");
-        return false;
-      }
-      continue;
-    }
-    if (session->streaming_msg.value().type == bolt::BoltMsg::PullN ||
-        session->streaming_msg.value().type == bolt::BoltMsg::DiscardN) {
-      const auto& fields = session->streaming_msg.value().fields;
-      if (fields.size() != 1) {
-        std::string err = fmt::format(
-            "{} msg fields size error, size: {}",
-            bolt::ToString(session->streaming_msg.value().type).c_str(),
-            fields.size());
-        LOG_ERROR(err);
-        bolt::PackStream ps;
-        ps.AppendFailure({{"code", "error"}, {"message", err}});
-        conn->PostResponse(std::move(ps.MutableBuffer()));
-        session->state = bolt::SessionState::FAILED;
-        return false;
-      }
-      auto& val =
-          std::any_cast<const std::unordered_map<std::string, std::any>&>(
-              fields[0]);
-      auto n = std::any_cast<int64_t>(val.at("n"));
-      session->streaming_msg.value().n = n;
-    } else if (session->streaming_msg.value().type == bolt::BoltMsg::Reset) {
-      LOG_INFO("Receive RESET, cancel the op execution.");
-      bolt::PackStream ps;
-      ps.AppendSuccess();
-      conn->PostResponse(std::move(ps.MutableBuffer()));
-      session->interrupt_requested.store(false);
-      session->state = bolt::SessionState::READY;
-      return false;
-    } else {
-      LOG_ERROR(
-          "Unexpected msg:{} in STREAMING state, cancel the op execution, "
-          "close the connection.",
-          bolt::ToString(session->streaming_msg.value().type));
-      conn->Close();
-      return false;
-    }
-    break;
+
+  if (result->Valid()) {
+    std::unordered_map<std::string, std::any> meta;
+    meta["has_more"] = true;
+    session->ps.AppendSuccess(meta);
+    session->state = SessionState::STREAMING;
+    session->streaming_msg.reset();
+    FlushSessionBuffer(conn, session);
+    return;
   }
-  if (session->state == bolt::SessionState::INTERRUPTED) {
-    LOG_WARN("The session state is INTERRUPTED, cancel the op execution.");
-    return false;
-  } else if (session->state != bolt::SessionState::STREAMING) {
-    LOG_ERROR("Unexpected state: {} in op execution, close the connection.",
-              static_cast<int>(session->state));
-    conn->Close();
-    return false;
-  } else if (session->streaming_msg.value().type != bolt::BoltMsg::PullN &&
-             session->streaming_msg.value().type != bolt::BoltMsg::DiscardN) {
-    LOG_ERROR(
-        "Unexpected msg: {} in op execution, "
-        "cancel the op execution, close the connection.",
-        bolt::ToString(session->streaming_msg.value().type));
-    conn->Close();
-    return false;
-  }
-  if (session->streaming_msg.value().type == bolt::BoltMsg::PullN) {
-    session->ps.AppendRecord(record);
-    bool sync = false;
-    if (--session->streaming_msg.value().n == 0) {
-      std::unordered_map<std::string, std::any> meta;
-      meta["has_more"] = true;
-      session->ps.AppendSuccess(meta);
-      session->state = bolt::SessionState::STREAMING;
-      session->streaming_msg.reset();
-      sync = true;
-    }
-    if (sync || session->ps.ConstBuffer().size() > 1024) {
-      conn->PostResponse(std::move(session->ps.MutableBuffer()));
-      session->ps.Reset();
-    }
-  } else if (session->streaming_msg.value().type == bolt::BoltMsg::DiscardN) {
-    if (--session->streaming_msg.value().n == 0) {
-      std::unordered_map<std::string, std::any> meta;
-      meta["has_more"] = true;
-      session->ps.AppendSuccess(meta);
-      session->state = bolt::SessionState::STREAMING;
-      session->streaming_msg.reset();
-      conn->PostResponse(std::move(session->ps.MutableBuffer()));
-      session->ps.Reset();
-    }
-  }
-  return true;
+
+  auto* active_query = session->active_query.get();
+  auto elapsed = duration_cast<milliseconds>(steady_clock::now() -
+                                             active_query->start_time);
+  auto graph_name = active_query->graph_name;
+  auto cypher = active_query->cypher;
+  active_query->Commit();
+  session->active_query.reset();
+  session->streaming_msg.reset();
+  session->state = SessionState::READY;
+  session->ps.AppendSuccess();
+  FlushSessionBuffer(conn, session);
+  LOG_DEBUG("Cypher execution completed");
+  QUERY_LOG("{} {} {}", graph_name, elapsed, cypher.substr(0, 256));
 }
 
 static void ProcessBoltMessage(Galaxy* galaxy,
@@ -289,6 +325,7 @@ static void ProcessBoltMessage(Galaxy* galaxy,
                                BoltSession* session, BoltMsgDetail msg) {
   auto RespondFailure = [&conn, session](ErrorCode code,
                                          const std::string& msg) {
+    AbortActiveQuery(session);
     bolt::PackStream ps;
     ps.AppendFailure({{"code", ErrorCodeToString(code)}, {"message", msg}});
     conn->PostResponse(std::move(ps.MutableBuffer()));
@@ -303,6 +340,7 @@ static void ProcessBoltMessage(Galaxy* galaxy,
       ps.AppendIgnored();
       conn->PostResponse(std::move(ps.MutableBuffer()));
     } else if (type == bolt::BoltMsg::Reset) {
+      AbortActiveQuery(session);
       bolt::PackStream ps;
       ps.AppendSuccess();
       conn->PostResponse(std::move(ps.MutableBuffer()));
@@ -323,6 +361,7 @@ static void ProcessBoltMessage(Galaxy* galaxy,
       ps.AppendIgnored();
       conn->PostResponse(std::move(ps.MutableBuffer()));
     } else if (type == bolt::BoltMsg::Reset) {
+      AbortActiveQuery(session);
       bolt::PackStream ps;
       ps.AppendSuccess();
       conn->PostResponse(std::move(ps.MutableBuffer()));
@@ -347,6 +386,7 @@ static void ProcessBoltMessage(Galaxy* galaxy,
       conn->PostResponse(std::move(ps.MutableBuffer()));
       session->state = SessionState::FAILED;
     } else if (type == bolt::BoltMsg::Reset) {
+      AbortActiveQuery(session);
       bolt::PackStream ps;
       ps.AppendSuccess();
       conn->PostResponse(std::move(ps.MutableBuffer()));
@@ -358,7 +398,6 @@ static void ProcessBoltMessage(Galaxy* galaxy,
           THROW_CODE(InputError, "Run msg fields size error, size: {}",
                      fields.size());
         }
-        spdlog::stopwatch sw;
         auto& cypher = std::any_cast<const std::string&>(fields[0]);
         auto& extra =
             std::any_cast<const std::unordered_map<std::string, std::any>&>(
@@ -371,46 +410,34 @@ static void ProcessBoltMessage(Galaxy* galaxy,
         auto& field1 =
             std::any_cast<std::unordered_map<std::string, std::any>&>(
                 fields[1]);
-        cypher::RTContext ctx(galaxy, session->user, graph);
+        auto active_query = std::make_unique<ActiveBoltQuery>();
+        active_query->graph_name = graph;
+        active_query->cypher = cypher;
+        active_query->start_time = steady_clock::now();
+        active_query->ctx =
+            std::make_unique<cypher::RTContext>(galaxy, session->user, graph);
         for (auto& pair : field1) {
-          ctx.bolt_parameters_.emplace(
-              "$" + pair.first,
-              ConvertParameters(ctx.obj_alloc_, std::move(pair.second)));
+          active_query->ctx->bolt_parameters_.emplace(
+              "$" + pair.first, ConvertParameters(active_query->ctx->obj_alloc_,
+                                                  std::move(pair.second)));
         }
         session->streaming_msg.reset();
         session->interrupt_requested.store(false);
-        auto graph_db = galaxy->OpenGraph(graph);
-        auto txn = graph_db->BeginTransaction();
-        txn->SetConn(conn);
+        active_query->graph_db = galaxy->OpenGraph(graph);
+        active_query->txn = active_query->graph_db->BeginTransaction();
+        active_query->txn->SetConn(conn);
         LOG_DEBUG("Execute {}", cypher.substr(0, 256));
-        auto res_iter = txn->Execute(&ctx, cypher);
-        auto header = res_iter->GetHeader();
+        active_query->result =
+            active_query->txn->Execute(active_query->ctx.get(), cypher);
+        auto header = active_query->result->GetHeader();
 
         std::unordered_map<std::string, std::any> meta;
         meta["fields"] = header;
         bolt::PackStream ps;
         ps.AppendSuccess(meta);
         conn->PostResponse(std::move(ps.MutableBuffer()));
+        session->active_query = std::move(active_query);
         session->state = bolt::SessionState::STREAMING;
-        bool success = true;
-        for (; res_iter->Valid(); res_iter->Next()) {
-          auto record = res_iter->GetBoltRecord();
-          if (!SendRecord(conn.get(), session, record)) {
-            success = false;
-            break;
-          }
-        }
-        res_iter.reset();
-        txn->Commit();
-        if (success) {
-          session->ps.AppendSuccess();
-          session->state = bolt::SessionState::READY;
-          conn->PostResponse(std::move(session->ps.MutableBuffer()));
-          session->ps.Reset();
-        }
-        LOG_DEBUG("Cypher execution completed");
-        QUERY_LOG("{} {} {}", graph, duration_cast<milliseconds>(sw.elapsed()),
-                  cypher.substr(0, 256));
       } catch (const LgraphException& e) {
         LOG_ERROR(e.what());
         RespondFailure(e.code(), e.msg());
@@ -422,6 +449,29 @@ static void ProcessBoltMessage(Galaxy* galaxy,
       LOG_ERROR("Unexpected msg:{} in READY state, close the connection",
                 ToString(type));
       conn->Close();
+    }
+  } else if (session->state == SessionState::STREAMING) {
+    try {
+      if (type == bolt::BoltMsg::PullN || type == bolt::BoltMsg::DiscardN) {
+        ProcessPullOrDiscard(conn, session, type, fields);
+      } else if (type == bolt::BoltMsg::Reset) {
+        AbortActiveQuery(session);
+        bolt::PackStream ps;
+        ps.AppendSuccess();
+        conn->PostResponse(std::move(ps.MutableBuffer()));
+        session->interrupt_requested.store(false);
+        session->state = SessionState::READY;
+      } else {
+        LOG_ERROR("Unexpected msg:{} in STREAMING state, close the connection",
+                  ToString(type));
+        conn->Close();
+      }
+    } catch (const LgraphException& e) {
+      LOG_ERROR(e.what());
+      RespondFailure(e.code(), e.msg());
+    } catch (std::exception& e) {
+      LOG_ERROR(e.what());
+      RespondFailure(ErrorCode::UnknownError, e.what());
     }
   } else {
     LOG_ERROR("Unexpected msg:{} in session state, close the connection",
@@ -451,6 +501,7 @@ static void ScheduleSession(Galaxy* galaxy,
         ProcessSession(galaxy, conn, session, weak_pool);
       })) {
     LOG_WARN("failed to schedule bolt session: worker pool is stopped");
+    AbortActiveQuery(session.get());
     conn->Close();
   }
 }
@@ -464,6 +515,10 @@ void ProcessSession(Galaxy* galaxy, std::shared_ptr<BoltConnection> conn,
       break;
     }
     ProcessBoltMessage(galaxy, conn, session.get(), std::move(msg.value()));
+  }
+  if (conn->has_closed()) {
+    AbortActiveQuery(session.get());
+    return;
   }
 
   bool should_reschedule = false;
@@ -488,6 +543,7 @@ void ProcessSession(Galaxy* galaxy, std::shared_ptr<BoltConnection> conn,
         ProcessSession(galaxy, conn, session, weak_pool);
       })) {
     LOG_WARN("failed to reschedule bolt session: worker pool is stopped");
+    AbortActiveQuery(session.get());
     conn->Close();
   }
 }
@@ -508,6 +564,7 @@ static bool EnqueueSessionMessage(Galaxy* galaxy,
   if (!session->msgs.Push(std::move(msg))) {
     LOG_WARN("close bolt connection {}: pending message queue is full",
              conn.conn_id());
+    AbortActiveQuery(session.get());
     conn.Close();
     return false;
   }
@@ -606,6 +663,10 @@ BoltHandler NewBoltHandler(Galaxy* galaxy, BoltHandlerOptions options) {
       EnqueueSessionMessage(galaxy, worker_pool, conn, std::move(session),
                             {BoltMsg::Reset, std::move(fields)});
     } else if (msg == BoltMsg::Goodbye) {
+      auto session = GetSession(conn);
+      if (session) {
+        AbortActiveQuery(session.get());
+      }
       conn.Close();
     } else {
       LOG_WARN("receive unknown bolt message: {}", ToString(msg));

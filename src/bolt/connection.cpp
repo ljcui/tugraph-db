@@ -19,7 +19,6 @@
 
 #include <boost/endian/conversion.hpp>
 #include <chrono>
-#include <thread>
 
 #include "bolt/messages.h"
 #include "bolt/to_string.h"
@@ -102,6 +101,8 @@ void BoltConnection::Close() {
   boost::system::error_code ec;
   timeout_timer_.cancel(ec);
   Connection::Close();
+  { std::lock_guard<std::mutex> lock(msg_queue_size_mutex_); }
+  msg_queue_drained_.notify_all();
 }
 
 void BoltConnection::ArmTimeout(uint32_t seconds, const char* reason) {
@@ -148,14 +149,22 @@ void BoltConnection::DoSend() {
       LOG_WARN("async write error: {}, clear {} pending message", ec.message(),
                msg_queue_.size());
       msg_queue_.clear();
-      msg_queue_size_ = 0;
+      {
+        std::lock_guard<std::mutex> lock(msg_queue_size_mutex_);
+        msg_queue_size_ = 0;
+      }
+      msg_queue_drained_.notify_all();
       Close();
       return;
     }
     assert(msg_queue_.size() >= send_buffers_.size());
     msg_queue_.erase(msg_queue_.begin(),
                      msg_queue_.begin() + send_buffers_.size());
-    msg_queue_size_ = msg_queue_.size();
+    {
+      std::lock_guard<std::mutex> lock(msg_queue_size_mutex_);
+      msg_queue_size_ = msg_queue_.size();
+    }
+    msg_queue_drained_.notify_all();
     send_buffers_.clear();
     if (!msg_queue_.empty()) {
       DoSend();
@@ -176,7 +185,10 @@ void BoltConnection::Respond(std::string str) {
   }
   bool need_invoke = msg_queue_.empty();
   msg_queue_.push_back(std::move(str));
-  msg_queue_size_ = msg_queue_.size();
+  {
+    std::lock_guard<std::mutex> lock(msg_queue_size_mutex_);
+    msg_queue_size_ = msg_queue_.size();
+  }
   if (need_invoke) {
     DoSend();
   }
@@ -185,8 +197,10 @@ void BoltConnection::Respond(std::string str) {
 // async respond
 // used in non-io thread, thread safe
 void BoltConnection::PostResponse(std::string str) {
-  while (!has_closed() && msg_queue_size_ > 1024) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  {
+    std::unique_lock<std::mutex> lock(msg_queue_size_mutex_);
+    msg_queue_drained_.wait(
+        lock, [this]() { return has_closed() || msg_queue_size_ <= 1024; });
   }
   if (has_closed()) {
     LOG_WARN("connection is closed, drop this message");

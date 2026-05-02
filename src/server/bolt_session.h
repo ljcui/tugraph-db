@@ -17,14 +17,30 @@
 //
 
 #pragma once
+#include <any>
 #include <atomic>
 #include <boost/asio.hpp>
+#include <chrono>
 #include <cstddef>
+#include <memory>
 #include <mutex>
+#include <string>
+#include <vector>
 
 #include "bolt/blocking_queue.h"
 #include "bolt/messages.h"
 #include "bolt/pack_stream.h"
+
+class ResultIterator;
+namespace cypher {
+class RTContext;
+}
+namespace graphdb {
+class GraphDB;
+}
+namespace txn {
+class Transaction;
+}
 
 namespace bolt {
 
@@ -44,10 +60,26 @@ struct BoltMsgDetail {
   int64_t n = -1;
 };
 
+struct ActiveBoltQuery {
+  ~ActiveBoltQuery();
+  void Commit();
+  void Rollback() noexcept;
+
+  std::string graph_name;
+  std::string cypher;
+  std::chrono::steady_clock::time_point start_time;
+  std::shared_ptr<graphdb::GraphDB> graph_db;
+  std::unique_ptr<txn::Transaction> txn;
+  std::unique_ptr<cypher::RTContext> ctx;
+  std::unique_ptr<ResultIterator> result;
+  bool transaction_closed = false;
+};
+
 struct BoltSession {
   explicit BoltSession(size_t max_pending_messages = 0)
       : msgs(max_pending_messages) {}
 
+  std::unique_ptr<ActiveBoltQuery> active_query;
   std::optional<BoltMsgDetail> streaming_msg;
   PackStream ps;
   std::string user;

@@ -178,6 +178,27 @@ std::vector<BackendMessage> BoltBackendSession::SendAndReadUntilTerminal(
   }
 }
 
+BackendMessage BoltBackendSession::SendAndForwardUntilTerminal(
+    const std::string& request,
+    const std::function<void(const BackendMessage&)>& forward,
+    bool decode_records) {
+  EnsureConnected();
+  try {
+    boost::asio::write(*socket_, boost::asio::buffer(request));
+    while (true) {
+      auto message = ReadMessage(decode_records);
+      const bool terminal = IsTerminal(message.tag);
+      forward(message);
+      if (terminal) {
+        return message;
+      }
+    }
+  } catch (...) {
+    Close();
+    throw;
+  }
+}
+
 std::vector<RaftNodeEndpoint> BoltBackendSession::FetchRaftNodeInfos(
     const std::string& graph_name) {
   bolt::PackStream ps;

@@ -517,9 +517,10 @@ void ProcessPullOrDiscard(const std::shared_ptr<bolt::BoltConnection>& conn,
   } else {
     ps.AppendDiscardN(n);
   }
-  auto messages = iter->second->SendAndReadUntilTerminal(ps.ConstBuffer());
-  auto last = LastMessage(messages);
-  ForwardMessages(conn, messages);
+  auto last = iter->second->SendAndForwardUntilTerminal(
+      ps.ConstBuffer(), [&conn](const BackendMessage& message) {
+        conn->PostResponse(message.raw);
+      });
 
   if (last.tag == bolt::BoltMsg::Success && !last.success_has_more) {
     session->state = ProxySessionState::Ready;

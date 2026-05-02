@@ -16,6 +16,7 @@
 
 #include <any>
 #include <boost/asio.hpp>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -54,6 +55,10 @@ class BoltBackendSession {
 
   std::vector<BackendMessage> SendAndReadUntilTerminal(
       const std::string& request, bool decode_records = false);
+  BackendMessage SendAndForwardUntilTerminal(
+      const std::string& request,
+      const std::function<void(const BackendMessage&)>& forward,
+      bool decode_records = false);
   std::vector<RaftNodeEndpoint> FetchRaftNodeInfos(
       const std::string& graph_name);
   void Close();
