@@ -14,6 +14,8 @@
 
 #include "proxy/backend_session.h"
 
+#include <spdlog/fmt/fmt.h>
+
 #include <boost/endian/conversion.hpp>
 #include <cstring>
 #include <stdexcept>
@@ -105,6 +107,48 @@ std::string FailureMessage(const BackendMessage& msg,
   return "backend returned failure";
 }
 
+bolt::Record DecodeRecord(const BackendMessage& msg, bolt::Hydrator* hydrator) {
+  hydrator->ClearErr();
+  auto parsed = hydrator->Hydrate({msg.payload.data(), msg.payload.size()});
+  if (parsed.second) {
+    throw std::runtime_error(parsed.second.value());
+  }
+  if (parsed.first.type() == typeid(std::optional<bolt::Record>)) {
+    const auto& record =
+        std::any_cast<const std::optional<bolt::Record>&>(parsed.first);
+    if (record.has_value()) {
+      return *record;
+    }
+  }
+  throw std::runtime_error("backend returned invalid record");
+}
+
+int64_t CastInt64Field(const std::any& value, const char* field_name) {
+  auto* integer = std::any_cast<int64_t>(&value);
+  if (integer == nullptr) {
+    throw std::runtime_error(
+        fmt::format("{} type should be Integer", field_name));
+  }
+  return *integer;
+}
+
+std::string CastStringField(const std::any& value, const char* field_name) {
+  auto* str = std::any_cast<std::string>(&value);
+  if (str == nullptr) {
+    throw std::runtime_error(
+        fmt::format("{} type should be String", field_name));
+  }
+  return *str;
+}
+
+bool CastBoolField(const std::any& value, const char* field_name) {
+  auto* boolean = std::any_cast<bool>(&value);
+  if (boolean == nullptr) {
+    throw std::runtime_error(fmt::format("{} type should be Bool", field_name));
+  }
+  return *boolean;
+}
+
 }  // namespace
 
 BoltBackendSession::BoltBackendSession(
@@ -115,13 +159,13 @@ BoltBackendSession::BoltBackendSession(
 BoltBackendSession::~BoltBackendSession() { Close(); }
 
 std::vector<BackendMessage> BoltBackendSession::SendAndReadUntilTerminal(
-    const std::string& request) {
+    const std::string& request, bool decode_records) {
   EnsureConnected();
   try {
     boost::asio::write(*socket_, boost::asio::buffer(request));
     std::vector<BackendMessage> messages;
     while (true) {
-      auto message = ReadMessage();
+      auto message = ReadMessage(decode_records);
       auto terminal = IsTerminal(message.tag);
       messages.emplace_back(std::move(message));
       if (terminal) {
@@ -132,6 +176,60 @@ std::vector<BackendMessage> BoltBackendSession::SendAndReadUntilTerminal(
     Close();
     throw;
   }
+}
+
+std::vector<RaftNodeEndpoint> BoltBackendSession::FetchRaftNodeInfos(
+    const std::string& graph_name) {
+  bolt::PackStream ps;
+  ps.AppendRun(
+      "CALL dbms.graph.getRaftNodeInfos($graph_name) "
+      "YIELD node_id, ip, bolt_port, raft_port, is_leader "
+      "RETURN node_id, ip, bolt_port, raft_port, is_leader",
+      {{"graph_name", graph_name}}, {{"db", graph_name}});
+  auto run_messages = SendAndReadUntilTerminal(ps.ConstBuffer());
+  if (run_messages.empty() ||
+      run_messages.back().tag != bolt::BoltMsg::Success) {
+    throw std::runtime_error(run_messages.empty()
+                                 ? "raft node info query returned no response"
+                                 : run_messages.back().failure_message);
+  }
+
+  ps.Reset();
+  ps.AppendPullN(-1);
+  auto pull_messages = SendAndReadUntilTerminal(ps.ConstBuffer(), true);
+  std::vector<RaftNodeEndpoint> node_infos;
+  for (const auto& message : pull_messages) {
+    if (message.tag != bolt::BoltMsg::Record) {
+      continue;
+    }
+    if (!message.record.has_value()) {
+      throw std::runtime_error("raft node info record is missing");
+    }
+    const auto& values = message.record->values;
+    if (values.size() != 5) {
+      throw std::runtime_error(
+          fmt::format("raft node info record should contain 5 fields, got {}",
+                      values.size()));
+    }
+    auto node_id = CastInt64Field(values[0], "node_id");
+    auto bolt_port = CastInt64Field(values[2], "bolt_port");
+    auto raft_port = CastInt64Field(values[3], "raft_port");
+    if (node_id <= 0 || bolt_port <= 0 || raft_port <= 0) {
+      throw std::runtime_error("raft node info contains non-positive id/port");
+    }
+    node_infos.push_back({.node_id = static_cast<uint64_t>(node_id),
+                          .host = CastStringField(values[1], "ip"),
+                          .port = static_cast<uint32_t>(bolt_port),
+                          .raft_port = static_cast<uint32_t>(raft_port),
+                          .is_leader = CastBoolField(values[4], "is_leader")});
+  }
+  if (pull_messages.empty() ||
+      pull_messages.back().tag != bolt::BoltMsg::Success) {
+    throw std::runtime_error(pull_messages.empty()
+                                 ? "raft node info pull returned no response"
+                                 : pull_messages.back().failure_message);
+  }
+  return node_infos;
 }
 
 void BoltBackendSession::Close() {
@@ -179,7 +277,7 @@ void BoltBackendSession::Connect() {
   throw std::runtime_error("backend HELLO failed: " + failure);
 }
 
-BackendMessage BoltBackendSession::ReadMessage() {
+BackendMessage BoltBackendSession::ReadMessage(bool decode_records) {
   BackendMessage message;
   while (true) {
     char header[2] = {0};
@@ -205,6 +303,10 @@ BackendMessage BoltBackendSession::ReadMessage() {
   message.tag = DecodeTag(message.payload);
   if (message.tag == bolt::BoltMsg::Success) {
     message.success_has_more = DecodeSuccessHasMore(message.payload);
+  } else if (message.tag == bolt::BoltMsg::Failure) {
+    message.failure_message = FailureMessage(message, &hydrator_);
+  } else if (decode_records && message.tag == bolt::BoltMsg::Record) {
+    message.record = DecodeRecord(message, &hydrator_);
   }
   return message;
 }

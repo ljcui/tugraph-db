@@ -162,6 +162,32 @@ struct ProxySession {
   bool scheduled = false;
 };
 
+class LeaderCache {
+ public:
+  std::optional<BackendEndpoint> Get(const std::string& graph_name) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto iter = leaders_.find(graph_name);
+    if (iter == leaders_.end()) {
+      return std::nullopt;
+    }
+    return iter->second;
+  }
+
+  void Put(const std::string& graph_name, BackendEndpoint endpoint) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    leaders_[graph_name] = std::move(endpoint);
+  }
+
+  void Invalidate(const std::string& graph_name) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    leaders_.erase(graph_name);
+  }
+
+ private:
+  std::mutex mutex_;
+  std::unordered_map<std::string, BackendEndpoint> leaders_;
+};
+
 std::shared_ptr<ProxySession> GetSession(bolt::BoltConnection& conn) {
   auto ctx = conn.GetContextShared();
   if (!ctx) {
@@ -280,6 +306,75 @@ BoltBackendSession& GetBackendSession(ProxySession* session,
   return *ptr;
 }
 
+void CloseBackendSession(ProxySession* session,
+                         const BackendEndpoint& endpoint) {
+  auto iter = session->backend_sessions.find(endpoint.name);
+  if (iter != session->backend_sessions.end()) {
+    iter->second->Close();
+  }
+}
+
+BackendEndpoint ResolveConfiguredEndpoint(const ShardReplicaGroup& group,
+                                          const RaftNodeEndpoint& discovered) {
+  for (const auto& replica : group.replicas) {
+    if (replica.node_id == discovered.node_id) {
+      return replica;
+    }
+  }
+
+  BackendEndpoint endpoint;
+  endpoint.node_id = discovered.node_id;
+  endpoint.host = discovered.host;
+  endpoint.port = discovered.port;
+  endpoint.raft_port = discovered.raft_port;
+  endpoint.name = std::to_string(endpoint.node_id) + "@" + endpoint.host + ":" +
+                  std::to_string(endpoint.port);
+  return endpoint;
+}
+
+BackendEndpoint DiscoverLeader(
+    const ShardRoute& route,
+    const std::unordered_map<std::string, std::any>& hello_meta) {
+  if (route.replica_group == nullptr || route.replica_group->replicas.empty()) {
+    throw std::runtime_error(
+        fmt::format("proxy shard {} has no raft replicas", route.shard_id));
+  }
+
+  std::string last_error;
+  for (const auto& replica : route.replica_group->replicas) {
+    try {
+      BoltBackendSession session(replica, hello_meta);
+      auto node_infos = session.FetchRaftNodeInfos(route.graph_name);
+      for (const auto& node_info : node_infos) {
+        if (!node_info.is_leader) {
+          continue;
+        }
+        auto leader =
+            ResolveConfiguredEndpoint(*route.replica_group, node_info);
+        LOG_INFO("proxy discovered leader for graph {}: {}:{} node {}",
+                 route.graph_name, leader.host, leader.port, leader.node_id);
+        return leader;
+      }
+      last_error = "raft leader is not known";
+    } catch (const std::exception& e) {
+      last_error = e.what();
+      LOG_WARN("failed to discover leader for graph {} from {}:{}: {}",
+               route.graph_name, replica.host, replica.port, e.what());
+    }
+  }
+  throw std::runtime_error(
+      fmt::format("failed to discover raft leader for graph {}: {}",
+                  route.graph_name, last_error));
+}
+
+bool IsNotLeaderFailure(const std::vector<BackendMessage>& messages) {
+  if (messages.empty() || messages.back().tag != bolt::BoltMsg::Failure) {
+    return false;
+  }
+  return messages.back().failure_message.find("not leader") !=
+         std::string::npos;
+}
+
 void ProcessReset(const std::shared_ptr<bolt::BoltConnection>& conn,
                   ProxySession* session) {
   if (!session->active_backend.has_value()) {
@@ -303,6 +398,7 @@ void ProcessReset(const std::shared_ptr<bolt::BoltConnection>& conn,
 }
 
 void ProcessRun(const ShardMap& shard_map,
+                const std::shared_ptr<LeaderCache>& leader_cache,
                 const std::shared_ptr<bolt::BoltConnection>& conn,
                 ProxySession* session, const std::vector<std::any>& fields) {
   if (session->state == ProxySessionState::Streaming) {
@@ -340,20 +436,62 @@ void ProcessRun(const ShardMap& shard_map,
 
   bolt::PackStream ps;
   ps.AppendRun(cypher, params, extra);
-  auto& backend = GetBackendSession(session, *route.backend);
-  auto messages = backend.SendAndReadUntilTerminal(ps.ConstBuffer());
+  std::vector<BackendMessage> messages;
+  BackendEndpoint selected_endpoint;
+  std::string last_error;
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    try {
+      if (attempt == 0) {
+        auto cached_leader = leader_cache->Get(route.graph_name);
+        selected_endpoint = cached_leader.has_value()
+                                ? *cached_leader
+                                : DiscoverLeader(route, session->hello_meta);
+      } else {
+        selected_endpoint = DiscoverLeader(route, session->hello_meta);
+      }
+
+      auto& backend = GetBackendSession(session, selected_endpoint);
+      messages = backend.SendAndReadUntilTerminal(ps.ConstBuffer());
+      if (!IsNotLeaderFailure(messages)) {
+        leader_cache->Put(route.graph_name, selected_endpoint);
+        break;
+      }
+
+      last_error = messages.back().failure_message;
+      CloseBackendSession(session, selected_endpoint);
+      leader_cache->Invalidate(route.graph_name);
+      LOG_WARN("proxy stale leader for graph {} backend {}:{}: {}",
+               route.graph_name, selected_endpoint.host, selected_endpoint.port,
+               last_error);
+      messages.clear();
+    } catch (const std::exception& e) {
+      last_error = e.what();
+      CloseBackendSession(session, selected_endpoint);
+      leader_cache->Invalidate(route.graph_name);
+      LOG_WARN("proxy backend attempt failed for graph {} backend {}:{}: {}",
+               route.graph_name, selected_endpoint.host, selected_endpoint.port,
+               e.what());
+      messages.clear();
+    }
+  }
+  if (messages.empty()) {
+    SendFailure(conn, session, kNetworkError,
+                fmt::format("failed to route graph {} shard {}: {}",
+                            route.graph_name, route.shard_id, last_error));
+    return;
+  }
   auto last = LastMessage(messages);
   ForwardMessages(conn, messages);
 
-  session->active_backend = route.backend->name;
+  session->active_backend = selected_endpoint.name;
   if (last.tag == bolt::BoltMsg::Success) {
     session->state = ProxySessionState::Streaming;
   } else {
     session->state = ProxySessionState::Failed;
   }
   LOG_DEBUG("proxy routed shard_key [{}] to shard {} graph {} backend {}:{}",
-            shard_key, route.shard_id, route.graph_name, route.backend->host,
-            route.backend->port);
+            shard_key, route.shard_id, route.graph_name, selected_endpoint.host,
+            selected_endpoint.port);
 }
 
 void ProcessPullOrDiscard(const std::shared_ptr<bolt::BoltConnection>& conn,
@@ -392,6 +530,7 @@ void ProcessPullOrDiscard(const std::shared_ptr<bolt::BoltConnection>& conn,
 }
 
 void ProcessProxyMessage(const ShardMap& shard_map,
+                         const std::shared_ptr<LeaderCache>& leader_cache,
                          const std::shared_ptr<bolt::BoltConnection>& conn,
                          ProxySession* session, ProxyMessage message) {
   try {
@@ -406,7 +545,7 @@ void ProcessProxyMessage(const ShardMap& shard_map,
 
     switch (message.type) {
       case bolt::BoltMsg::Run:
-        ProcessRun(shard_map, conn, session, message.fields);
+        ProcessRun(shard_map, leader_cache, conn, session, message.fields);
         return;
       case bolt::BoltMsg::PullN:
       case bolt::BoltMsg::DiscardN:
@@ -433,11 +572,13 @@ void ProcessProxyMessage(const ShardMap& shard_map,
 }
 
 void ProcessSession(const ShardMap& shard_map,
+                    std::shared_ptr<LeaderCache> leader_cache,
                     std::shared_ptr<bolt::BoltConnection> conn,
                     std::shared_ptr<ProxySession> session,
                     std::weak_ptr<ProxyWorkerPool> weak_pool);
 
 void ScheduleSession(const ShardMap& shard_map,
+                     const std::shared_ptr<LeaderCache>& leader_cache,
                      const std::shared_ptr<ProxyWorkerPool>& pool,
                      std::shared_ptr<bolt::BoltConnection> conn,
                      std::shared_ptr<ProxySession> session) {
@@ -454,14 +595,16 @@ void ScheduleSession(const ShardMap& shard_map,
   }
 
   std::weak_ptr<ProxyWorkerPool> weak_pool = pool;
-  if (!pool->Post([shard_map, conn, session, weak_pool]() mutable {
-        ProcessSession(shard_map, conn, session, weak_pool);
-      })) {
+  if (!pool->Post(
+          [shard_map, leader_cache, conn, session, weak_pool]() mutable {
+            ProcessSession(shard_map, leader_cache, conn, session, weak_pool);
+          })) {
     conn->Close();
   }
 }
 
 void ProcessSession(const ShardMap& shard_map,
+                    std::shared_ptr<LeaderCache> leader_cache,
                     std::shared_ptr<bolt::BoltConnection> conn,
                     std::shared_ptr<ProxySession> session,
                     std::weak_ptr<ProxyWorkerPool> weak_pool) {
@@ -470,7 +613,8 @@ void ProcessSession(const ShardMap& shard_map,
     if (!message) {
       break;
     }
-    ProcessProxyMessage(shard_map, conn, session.get(), std::move(*message));
+    ProcessProxyMessage(shard_map, leader_cache, conn, session.get(),
+                        std::move(*message));
   }
 
   bool should_reschedule = false;
@@ -491,14 +635,16 @@ void ProcessSession(const ShardMap& shard_map,
     conn->Close();
     return;
   }
-  if (!pool->Post([shard_map, conn, session, weak_pool]() mutable {
-        ProcessSession(shard_map, conn, session, weak_pool);
-      })) {
+  if (!pool->Post(
+          [shard_map, leader_cache, conn, session, weak_pool]() mutable {
+            ProcessSession(shard_map, leader_cache, conn, session, weak_pool);
+          })) {
     conn->Close();
   }
 }
 
 bool EnqueueSessionMessage(const ShardMap& shard_map,
+                           const std::shared_ptr<LeaderCache>& leader_cache,
                            const std::shared_ptr<ProxyWorkerPool>& pool,
                            bolt::BoltConnection& conn,
                            std::shared_ptr<ProxySession> session,
@@ -509,7 +655,8 @@ bool EnqueueSessionMessage(const ShardMap& shard_map,
     conn.Close();
     return false;
   }
-  ScheduleSession(shard_map, pool, conn.shared_from_this(), std::move(session));
+  ScheduleSession(shard_map, leader_cache, pool, conn.shared_from_this(),
+                  std::move(session));
   return true;
 }
 
@@ -553,7 +700,8 @@ std::function<void(bolt::BoltConnection&, bolt::BoltMsg, std::vector<std::any>)>
 NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
                 size_t max_pending_messages) {
   auto worker_pool = std::make_shared<ProxyWorkerPool>(worker_thread_num);
-  return [shard_map, worker_pool, max_pending_messages](
+  auto leader_cache = std::make_shared<LeaderCache>();
+  return [shard_map, worker_pool, leader_cache, max_pending_messages](
              bolt::BoltConnection& conn, bolt::BoltMsg msg,
              std::vector<std::any> fields) mutable {
     if (msg == bolt::BoltMsg::Hello) {
@@ -585,7 +733,8 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
         msg == bolt::BoltMsg::DiscardN || msg == bolt::BoltMsg::Reset ||
         msg == bolt::BoltMsg::Begin || msg == bolt::BoltMsg::Commit ||
         msg == bolt::BoltMsg::Rollback) {
-      EnqueueSessionMessage(shard_map, worker_pool, conn, std::move(session),
+      EnqueueSessionMessage(shard_map, leader_cache, worker_pool, conn,
+                            std::move(session),
                             {.type = msg, .fields = std::move(fields)});
       return;
     }

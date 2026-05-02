@@ -17,21 +17,33 @@
 #include <any>
 #include <boost/asio.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "bolt/hydrator.h"
 #include "bolt/messages.h"
+#include "bolt/record.h"
 #include "proxy/shard_map.h"
 
 namespace proxy {
+
+struct RaftNodeEndpoint {
+  uint64_t node_id = 0;
+  std::string host;
+  uint32_t port = 0;
+  uint32_t raft_port = 0;
+  bool is_leader = false;
+};
 
 struct BackendMessage {
   std::string raw;
   std::string payload;
   bolt::BoltMsg tag = bolt::BoltMsg::Ignored;
   bool success_has_more = false;
+  std::string failure_message;
+  std::optional<bolt::Record> record;
 };
 
 class BoltBackendSession {
@@ -41,13 +53,15 @@ class BoltBackendSession {
   ~BoltBackendSession();
 
   std::vector<BackendMessage> SendAndReadUntilTerminal(
-      const std::string& request);
+      const std::string& request, bool decode_records = false);
+  std::vector<RaftNodeEndpoint> FetchRaftNodeInfos(
+      const std::string& graph_name);
   void Close();
 
  private:
   void EnsureConnected();
   void Connect();
-  BackendMessage ReadMessage();
+  BackendMessage ReadMessage(bool decode_records = false);
   static bolt::BoltMsg DecodeTag(std::string_view payload);
   static bool DecodeSuccessHasMore(std::string_view payload);
   static bool IsTerminal(bolt::BoltMsg tag);

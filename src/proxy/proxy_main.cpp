@@ -45,10 +45,11 @@ DEFINE_uint64(proxy_shard_id_width, 2,
               "Zero-padding width used when formatting physical shard graph "
               "names.");
 DEFINE_string(
-    proxy_backends, "",
-    "Comma-separated backend specs in host:port:shard_begin-shard_end "
-    "format, for example "
-    "127.0.0.1:7687:0-15,127.0.0.1:7688:16-31.");
+    proxy_raft_backends, "",
+    "Semicolon-separated raft backend specs in "
+    "shard_begin-shard_end=node_id@host:bolt_port:raft_port,... format, for "
+    "example "
+    "0-63=1@10.0.0.1:7687:7688,2@10.0.0.2:7687:7688,3@10.0.0.3:7687:7688.");
 
 namespace {
 
@@ -82,7 +83,8 @@ std::string Version() {
 int main(int argc, char* argv[]) {
   gflags::SetVersionString(Version());
   gflags::SetUsageMessage("Usage: " + std::string(argv[0]) +
-                          " --proxy_backends=host:port:0-63");
+                          " --proxy_raft_backends="
+                          "0-63=1@host1:7687:7688,2@host2:7687:7688");
   gflags::ParseCommandLineFlags(&argc, &argv, true);
   spdlog::set_pattern("%v");
   if (!SetupLogger()) {
@@ -94,7 +96,7 @@ int main(int argc, char* argv[]) {
     auto shard_map = proxy::ShardMap::FromConfig(
         FLAGS_proxy_logical_graph, FLAGS_proxy_physical_graph_prefix,
         FLAGS_proxy_shard_count, FLAGS_proxy_shard_id_width,
-        FLAGS_proxy_backends);
+        FLAGS_proxy_raft_backends);
     proxy::ProxyServer server(
         {.listen_port = FLAGS_proxy_bolt_port,
          .bolt_io_thread_num = FLAGS_proxy_bolt_io_thread_num,

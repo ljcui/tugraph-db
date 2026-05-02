@@ -960,6 +960,33 @@ std::vector<std::string> CollectCypherStringColumn(GraphDB* graph,
   return values;
 }
 
+uint64_t QueryLeaderNodeIdViaProcedure(server::Galaxy* galaxy, GraphDB* graph) {
+  cypher::RTContext rtx(galaxy, "admin", graph->db_meta().graph_name());
+  auto txn = graph->BeginTransaction();
+  auto result = txn->Execute(
+      &rtx, std::string("CALL dbms.graph.getRaftNodeInfos('") + kGraphName +
+                "') YIELD node_id, is_leader WHERE is_leader RETURN node_id");
+  uint64_t leader_node_id = 0;
+  size_t count = 0;
+  for (; result->Valid(); result->Next()) {
+    const auto& record = result->GetRecord();
+    if (record.size() != 1 || record[0].type != common::ResultType::Value) {
+      throw std::runtime_error("expected a single scalar Cypher column");
+    }
+    auto value = std::any_cast<Value>(record[0].data);
+    if (!value.IsInteger() || value.AsInteger() <= 0) {
+      throw std::runtime_error("expected a positive integer leader node id");
+    }
+    leader_node_id = static_cast<uint64_t>(value.AsInteger());
+    ++count;
+  }
+  txn->Commit();
+  if (count != 1) {
+    throw std::runtime_error("expected exactly one raft leader");
+  }
+  return leader_node_id;
+}
+
 bool WaitForCypherStringColumnEquals(
     GraphDB* graph, const std::string& cypher,
     std::vector<std::string> expected,
@@ -1644,6 +1671,20 @@ TEST(RaftCluster, nodeInfosMarkOnlyCurrentLeader) {
   ASSERT_TRUE(new_leader_index.has_value()) << cluster.StatusSummary();
   ASSERT_NE(*new_leader_index, *leader_index);
   assert_current_leader_marked(*new_leader_index);
+}
+
+TEST(RaftCluster, raftNodeInfosProcedureMarksCurrentLeader) {
+  TestServerCluster cluster("testdb_raft_cluster");
+  ASSERT_NO_THROW(cluster.Start());
+
+  auto leader_index = cluster.WaitForLeaderIndex(std::chrono::seconds(15));
+  ASSERT_TRUE(leader_index.has_value()) << cluster.StatusSummary();
+  auto* leader = cluster.server(*leader_index);
+  ASSERT_NE(leader, nullptr);
+  auto graph = leader->galaxy()->OpenGraph(kGraphName);
+
+  EXPECT_EQ(QueryLeaderNodeIdViaProcedure(leader->galaxy(), graph.get()),
+            cluster.node_id(*leader_index));
 }
 
 TEST(RaftCluster, galaxyFailoverCanCreateRaftGraph) {

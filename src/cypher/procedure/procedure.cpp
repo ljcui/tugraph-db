@@ -168,6 +168,15 @@ std::vector<Procedure> global_procedures = {
               Procedure::SIG_SPEC{{"id", {0, ProcedureResultType::Value}},
                                   {"name", {1, ProcedureResultType::Value}}}),
     Procedure(
+        "dbms.graph.getRaftNodeInfos",
+        BuiltinProcedure::DbmsGraphGetRaftNodeInfos,
+        Procedure::SIG_SPEC{{"graph_name", {0, ProcedureResultType::Value}}},
+        Procedure::SIG_SPEC{{"node_id", {0, ProcedureResultType::Value}},
+                            {"ip", {1, ProcedureResultType::Value}},
+                            {"bolt_port", {2, ProcedureResultType::Value}},
+                            {"raft_port", {3, ProcedureResultType::Value}},
+                            {"is_leader", {4, ProcedureResultType::Value}}}),
+    Procedure(
         "db.showIndexes", BuiltinProcedure::DbShowIndexes,
         Procedure::SIG_SPEC{},
         Procedure::SIG_SPEC{{"name", {0, ProcedureResultType::Value}},
@@ -958,6 +967,44 @@ void BuiltinProcedure::DbmsGraphListGraph(
         r.emplace_back(Value::Integer(graph->db_meta().graph_id()));
       } else if (yield == "name") {
         r.emplace_back(Value::String(graph->db_meta().graph_name()));
+      }
+    }
+    records->emplace_back(std::move(r));
+  }
+}
+
+void BuiltinProcedure::DbmsGraphGetRaftNodeInfos(
+    RTContext *ctx, const Record *record, const VEC_EXPR &args,
+    const VEC_STR &yield_items,
+    std::vector<std::vector<ProcedureResult>> *records) {
+  CYPHER_ARG_CHECK(
+      args.size() == 1,
+      fmt::format("Function requires 1 argument, but {} are given. Usage: "
+                  "dbms.graph.getRaftNodeInfos('graph1')",
+                  args.size()))
+  CYPHER_ARG_CHECK(args[0].IsString(), "graph_name type should be String")
+  CYPHER_ARG_CHECK(ctx->galaxy_ != nullptr, "galaxy context is required")
+  auto name = args[0].constant.AsString();
+  auto graphdb = ctx->galaxy_->OpenGraph(name);
+  auto *raft_driver = graphdb->raft_driver();
+  if (raft_driver == nullptr) {
+    THROW_CODE(InvalidParameter, "graph [{}] does not enable raft", name);
+  }
+
+  auto node_infos = raft_driver->GetNodeInfosWithLeader();
+  for (const auto &[node_id, node_info] : node_infos.nodes()) {
+    std::vector<ProcedureResult> r;
+    for (auto &yield : yield_items) {
+      if (yield == "node_id") {
+        r.emplace_back(Value::Integer(static_cast<int64_t>(node_id)));
+      } else if (yield == "ip") {
+        r.emplace_back(Value::String(node_info.ip()));
+      } else if (yield == "bolt_port") {
+        r.emplace_back(Value::Integer(node_info.bolt_port()));
+      } else if (yield == "raft_port") {
+        r.emplace_back(Value::Integer(node_info.raft_poft()));
+      } else if (yield == "is_leader") {
+        r.emplace_back(Value::Bool(node_info.is_leader()));
       }
     }
     records->emplace_back(std::move(r));

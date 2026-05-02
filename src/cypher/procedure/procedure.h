@@ -149,6 +149,10 @@ class BuiltinProcedure {
       RTContext *ctx, const Record *record, const VEC_EXPR &args,
       const VEC_STR &yield_items,
       std::vector<std::vector<ProcedureResult>> *records);
+  static void DbmsGraphGetRaftNodeInfos(
+      RTContext *ctx, const Record *record, const VEC_EXPR &args,
+      const VEC_STR &yield_items,
+      std::vector<std::vector<ProcedureResult>> *records);
   static void DbmsGraphClearGraph(
       RTContext *ctx, const Record *record, const VEC_EXPR &args,
       const VEC_STR &yield_items,

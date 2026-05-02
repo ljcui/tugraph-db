@@ -49,12 +49,22 @@ std::vector<std::string> Split(const std::string& value, char delim) {
   return parts;
 }
 
-uint32_t ParsePort(const std::string& value) {
+uint64_t ParsePositiveUInt64(const std::string& value,
+                             const std::string& field_name) {
+  size_t pos = 0;
+  auto parsed = std::stoull(value, &pos, 10);
+  if (pos != value.size() || parsed == 0) {
+    THROW_CODE(InvalidParameter, "invalid {} [{}]", field_name, value);
+  }
+  return parsed;
+}
+
+uint32_t ParsePort(const std::string& value, const std::string& field_name) {
   size_t pos = 0;
   auto parsed = std::stoul(value, &pos, 10);
   if (pos != value.size() || parsed == 0 ||
       parsed > std::numeric_limits<uint32_t>::max()) {
-    THROW_CODE(InvalidParameter, "invalid proxy backend port [{}]", value);
+    THROW_CODE(InvalidParameter, "invalid {} [{}]", field_name, value);
   }
   return static_cast<uint32_t>(parsed);
 }
@@ -86,6 +96,48 @@ std::pair<size_t, size_t> ParseShardRange(const std::string& value,
   return {begin, end};
 }
 
+BackendEndpoint ParseReplica(const std::string& value) {
+  auto at = value.find('@');
+  if (at == std::string::npos || at == 0 || at + 1 >= value.size()) {
+    THROW_CODE(InvalidParameter,
+               "invalid proxy raft replica [{}], expected "
+               "node_id@host:bolt_port:raft_port",
+               value);
+  }
+  auto node_id = ParsePositiveUInt64(value.substr(0, at), "raft node_id");
+  auto parts = Split(value.substr(at + 1), ':');
+  if (parts.size() != 3 || parts[0].empty() || parts[1].empty() ||
+      parts[2].empty()) {
+    THROW_CODE(InvalidParameter,
+               "invalid proxy raft replica [{}], expected "
+               "node_id@host:bolt_port:raft_port",
+               value);
+  }
+
+  BackendEndpoint endpoint;
+  endpoint.node_id = node_id;
+  endpoint.host = parts[0];
+  endpoint.port = ParsePort(parts[1], "bolt_port");
+  endpoint.raft_port = ParsePort(parts[2], "raft_port");
+  endpoint.name = std::to_string(endpoint.node_id) + "@" + endpoint.host + ":" +
+                  std::to_string(endpoint.port);
+  return endpoint;
+}
+
+std::vector<BackendEndpoint> ParseReplicas(const std::string& value) {
+  std::vector<BackendEndpoint> replicas;
+  for (const auto& raw_replica : Split(value, ',')) {
+    if (raw_replica.empty()) {
+      continue;
+    }
+    replicas.emplace_back(ParseReplica(raw_replica));
+  }
+  if (replicas.empty()) {
+    THROW_CODE(InvalidParameter, "proxy raft replica list should not be empty");
+  }
+  return replicas;
+}
+
 }  // namespace
 
 ShardMap ShardMap::FromConfig(std::string logical_graph,
@@ -112,36 +164,35 @@ ShardMap ShardMap::FromConfig(std::string logical_graph,
   map.shard_id_width_ = shard_id_width;
   map.shards_.resize(shard_count);
 
-  size_t backend_index = 0;
-  for (const auto& raw_spec : Split(backend_specs, ',')) {
+  for (size_t shard_id = 0; shard_id < map.shards_.size(); ++shard_id) {
+    map.shards_[shard_id].shard_id = shard_id;
+  }
+
+  for (const auto& raw_spec : Split(backend_specs, ';')) {
     if (raw_spec.empty()) {
       continue;
     }
-    auto parts = Split(raw_spec, ':');
-    if (parts.size() != 3 || parts[0].empty() || parts[1].empty() ||
-        parts[2].empty()) {
+    auto equal = raw_spec.find('=');
+    if (equal == std::string::npos || equal == 0 ||
+        equal + 1 >= raw_spec.size()) {
       THROW_CODE(InvalidParameter,
-                 "invalid proxy backend spec [{}], expected host:port:a-b",
+                 "invalid proxy raft backend spec [{}], expected "
+                 "shard_begin-shard_end=node_id@host:bolt_port:raft_port,...",
                  raw_spec);
     }
-    auto endpoint = std::make_shared<BackendEndpoint>();
-    endpoint->host = parts[0];
-    endpoint->port = ParsePort(parts[1]);
-    endpoint->name = endpoint->host + ":" + std::to_string(endpoint->port) +
-                     "#" + std::to_string(backend_index++);
-
-    auto [begin, end] = ParseShardRange(parts[2], shard_count);
+    auto [begin, end] = ParseShardRange(raw_spec.substr(0, equal), shard_count);
+    auto replicas = ParseReplicas(raw_spec.substr(equal + 1));
     for (size_t shard_id = begin; shard_id <= end; ++shard_id) {
-      if (map.shards_[shard_id] != nullptr) {
+      if (!map.shards_[shard_id].replicas.empty()) {
         THROW_CODE(InvalidParameter, "proxy shard {} is assigned twice",
                    shard_id);
       }
-      map.shards_[shard_id] = endpoint;
+      map.shards_[shard_id].replicas = replicas;
     }
   }
 
   for (size_t shard_id = 0; shard_id < map.shards_.size(); ++shard_id) {
-    if (map.shards_[shard_id] == nullptr) {
+    if (map.shards_[shard_id].replicas.empty()) {
       THROW_CODE(InvalidParameter, "proxy shard {} has no backend", shard_id);
     }
   }
@@ -161,7 +212,7 @@ ShardRoute ShardMap::Route(const std::string& logical_graph,
   auto shard_id = StableHash(shard_key) % shards_.size();
   return {.shard_id = shard_id,
           .graph_name = FormatGraphName(shard_id),
-          .backend = shards_[shard_id]};
+          .replica_group = &shards_[shard_id]};
 }
 
 uint64_t ShardMap::StableHash(const std::string& key) {
