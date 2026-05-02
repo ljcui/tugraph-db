@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <any>
 #include <atomic>
 #include <boost/asio.hpp>
 #include <chrono>
@@ -34,6 +35,7 @@
 #include <vector>
 
 #include "common/value.h"
+#include "cypher/execution_plan/result_iterator.h"
 #include "etcd-raft-cpp/raft.h"
 #include "graphdb/graph_db.h"
 #include "graphdb/vertex_iterator.h"
@@ -761,12 +763,13 @@ std::optional<size_t> WaitForLeaderIndexExcluding(
 }
 
 bool WaitForAllPropertyIndexesReady(const TestServerCluster& cluster,
+                                    const std::string& graph_name,
                                     const std::string& index_name,
                                     std::chrono::milliseconds timeout) {
   return WaitUntil(
-      [&cluster, &index_name]() {
+      [&cluster, &graph_name, &index_name]() {
         for (auto* server : cluster.servers()) {
-          auto graph = server->galaxy()->OpenGraph(kGraphName);
+          auto graph = server->galaxy()->OpenGraph(graph_name);
           if (!graph->meta_info().GetReadyVertexPropertyIndex(index_name)) {
             auto index = graph->meta_info().GetVertexPropertyIndex(index_name);
             if (index && index->state() == meta::IndexBuildState::FAILED) {
@@ -779,6 +782,13 @@ bool WaitForAllPropertyIndexesReady(const TestServerCluster& cluster,
         return true;
       },
       timeout);
+}
+
+bool WaitForAllPropertyIndexesReady(const TestServerCluster& cluster,
+                                    const std::string& index_name,
+                                    std::chrono::milliseconds timeout) {
+  return WaitForAllPropertyIndexesReady(cluster, kGraphName, index_name,
+                                        timeout);
 }
 
 bool WaitForAllFullTextIndexDefinitions(
@@ -798,6 +808,28 @@ bool WaitForAllFullTextIndexDefinitions(
       timeout);
 }
 
+bool WaitForAllFullTextIndexesReady(
+    const TestServerCluster& cluster, const std::string& graph_name,
+    const std::string& index_name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
+  return WaitUntil(
+      [&cluster, &graph_name, &index_name]() {
+        for (auto* server : cluster.servers()) {
+          auto graph = server->galaxy()->OpenGraph(graph_name);
+          if (!graph->meta_info().GetReadyVertexFullTextIndex(index_name)) {
+            auto index = graph->meta_info().GetVertexFullTextIndex(index_name);
+            if (index && index->state() == meta::IndexBuildState::FAILED) {
+              ADD_FAILURE() << "fulltext index build failed: "
+                            << index->meta().build_error();
+            }
+            return false;
+          }
+        }
+        return true;
+      },
+      timeout);
+}
+
 bool WaitForAllVectorIndexDefinitions(
     const TestServerCluster& cluster, const std::string& index_name,
     std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
@@ -807,6 +839,28 @@ bool WaitForAllVectorIndexDefinitions(
           auto graph = server->galaxy()->OpenGraph(kGraphName);
           auto index = graph->meta_info().GetVertexVectorIndex(index_name);
           if (!index || index->state() == meta::IndexBuildState::FAILED) {
+            return false;
+          }
+        }
+        return true;
+      },
+      timeout);
+}
+
+bool WaitForAllVectorIndexesReady(
+    const TestServerCluster& cluster, const std::string& graph_name,
+    const std::string& index_name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
+  return WaitUntil(
+      [&cluster, &graph_name, &index_name]() {
+        for (auto* server : cluster.servers()) {
+          auto graph = server->galaxy()->OpenGraph(graph_name);
+          if (!graph->meta_info().GetReadyVertexVectorIndex(index_name)) {
+            auto index = graph->meta_info().GetVertexVectorIndex(index_name);
+            if (index && index->state() == meta::IndexBuildState::FAILED) {
+              ADD_FAILURE() << "vector index build failed: "
+                            << index->meta().build_error();
+            }
             return false;
           }
         }
@@ -873,6 +927,57 @@ size_t CountPropertyIndexResults(GraphDB* graph, const std::string& index_name,
   }
   txn->Commit();
   return count;
+}
+
+uint64_t ExecuteCypherAndCommit(GraphDB* graph, const std::string& cypher) {
+  cypher::RTContext rtx;
+  auto txn = graph->BeginTransaction();
+  auto result = txn->Execute(&rtx, cypher);
+  result->Consume();
+  txn->Commit();
+  return graph->GetRaftApplyIndex();
+}
+
+std::vector<std::string> CollectCypherStringColumn(GraphDB* graph,
+                                                   const std::string& cypher) {
+  cypher::RTContext rtx;
+  auto txn = graph->BeginTransaction();
+  auto result = txn->Execute(&rtx, cypher);
+  std::vector<std::string> values;
+  for (; result->Valid(); result->Next()) {
+    const auto& record = result->GetRecord();
+    if (record.size() != 1 || record[0].type != common::ResultType::Value) {
+      throw std::runtime_error("expected a single scalar Cypher column");
+    }
+    auto value = std::any_cast<Value>(record[0].data);
+    if (!value.IsString()) {
+      throw std::runtime_error("expected a string Cypher column");
+    }
+    values.push_back(value.AsString());
+  }
+  txn->Commit();
+  std::sort(values.begin(), values.end());
+  return values;
+}
+
+bool WaitForCypherStringColumnEquals(
+    GraphDB* graph, const std::string& cypher,
+    std::vector<std::string> expected,
+    std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
+  std::sort(expected.begin(), expected.end());
+  return WaitUntil(
+      [graph, &cypher, &expected]() {
+        try {
+          return CollectCypherStringColumn(graph, cypher) == expected;
+        } catch (const LgraphException& e) {
+          if (e.code() == ErrorCode::IndexNotReady ||
+              e.code() == ErrorCode::FullTextIndexNotFound) {
+            return false;
+          }
+          throw;
+        }
+      },
+      timeout, std::chrono::milliseconds(50));
 }
 
 TEST(RaftCluster, threeServersElectLeaderAndReplicateTransaction) {
@@ -1136,6 +1241,226 @@ TEST(RaftCluster, multipleRaftGraphsElectLeadersAndReplicateWrites) {
       EXPECT_EQ(persisted_vertex.GetAllProperty(), written.properties)
           << written.graph_name;
       read_txn->Commit();
+    }
+  }
+}
+
+TEST(RaftCluster,
+     multipleRaftGraphsUseCypherWithFullTextSingleAndCompositeIndexes) {
+  constexpr char kFullTextIndex[] = "person_text_ft";
+  constexpr char kRegionIndex[] = "person_region_idx";
+  constexpr char kRegionScoreIndex[] = "person_region_score_idx";
+  constexpr char kVectorIndex[] = "person_embedding_vt";
+
+  TestServerCluster cluster("testdb_raft_cluster");
+  ASSERT_NO_THROW(cluster.Start());
+
+  struct GraphCase {
+    std::string graph_name;
+    std::string alias;
+    std::string token;
+    std::vector<std::string> region_names;
+    std::vector<std::string> composite_names;
+    std::vector<std::string> fulltext_names;
+    std::vector<std::string> vector_bruteforce_names;
+    std::vector<std::string> vector_knn_names;
+  };
+
+  std::vector<GraphCase> graph_cases = {{kGraphName,
+                                         "g0",
+                                         "apollo",
+                                         {"g0_alice", "g0_carol", "g0_dave"},
+                                         {"g0_carol", "g0_dave"},
+                                         {"g0_carol"},
+                                         {"g0_carol", "g0_dave"},
+                                         {"g0_alice", "g0_carol"}},
+                                        {"raft_index_graph_1",
+                                         "g1",
+                                         "borealis",
+                                         {"g1_alice", "g1_carol", "g1_dave"},
+                                         {"g1_carol", "g1_dave"},
+                                         {"g1_carol"},
+                                         {"g1_carol", "g1_dave"},
+                                         {"g1_alice", "g1_carol"}},
+                                        {"raft_index_graph_2",
+                                         "g2",
+                                         "cobalt",
+                                         {"g2_alice", "g2_carol", "g2_dave"},
+                                         {"g2_carol", "g2_dave"},
+                                         {"g2_carol"},
+                                         {"g2_carol", "g2_dave"},
+                                         {"g2_alice", "g2_carol"}}};
+
+  for (size_t i = 1; i < graph_cases.size(); ++i) {
+    const auto& graph_name = graph_cases[i].graph_name;
+    auto* galaxy_leader = cluster.WaitForGalaxyLeader(std::chrono::seconds(15));
+    ASSERT_NE(galaxy_leader, nullptr) << cluster.GalaxyStatusSummary();
+    auto node_infos = cluster.NodeInfosForGraph(graph_name);
+    ASSERT_NO_THROW(
+        galaxy_leader->galaxy()->CreateGraphWithRaft(graph_name, node_infos))
+        << graph_name;
+    ASSERT_TRUE(
+        cluster.WaitForGraphCreated(graph_name, std::chrono::seconds(20)))
+        << graph_name << " " << cluster.GalaxyStatusSummary();
+  }
+
+  for (const auto& graph_case : graph_cases) {
+    auto* leader =
+        cluster.WaitForLeader(graph_case.graph_name, std::chrono::seconds(20));
+    ASSERT_NE(leader, nullptr) << graph_case.graph_name << " "
+                               << cluster.StatusSummary(graph_case.graph_name);
+    auto graph = leader->galaxy()->OpenGraph(graph_case.graph_name);
+
+    auto applied_index = ExecuteCypherAndCommit(
+        graph.get(),
+        "CALL db.index.vector.createNodeField('person', 'embedding', "
+        "{dimension:2})");
+    ASSERT_TRUE(cluster.WaitForApplyIndex(graph_case.graph_name, applied_index,
+                                          std::chrono::seconds(20)))
+        << graph_case.graph_name << " "
+        << cluster.StatusSummary(graph_case.graph_name);
+
+    applied_index = ExecuteCypherAndCommit(
+        graph.get(),
+        "CALL db.index.vector.createNodeIndex('person_embedding_vt', 'person', "
+        "'embedding', {dimension:2, distance_type:'l2', hnsw_m:8, "
+        "hnsw_ef_construction:20})");
+    ASSERT_TRUE(cluster.WaitForApplyIndex(graph_case.graph_name, applied_index,
+                                          std::chrono::seconds(20)))
+        << graph_case.graph_name << " "
+        << cluster.StatusSummary(graph_case.graph_name);
+    ASSERT_TRUE(WaitForAllVectorIndexesReady(
+        cluster, graph_case.graph_name, kVectorIndex, std::chrono::seconds(20)))
+        << graph_case.graph_name;
+
+    applied_index = ExecuteCypherAndCommit(
+        graph.get(),
+        "CALL db.index.fulltext.createNodeIndex('person_text_ft', ['person'], "
+        "['bio', 'team'])");
+    ASSERT_TRUE(cluster.WaitForApplyIndex(graph_case.graph_name, applied_index,
+                                          std::chrono::seconds(20)))
+        << graph_case.graph_name << " "
+        << cluster.StatusSummary(graph_case.graph_name);
+    ASSERT_TRUE(WaitForAllFullTextIndexesReady(cluster, graph_case.graph_name,
+                                               kFullTextIndex,
+                                               std::chrono::seconds(20)))
+        << graph_case.graph_name;
+
+    applied_index = ExecuteCypherAndCommit(
+        graph.get(),
+        "CALL db.index.createNodeIndex('person_region_idx', 'person', "
+        "['region'], {unique:false})");
+    ASSERT_TRUE(cluster.WaitForApplyIndex(graph_case.graph_name, applied_index,
+                                          std::chrono::seconds(20)))
+        << graph_case.graph_name << " "
+        << cluster.StatusSummary(graph_case.graph_name);
+    ASSERT_TRUE(WaitForAllPropertyIndexesReady(
+        cluster, graph_case.graph_name, kRegionIndex, std::chrono::seconds(20)))
+        << graph_case.graph_name;
+
+    applied_index = ExecuteCypherAndCommit(
+        graph.get(),
+        "CALL db.index.createNodeIndex('person_region_score_idx', 'person', "
+        "['region', 'score'], {unique:false})");
+    ASSERT_TRUE(cluster.WaitForApplyIndex(graph_case.graph_name, applied_index,
+                                          std::chrono::seconds(20)))
+        << graph_case.graph_name << " "
+        << cluster.StatusSummary(graph_case.graph_name);
+    ASSERT_TRUE(WaitForAllPropertyIndexesReady(cluster, graph_case.graph_name,
+                                               kRegionScoreIndex,
+                                               std::chrono::seconds(20)))
+        << graph_case.graph_name;
+
+    std::string create_cypher =
+        "CREATE (:person {id:1, shard:'" + graph_case.alias +
+        "', region:'north', score:10, name:'" + graph_case.alias +
+        "_alice', bio:'" + graph_case.token +
+        " raft fulltext north alpha', team:'kernel', "
+        "embedding:toFloat32List([1.0, 0.0])}), "
+        "(:person {id:2, shard:'" +
+        graph_case.alias + "', region:'south', score:20, name:'" +
+        graph_case.alias + "_bob', bio:'" + graph_case.token +
+        " raft fulltext south beta', team:'storage', "
+        "embedding:toFloat32List([0.0, 1.0])}), "
+        "(:person {id:3, shard:'" +
+        graph_case.alias + "', region:'north', score:30, name:'" +
+        graph_case.alias + "_carol', bio:'" + graph_case.token +
+        " composite index fulltext gamma', team:'query', "
+        "embedding:toFloat32List([0.8, 0.6])}), "
+        "(:person {id:4, shard:'" +
+        graph_case.alias + "', region:'north', score:30, name:'" +
+        graph_case.alias +
+        "_dave', bio:'archive composite without token', team:'raft', "
+        "embedding:toFloat32List([0.6, 0.8])})";
+    applied_index = ExecuteCypherAndCommit(graph.get(), create_cypher);
+    ASSERT_TRUE(cluster.WaitForApplyIndex(graph_case.graph_name, applied_index,
+                                          std::chrono::seconds(20)))
+        << graph_case.graph_name << " "
+        << cluster.StatusSummary(graph_case.graph_name);
+  }
+
+  for (auto* server : cluster.servers()) {
+    for (const auto& graph_case : graph_cases) {
+      auto graph = server->galaxy()->OpenGraph(graph_case.graph_name);
+
+      EXPECT_EQ(CollectCypherStringColumn(
+                    graph.get(),
+                    "CALL db.index.queryNodes('person_region_idx', 'north') "
+                    "YIELD node RETURN node.name"),
+                graph_case.region_names)
+          << graph_case.graph_name;
+
+      EXPECT_EQ(CollectCypherStringColumn(
+                    graph.get(),
+                    "CALL db.index.queryNodes('person_region_score_idx', "
+                    "['north', 30]) YIELD node RETURN node.name"),
+                graph_case.composite_names)
+          << graph_case.graph_name;
+
+      EXPECT_EQ(CollectCypherStringColumn(
+                    graph.get(),
+                    "CALL db.index.rangeQueryNodes('person_region_score_idx', "
+                    "['north', 20], ['north', 40], {left_closed:true, "
+                    "right_closed:true}) YIELD node RETURN node.name"),
+                graph_case.composite_names)
+          << graph_case.graph_name;
+
+      std::string fulltext_query =
+          "CALL db.index.fulltext.queryNodes('person_text_ft', '" +
+          graph_case.token +
+          " AND composite', 10) YIELD node, score RETURN node.name";
+      ASSERT_TRUE(WaitForCypherStringColumnEquals(graph.get(), fulltext_query,
+                                                  graph_case.fulltext_names,
+                                                  std::chrono::seconds(20)))
+          << graph_case.graph_name;
+      EXPECT_EQ(CollectCypherStringColumn(graph.get(), fulltext_query),
+                graph_case.fulltext_names)
+          << graph_case.graph_name;
+
+      EXPECT_EQ(CollectCypherStringColumn(
+                    graph.get(),
+                    "MATCH (query:person {id:1}), (candidate:person) "
+                    "WHERE candidate.id <> query.id "
+                    "WITH candidate, vector.similarity.cosine("
+                    "candidate.embedding, query.embedding) AS score "
+                    "WHERE score > 0.5 "
+                    "RETURN candidate.name"),
+                graph_case.vector_bruteforce_names)
+          << graph_case.graph_name;
+
+      ASSERT_TRUE(WaitForCypherStringColumnEquals(
+          graph.get(),
+          "CALL db.index.vector.knnSearchNodes('person_embedding_vt', "
+          "[1.0, 0.0], {top_k:2}) YIELD node RETURN node.name",
+          graph_case.vector_knn_names, std::chrono::seconds(20)))
+          << graph_case.graph_name;
+      EXPECT_EQ(
+          CollectCypherStringColumn(
+              graph.get(),
+              "CALL db.index.vector.knnSearchNodes('person_embedding_vt', "
+              "[1.0, 0.0], {top_k:2}) YIELD node RETURN node.name"),
+          graph_case.vector_knn_names)
+          << graph_case.graph_name;
     }
   }
 }
