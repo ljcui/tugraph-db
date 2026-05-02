@@ -12,6 +12,9 @@ Feature: test vector index
              (n3)-[:like]->(n1);
       CALL db.index.vector.createNodeIndex('vector_index','person', 'embedding', {dimension:4});
       """
+    And indexes should be ready
+      | name         |
+      | vector_index |
     When executing query
       """
       CALL db.index.vector.knnSearchNodes("vector_index", [1.0,2.0,3.0,4.0], {top_k:2}) YIELD node RETURN node
@@ -49,6 +52,9 @@ Feature: test vector index
              (n3)-[:like]->(n1);
       CALL db.index.vector.createNodeIndex('vector_index','person', 'embedding', {dimension:4});
       """
+    And indexes should be ready
+      | name         |
+      | vector_index |
     When executing query
       """
       CALL db.index.vector.createNodeIndex('vector_index','person', 'embedding', {dimension:4});
@@ -80,6 +86,9 @@ Feature: test vector index
              (n3)-[:like]->(n1);
       CALL db.index.vector.createNodeIndex('vector_index','person', 'embedding', {dimension:4});
       """
+    And indexes should be ready
+      | name         |
+      | vector_index |
     When executing query
       """
       CALL db.index.vector.deleteIndex('vector_index_non');
@@ -111,6 +120,9 @@ Feature: test vector index
              (n3)-[:like]->(n1);
       CALL db.index.vector.createNodeIndex('vector_index','person', 'embedding', {dimension:4});
       """
+    And indexes should be ready
+      | name         |
+      | vector_index |
     When executing query
       """
       CALL db.index.vector.knnSearchNodes("vector_index", [1.0,2.0,3.0,4.0], {top_k:2}) YIELD node RETURN node
@@ -132,6 +144,12 @@ Feature: test vector index
              (n3)-[:like]->(n1);
       CALL db.index.vector.createNodeField('person', 'embedding', {dimension:4});
       CALL db.index.vector.createNodeIndex('vector_index','person', 'embedding', {dimension:4});
+      """
+    And indexes should be ready
+      | name         |
+      | vector_index |
+    And having executed
+      """
       MATCH(n:person {id:1}) set n.embedding = toFloat32List([1.0,1.0,1.0,1.0]);
       MATCH(n:person {id:2}) set n.embedding = toFloat32List([2.0,2.0,2.0,2.0]);
       MATCH(n:person {id:3}) set n.embedding = toFloat32List([3.0,3.0,3.0,3.0]);

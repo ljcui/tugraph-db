@@ -5,6 +5,9 @@ Feature: test upsert
       """
       CALL db.index.createNodeIndex('person_id', 'Person', ['id'], {unique:true});
       """
+    And indexes should be ready
+      | name      |
+      | person_id |
     When executing query
       """
       UNWIND [
@@ -91,6 +94,12 @@ Feature: test upsert
     And having executed
       """
       CALL db.index.createNodeIndex('person_id', 'Person', ['id'], {unique:true});
+      """
+    And indexes should be ready
+      | name      |
+      | person_id |
+    And having executed
+      """
       UNWIND [
         {id: 1, name: 'Alice', age: 30},
         {id: 2, name: 'Bob', age: 25},
@@ -169,6 +178,12 @@ Feature: test upsert
     And having executed
       """
       CALL db.index.createNodeIndex('person_id', 'Person', ['id'], {unique:true});
+      """
+    And indexes should be ready
+      | name      |
+      | person_id |
+    And having executed
+      """
       UNWIND [
         {id: 1, properties:{name: 'Alice', age: 30}},
         {id: 2, properties:{name: 'Bob', age: 25}},
@@ -213,6 +228,12 @@ Feature: test upsert
     And having executed
       """
       CALL db.index.createNodeIndex('person_id', 'Person', ['id'], {unique:true});
+      """
+    And indexes should be ready
+      | name      |
+      | person_id |
+    And having executed
+      """
       UNWIND [
         {id: 1, properties:{name: 'Alice', age: 30}},
         {id: 2, properties:{name: 'Bob', age: 25}},

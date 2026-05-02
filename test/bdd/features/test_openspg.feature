@@ -267,6 +267,9 @@ Feature: test openspg
       CALL db.index.createNodeIndex('person_name_unique', 'Person', ['name'], {unique:true})
       """
     Then the result should be empty
+    And indexes should be ready
+      | name               |
+      | person_name_unique |
 
   Scenario: case19
     Given yago graph

@@ -8,6 +8,9 @@ Feature: test fulltext index chinese
       CREATE(n3:Chunk {id:3, tags:'["‌传染病", "‌恶性肿瘤", "‌高血压"]'});
       CALL db.index.fulltext.createNodeIndex('ChunkTags',['Chunk'], ['tags']);
     """
+    And indexes should be ready
+      | name      |
+      | ChunkTags |
     When executing query
       """
       CALL db.index.fulltext.queryNodes("ChunkTags", "‌恶性肿瘤", 10) YIELD node, score RETURN node.tags
@@ -45,6 +48,12 @@ Feature: test fulltext index chinese
     And having executed
     """
       CALL db.index.fulltext.createNodeIndex('memory_content',['memory'], ['content']);
+    """
+    And indexes should be ready
+      | name           |
+      | memory_content |
+    And having executed
+    """
       CREATE(:memory {id:1, content:'我喜欢吃苹果'})
       CREATE(:memory {id:2, content:'我是一名程序员'})
       CREATE(:memory {id:3, content:'我的爱好是徒步和游泳'});

@@ -31,6 +31,7 @@ namespace server {
 namespace {
 
 const std::string kGalaxyRaftGraphName = "__galaxy__";
+constexpr std::string_view kSystemGraphName = "system";
 
 std::string BuildGraphMetaKey(uint64_t graph_id) {
   std::string key;
@@ -79,6 +80,15 @@ void ValidateRaftNodeInfos(const meta::RaftNodeInfos &node_infos,
                  "raft node [{}] graph [{}] does not match graph [{}]", node_id,
                  node_info.graph(), graph_name);
     }
+  }
+}
+
+void ValidateGraphNameForCreate(std::string_view name) {
+  if (name.empty()) {
+    THROW_CODE(InvalidParameter, "graph name should not be empty");
+  }
+  if (name == kSystemGraphName) {
+    THROW_CODE(InvalidParameter, "graph name [{}] is reserved", name);
   }
 }
 
@@ -276,6 +286,7 @@ GraphDB *Galaxy::CreateGraph(const std::string &name) {
 GraphDB *Galaxy::CreateGraphWithRaft(const std::string &name,
                                      const meta::RaftNodeInfos &node_infos) {
   std::lock_guard<std::mutex> guard(create_graph_mutex_);
+  ValidateGraphNameForCreate(name);
   ValidateRaftNodeInfos(node_infos, name);
   if (galaxy_raft_driver_ == nullptr) {
     THROW_CODE(InvalidParameter,
@@ -307,6 +318,7 @@ GraphDB *Galaxy::CreateGraphWithRaft(const std::string &name,
 
 GraphDB *Galaxy::CreateGraphInternal(const std::string &name,
                                      const meta::RaftNodeInfos *node_infos) {
+  ValidateGraphNameForCreate(name);
   meta::GraphDBMetaInfo meta;
   uint64_t graph_id = next_graph_id_.load();
   meta.set_graph_id(graph_id);

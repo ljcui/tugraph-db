@@ -136,11 +136,12 @@ std::shared_ptr<VertexPropertyIndex> MetaInfo::GetVertexPropertyIndex(
 }
 
 std::vector<std::shared_ptr<VertexPropertyIndex>>
-MetaInfo::GetVertexPropertyIndexes() {
+MetaInfo::GetVertexPropertyIndexes(bool include_failed) {
   std::shared_lock lock(mutex_);
   std::vector<std::shared_ptr<VertexPropertyIndex>> indexes;
   AppendNamedIndexes(ready_vertex_property_indexes_by_name_, &indexes, false);
-  AppendNamedIndexes(building_vertex_property_indexes_by_name_, &indexes, true);
+  AppendNamedIndexes(building_vertex_property_indexes_by_name_, &indexes,
+                     !include_failed);
   return indexes;
 }
 
@@ -298,11 +299,11 @@ std::shared_ptr<VertexFullTextIndex> MetaInfo::GetReadyVertexFullTextIndex(
 }
 
 std::vector<std::shared_ptr<VertexFullTextIndex>>
-MetaInfo::GetVertexFullTextIndexes() {
+MetaInfo::GetVertexFullTextIndexes(bool include_failed) {
   std::shared_lock lock(mutex_);
   std::vector<std::shared_ptr<VertexFullTextIndex>> indexes;
   AppendNamedIndexes(ready_vertex_ft_indexes_, &indexes, false);
-  AppendNamedIndexes(building_vertex_ft_indexes_, &indexes, true);
+  AppendNamedIndexes(building_vertex_ft_indexes_, &indexes, !include_failed);
   return indexes;
 }
 
@@ -475,7 +476,7 @@ void MetaInfo::AddVertexVectorIndex(std::shared_ptr<VertexVectorIndex> vvi) {
 }
 
 std::vector<std::shared_ptr<VertexVectorIndex>>
-MetaInfo::GetVertexVectorIndexes() {
+MetaInfo::GetVertexVectorIndexes(bool include_failed) {
   std::shared_lock lock(mutex_);
   std::vector<std::shared_ptr<VertexVectorIndex>> indexes;
   indexes.reserve(ready_vertex_vector_indexes_.size() +
@@ -484,7 +485,7 @@ MetaInfo::GetVertexVectorIndexes() {
     indexes.push_back(index);
   }
   for (const auto& [_, index] : building_vertex_vector_indexes_) {
-    if (index->state() != meta::IndexBuildState::FAILED) {
+    if (include_failed || index->state() != meta::IndexBuildState::FAILED) {
       indexes.push_back(index);
     }
   }

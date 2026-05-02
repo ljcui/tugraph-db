@@ -50,7 +50,8 @@ struct MetaInfo {
       uint32_t lid, const std::unordered_set<uint32_t>& pids);
   std::shared_ptr<VertexPropertyIndex> GetVertexPropertyIndex(
       const std::string& index_name);
-  std::vector<std::shared_ptr<VertexPropertyIndex>> GetVertexPropertyIndexes();
+  std::vector<std::shared_ptr<VertexPropertyIndex>> GetVertexPropertyIndexes(
+      bool include_failed = false);
   std::vector<std::shared_ptr<VertexPropertyIndex>>
   GetBuildingVertexPropertyIndexes();
   bool ShouldUpdateVertexIndexes(
@@ -66,7 +67,8 @@ struct MetaInfo {
   GetReadyVertexFullTextIndexes();
   std::shared_ptr<VertexFullTextIndex> GetReadyVertexFullTextIndex(
       const std::string& name);
-  std::vector<std::shared_ptr<VertexFullTextIndex>> GetVertexFullTextIndexes();
+  std::vector<std::shared_ptr<VertexFullTextIndex>> GetVertexFullTextIndexes(
+      bool include_failed = false);
   std::shared_ptr<VertexFullTextIndex> GetVertexFullTextIndex(
       const std::string& name);
   std::vector<std::shared_ptr<VertexFullTextIndex>>
@@ -92,7 +94,8 @@ struct MetaInfo {
   std::shared_ptr<VertexVectorIndex> GetVertexVectorIndex(uint32_t lid,
                                                           uint32_t pid);
   void AddVertexVectorIndex(std::shared_ptr<VertexVectorIndex> vvi);
-  std::vector<std::shared_ptr<VertexVectorIndex>> GetVertexVectorIndexes();
+  std::vector<std::shared_ptr<VertexVectorIndex>> GetVertexVectorIndexes(
+      bool include_failed = false);
   std::vector<std::shared_ptr<VertexVectorIndex>>
   GetBuildingVertexVectorIndexes();
   std::shared_ptr<VertexVectorIndex> GetVertexVectorIndex(

@@ -9,6 +9,9 @@ Feature: test index
       CREATE (:person {id:2, country:'cn', name:'cindy'});
       CALL db.index.createNodeIndex('person_id_country', 'person', ['id', 'country'], {unique:false});
       """
+    And indexes should be ready
+      | name              |
+      | person_id_country |
     When executing query
       """
       CALL db.index.queryNodes('person_id_country', [1, 'cn']) YIELD node RETURN node.name
@@ -32,6 +35,10 @@ Feature: test index
       CALL db.index.createNodeIndex('event_user_id', 'event', ['user_id'], {unique:false});
       CALL db.index.createNodeIndex('event_user_id_timestamp', 'event', ['user_id', 'timestamp'], {unique:false});
       """
+    And indexes should be ready
+      | name                    |
+      | event_user_id           |
+      | event_user_id_timestamp |
     When executing query
       """
       CALL db.index.rangeQueryNodes('event_user_id', 'user_002', 'user_004', {left_closed:true, right_closed:false}) YIELD node RETURN node.user_id, node.timestamp, node.name

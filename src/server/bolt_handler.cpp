@@ -23,11 +23,13 @@
 #include <spdlog/fmt/fmt.h>
 
 #include <boost/algorithm/string.hpp>
+#include <cctype>
 #include <condition_variable>
 #include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -47,6 +49,70 @@ using std::chrono::steady_clock;
 DECLARE_bool(enable_query_log);
 
 namespace bolt {
+namespace {
+
+constexpr std::string_view kSystemDatabaseName = "system";
+constexpr std::string_view kSystemProcedurePrefix = "dbms.graph.";
+
+std::string ToLowerAscii(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  for (char ch : text) {
+    out.push_back(
+        static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+  }
+  return out;
+}
+
+bool ConsumeWord(std::string_view text, size_t* pos, std::string_view word) {
+  if (text.size() - *pos < word.size()) {
+    return false;
+  }
+  auto candidate = ToLowerAscii(text.substr(*pos, word.size()));
+  if (candidate != std::string(word)) {
+    return false;
+  }
+  *pos += word.size();
+  return true;
+}
+
+void SkipWhitespace(std::string_view text, size_t* pos) {
+  while (*pos < text.size() &&
+         std::isspace(static_cast<unsigned char>(text[*pos]))) {
+    ++*pos;
+  }
+}
+
+std::string ExtractLeadingProcedureName(std::string_view cypher) {
+  size_t pos = 0;
+  SkipWhitespace(cypher, &pos);
+  if (!ConsumeWord(cypher, &pos, "call")) {
+    return {};
+  }
+  SkipWhitespace(cypher, &pos);
+  size_t start = pos;
+  while (pos < cypher.size()) {
+    char ch = cypher[pos];
+    if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' ||
+        ch == '.') {
+      ++pos;
+      continue;
+    }
+    break;
+  }
+  return ToLowerAscii(cypher.substr(start, pos - start));
+}
+
+bool IsSystemDatabase(std::string_view graph) {
+  return graph.empty() || graph == kSystemDatabaseName;
+}
+
+bool IsSystemProcedure(std::string_view cypher) {
+  auto procedure_name = ExtractLeadingProcedureName(cypher);
+  return procedure_name.rfind(std::string(kSystemProcedurePrefix), 0) == 0;
+}
+
+}  // namespace
 
 ActiveBoltQuery::~ActiveBoltQuery() { Rollback(); }
 
@@ -410,12 +476,18 @@ static void ProcessBoltMessage(Galaxy* galaxy,
         auto& field1 =
             std::any_cast<std::unordered_map<std::string, std::any>&>(
                 fields[1]);
+        const bool system_context = IsSystemDatabase(graph);
+        if (system_context && !IsSystemProcedure(cypher)) {
+          THROW_CODE(InvalidParameter,
+                     "system database only supports dbms.graph.* procedures");
+        }
         auto active_query = std::make_unique<ActiveBoltQuery>();
-        active_query->graph_name = graph;
+        active_query->graph_name =
+            system_context ? std::string(kSystemDatabaseName) : graph;
         active_query->cypher = cypher;
         active_query->start_time = steady_clock::now();
-        active_query->ctx =
-            std::make_unique<cypher::RTContext>(galaxy, session->user, graph);
+        active_query->ctx = std::make_unique<cypher::RTContext>(
+            galaxy, session->user, active_query->graph_name);
         for (auto& pair : field1) {
           active_query->ctx->bolt_parameters_.emplace(
               "$" + pair.first, ConvertParameters(active_query->ctx->obj_alloc_,
@@ -423,12 +495,14 @@ static void ProcessBoltMessage(Galaxy* galaxy,
         }
         session->streaming_msg.reset();
         session->interrupt_requested.store(false);
-        active_query->graph_db = galaxy->OpenGraph(graph);
-        active_query->txn = active_query->graph_db->BeginTransaction();
-        active_query->txn->SetConn(conn);
+        if (!system_context) {
+          active_query->graph_db = galaxy->OpenGraph(graph);
+          active_query->txn = active_query->graph_db->BeginTransaction();
+          active_query->txn->SetConn(conn);
+        }
         LOG_DEBUG("Execute {}", cypher.substr(0, 256));
-        active_query->result =
-            active_query->txn->Execute(active_query->ctx.get(), cypher);
+        active_query->result = std::make_unique<ResultIterator>(
+            active_query->ctx.get(), active_query->txn.get(), cypher);
         auto header = active_query->result->GetHeader();
 
         std::unordered_map<std::string, std::any> meta;

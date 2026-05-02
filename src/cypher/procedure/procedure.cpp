@@ -184,7 +184,9 @@ std::vector<Procedure> global_procedures = {
                             {"entityType", {2, ProcedureResultType::Value}},
                             {"labelsOrTypes", {3, ProcedureResultType::Value}},
                             {"properties", {4, ProcedureResultType::Value}},
-                            {"otherInfo", {4, ProcedureResultType::Value}}}),
+                            {"otherInfo", {5, ProcedureResultType::Value}},
+                            {"state", {6, ProcedureResultType::Value}},
+                            {"buildError", {7, ProcedureResultType::Value}}}),
 };
 
 ProcedureTable global_ptable;
@@ -257,6 +259,13 @@ bool ParseOptionalBoolField(const std::unordered_map<std::string, Value> &map,
   CYPHER_ARG_CHECK(iter->second.IsBool(),
                    fmt::format("{} type should be Bool", field_name))
   return iter->second.AsBool();
+}
+
+Value IndexBuildErrorValue(const std::string &build_error) {
+  if (build_error.empty()) {
+    return Value();
+  }
+  return Value::String(build_error);
 }
 
 meta::RaftNodeInfos ParseRaftMembersArgument(const Value &value,
@@ -1035,7 +1044,8 @@ void BuiltinProcedure::DbShowIndexes(
                                args.size()))
   std::string name = ctx->txn_->db()->db_meta().graph_name();
   auto graphdb = ctx->galaxy_->OpenGraph(name);
-  for (const auto &index : graphdb->meta_info().GetVertexPropertyIndexes()) {
+  for (const auto &index :
+       graphdb->meta_info().GetVertexPropertyIndexes(true)) {
     std::vector<ProcedureResult> r;
     for (auto &yield : yield_items) {
       if (yield == "name") {
@@ -1052,11 +1062,17 @@ void BuiltinProcedure::DbShowIndexes(
                                            index->meta().properties().end()}));
       } else if (yield == "otherInfo") {
         r.emplace_back(Value());
+      } else if (yield == "state") {
+        r.emplace_back(
+            Value::String(meta::IndexBuildState_Name(index->state())));
+      } else if (yield == "buildError") {
+        r.emplace_back(IndexBuildErrorValue(index->meta().build_error()));
       }
     }
     records->emplace_back(std::move(r));
   }
-  for (const auto &index : graphdb->meta_info().GetVertexFullTextIndexes()) {
+  for (const auto &index :
+       graphdb->meta_info().GetVertexFullTextIndexes(true)) {
     std::vector<ProcedureResult> r;
     for (auto &yield : yield_items) {
       if (yield == "name") {
@@ -1073,11 +1089,16 @@ void BuiltinProcedure::DbShowIndexes(
                                            index->meta().properties().end()}));
       } else if (yield == "otherInfo") {
         r.emplace_back(Value());
+      } else if (yield == "state") {
+        r.emplace_back(
+            Value::String(meta::IndexBuildState_Name(index->state())));
+      } else if (yield == "buildError") {
+        r.emplace_back(IndexBuildErrorValue(index->meta().build_error()));
       }
     }
     records->emplace_back(std::move(r));
   }
-  for (const auto &index : graphdb->meta_info().GetVertexVectorIndexes()) {
+  for (const auto &index : graphdb->meta_info().GetVertexVectorIndexes(true)) {
     std::vector<ProcedureResult> r;
     for (auto &yield : yield_items) {
       if (yield == "name") {
@@ -1095,6 +1116,11 @@ void BuiltinProcedure::DbShowIndexes(
         info["elementsNum"] = Value(index->NumElements());
         info["deletedIdsNum"] = Value(index->NumDeletedIds());
         r.emplace_back(Value(std::move(info)));
+      } else if (yield == "state") {
+        r.emplace_back(
+            Value::String(meta::IndexBuildState_Name(index->state())));
+      } else if (yield == "buildError") {
+        r.emplace_back(IndexBuildErrorValue(index->meta().build_error()));
       }
     }
     records->emplace_back(std::move(r));

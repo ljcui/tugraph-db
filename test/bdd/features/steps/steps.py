@@ -1,4 +1,5 @@
 import math
+import time
 import yaml
 import neo4j
 from behave import *
@@ -7,10 +8,24 @@ import parser
 
 use_step_matcher("re")
 
+INDEX_READY_TIMEOUT_SECONDS = 10
+INDEX_READY_POLL_SECONDS = 0.05
+
 
 def run_cypher(cypher, context, parameters=None):
+    return run_cypher_in_database(cypher, context, "default", parameters)
+
+
+def run_cypher_in_system(cypher, context, parameters=None):
+    return run_cypher_in_database(cypher, context, None, parameters)
+
+
+def run_cypher_in_database(cypher, context, database, parameters=None):
     records = []
-    session = context.driver.session(database="default")
+    if database is None:
+        session = context.driver.session()
+    else:
+        session = context.driver.session(database=database)
     context.exception = None
     try:
         if parameters is None:
@@ -25,19 +40,75 @@ def run_cypher(cypher, context, parameters=None):
     return records
 
 
+def query_index_status(context, index_name, database):
+    session = context.driver.session(database=database)
+    try:
+        records = list(
+            session.run(
+                "CALL db.showIndexes() YIELD name, state, buildError "
+                "WHERE name = $index_name RETURN state, buildError",
+                {"index_name": index_name}))
+        if not records:
+            return None, None, None
+        return records[0]["state"], records[0]["buildError"], None
+    except Exception as e:
+        return None, None, e
+    finally:
+        session.close()
+
+
+def wait_until_index_ready(context, index_name, database):
+    deadline = time.monotonic() + INDEX_READY_TIMEOUT_SECONDS
+    last_state = None
+    last_exception = None
+    while time.monotonic() < deadline:
+        state, build_error, last_exception = query_index_status(
+            context, index_name, database)
+        if last_exception is not None:
+            context.exception = last_exception
+            print("context.exception: ", context.exception)
+            return
+        last_state = state
+        if state == "READY":
+            context.exception = None
+            return
+        if state == "FAILED":
+            raise AssertionError("Index '{}' build failed: {}".format(
+                index_name, build_error))
+        time.sleep(INDEX_READY_POLL_SECONDS)
+    raise AssertionError(
+        "Timed out waiting for index '{}' to be ready, last state: {}".format(
+            index_name, last_state))
+
+
 def cleanup_non_default_graphs(context):
-    graphs = run_cypher(
+    graphs = run_cypher_in_system(
         "CALL dbms.graph.listGraph() YIELD name "
         "WHERE name <> 'default' RETURN name",
         context)
     check_exception(context)
 
     for graph in graphs:
-        run_cypher(
+        run_cypher_in_system(
             "CALL dbms.graph.deleteGraph($graph_name)",
             context,
             {"graph_name": graph["name"]})
         check_exception(context)
+
+
+def reset_default_graph(context):
+    cleanup_non_default_graphs(context)
+    default_graphs = run_cypher_in_system(
+        "CALL dbms.graph.listGraph() YIELD name "
+        "WHERE name = 'default' RETURN name",
+        context)
+    check_exception(context)
+    if default_graphs:
+        run_cypher_in_system("CALL dbms.graph.deleteGraph('default')", context)
+        check_exception(context)
+    run_cypher_in_system("CALL dbms.graph.createGraph('default')", context)
+    check_exception(context)
+
 
 def parse_props(props_key_value):
     if not props_key_value:
@@ -252,12 +323,11 @@ def step_impl(context):
 
 @given("an empty graph")
 def step_impl(context):
-    run_cypher("CALL dbms.graph.clearGraph('default')", context)
+    reset_default_graph(context)
 
 @given("yago graph")
 def step_impl(context):
-    run_cypher("CALL dbms.graph.clearGraph('default')", context)
-    check_exception(context)
+    reset_default_graph(context)
     yago_graph = """
 CREATE (rachel:Person {name: 'Rachel Kempson', birthyear: 1910})
 CREATE (michael:Person {name: 'Michael Redgrave', birthyear: 1908})
@@ -338,6 +408,16 @@ def step_impl(context):
         if len(query) == 0:
             continue
         run_cypher(query, context)
+        check_exception(context)
+
+@step("indexes should be ready")
+def step_impl(context):
+    if context.table is None:
+        raise AssertionError("Expected an index table with a name column")
+    if "name" not in context.table.headings:
+        raise AssertionError("Expected index table to contain a name column")
+    for row in context.table:
+        wait_until_index_ready(context, row["name"], "default")
         check_exception(context)
 
 @step("parameters are")

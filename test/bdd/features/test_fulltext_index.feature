@@ -11,6 +11,9 @@ Feature: test fulltext index
       (maya)-[:EMAILED {message: "I have booked a team meeting tomorrow."}]->(nils);
       CALL db.index.fulltext.createNodeIndex('namesAndTeams',['Employee','Manager'], ['name','team']);
       """
+    And indexes should be ready
+      | name          |
+      | namesAndTeams |
     When executing query
       """
       CALL db.index.fulltext.queryNodes("namesAndTeams", "nils", 10) YIELD node, score RETURN node.name
@@ -86,6 +89,12 @@ Feature: test fulltext index
       (lisa)-[:REVIEWED {message: "Nils-Erik is reportedly difficult to work with."}]->(nilsE),
       (maya)-[:EMAILED {message: "I have booked a team meeting tomorrow."}]->(nils);
       CALL db.index.fulltext.createNodeIndex('namesAndTeams',['Employee','Manager'], ['name','team']);
+      """
+    And indexes should be ready
+      | name          |
+      | namesAndTeams |
+    And having executed
+      """
       match (n {name:'Nils Johansson'}) delete n;
       CALL db.index.fulltext.applyWal();
       """
@@ -124,6 +133,12 @@ Feature: test fulltext index
       (lisa)-[:REVIEWED {message: "Nils-Erik is reportedly difficult to work with."}]->(nilsE),
       (maya)-[:EMAILED {message: "I have booked a team meeting tomorrow."}]->(nils);
       CALL db.index.fulltext.createNodeIndex('namesAndTeams',['Employee','Manager'], ['name','team']);
+      """
+    And indexes should be ready
+      | name          |
+      | namesAndTeams |
+    And having executed
+      """
       match (n {name:'Nils Johansson'}) remove n.name;
       CALL db.index.fulltext.applyWal();
       """
@@ -163,6 +178,9 @@ Feature: test fulltext index
       (maya)-[:EMAILED {message: "I have booked a team meeting tomorrow."}]->(nils);
       CALL db.index.fulltext.createNodeIndex('namesAndTeams',['Employee','Manager'], ['name','team']);
       """
+    And indexes should be ready
+      | name          |
+      | namesAndTeams |
     When executing query
       """
       CALL db.index.fulltext.createNodeIndex('namesAndTeams',['Employee','Manager'], ['name','team']);
@@ -181,6 +199,9 @@ Feature: test fulltext index
       (maya)-[:EMAILED {message: "I have booked a team meeting tomorrow."}]->(nils);
       CALL db.index.fulltext.createNodeIndex('namesAndTeams',['Employee','Manager'], ['name','team']);
       """
+    And indexes should be ready
+      | name          |
+      | namesAndTeams |
     When executing query
       """
       CALL db.index.fulltext.deleteIndex('namesAndTeams_non');
@@ -209,6 +230,9 @@ Feature: test fulltext index
       (maya)-[:EMAILED {message: "I have booked a team meeting tomorrow."}]->(nils);
       CALL db.index.fulltext.createNodeIndex('ft_index',['Employee','Manager'], ['name','team', 'interest']);
       """
+    And indexes should be ready
+      | name     |
+      | ft_index |
     When executing query
       """
       CALL db.index.fulltext.queryNodes("ft_index", "football", 10) YIELD node
@@ -225,6 +249,13 @@ Feature: test fulltext index
       """
       CALL db.index.createNodeIndex('Chunk_id', 'Chunk', ['id'], {unique:true});
       CALL db.index.fulltext.createNodeIndex('Chunk_tags',['Chunk'], ['tags']);
+      """
+    And indexes should be ready
+      | name       |
+      | Chunk_id   |
+      | Chunk_tags |
+    And having executed
+      """
       CREATE(n1:Chunk {id:1, tags:'keyword1 keyword2 keyword3 keyword4'})
       CREATE(n2:Chunk {id:2, tags:'keyword5 keyword6 keyword7 keyword8'});
       CALL db.index.fulltext.applyWal();
@@ -251,6 +282,10 @@ Feature: test fulltext index
       CALL db.index.createNodeIndex('Chunk_id', 'Chunk', ['id'], {unique:true});
       CALL db.index.fulltext.createNodeIndex('Chunk_tags',['Chunk'], ['tags']);
       """
+    And indexes should be ready
+      | name       |
+      | Chunk_id   |
+      | Chunk_tags |
     When executing query
       """
       CREATE(n1:Chunk {id:1, tags:'keyword1 keyword2 keyword3 keyword4'})

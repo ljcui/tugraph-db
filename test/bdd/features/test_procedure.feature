@@ -131,15 +131,20 @@ Feature: test procedure
       CALL db.index.vector.createNodeField('person', 'embedding', {dimension:4});
       CALL db.index.vector.createNodeIndex('person_embedding','person', 'embedding', {dimension:4});
       """
+    And indexes should be ready
+      | name             |
+      | person_id        |
+      | namesAndTeams    |
+      | person_embedding |
     When executing query
       """
       CALL db.showIndexes()
       """
     Then the result should be, in any order
-      | name | type | entityType | labelsOrTypes | properties |otherInfo                           |
-      | 'person_id' | 'Unique' | 'NODE' | ['person'] | ['id'] |null                                |
-      | 'namesAndTeams' | 'FullText' | 'NODE' | ['Employee','Manager'] | ['name','team'] |null                                |
-      | 'person_embedding' | 'Vector' | 'NODE' | ['person'] | ['embedding'] | {deletedIdsNum:0, elementsNum:0} |
+      | name | type | entityType | labelsOrTypes | properties |otherInfo                         | state   | buildError |
+      | 'person_id' | 'Unique' | 'NODE' | ['person'] | ['id'] |null                              | 'READY' | null       |
+      | 'namesAndTeams' | 'FullText' | 'NODE' | ['Employee','Manager'] | ['name','team'] |null                              | 'READY' | null       |
+      | 'person_embedding' | 'Vector' | 'NODE' | ['person'] | ['embedding'] | {deletedIdsNum:0, elementsNum:0} | 'READY' | null       |
 
   Scenario: case08
     Given yago graph
@@ -147,13 +152,16 @@ Feature: test procedure
     """
       CALL db.index.createNodeIndex('person_name', 'Person', ['name'], {unique:true});
     """
+    And indexes should be ready
+      | name        |
+      | person_name |
     When executing query
       """
       CALL db.showIndexes()
       """
     Then the result should be, in any order
-      | name | type | entityType | labelsOrTypes | properties |otherInfo                           |
-      | 'person_name' | 'Unique' | 'NODE' | ['Person'] | ['name'] |null                                |
+      | name | type | entityType | labelsOrTypes | properties |otherInfo | state   | buildError |
+      | 'person_name' | 'Unique' | 'NODE' | ['Person'] | ['name'] |null      | 'READY' | null       |
     When executing query
       """
       CALL db.index.deleteIndex('person_name');
@@ -169,6 +177,9 @@ Feature: test procedure
       CREATE (:person {id:2, name:'bobby'});
       CALL db.index.createNodeIndex('person_id', 'person', ['id'], {unique:false});
       """
+    And indexes should be ready
+      | name      |
+      | person_id |
     When executing query
       """
       CALL db.index.queryNodes('person_id', 2) YIELD node RETURN node.name
@@ -189,6 +200,9 @@ Feature: test procedure
       CREATE (:person {id:4, name:'david'});
       CALL db.index.createNodeIndex('person_id', 'person', ['id'], {unique:false});
       """
+    And indexes should be ready
+      | name      |
+      | person_id |
     When executing query
       """
       CALL db.index.rangeQueryNodes('person_id', 2, 4, {left_closed:true, right_closed:false}) YIELD node RETURN node.name
