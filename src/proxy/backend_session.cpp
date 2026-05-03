@@ -199,7 +199,7 @@ std::vector<BackendMessage> BoltBackendSession::SendAndReadUntilTerminal(
 
 BackendMessage BoltBackendSession::SendAndForwardUntilTerminal(
     const std::string& request,
-    const std::function<void(const BackendMessage&)>& forward,
+    const std::function<bool(const BackendMessage&)>& forward,
     bool decode_records) {
   try {
     EnsureConnected();
@@ -207,7 +207,9 @@ BackendMessage BoltBackendSession::SendAndForwardUntilTerminal(
     while (true) {
       auto message = ReadMessage(decode_records);
       const bool terminal = IsTerminal(message.tag);
-      forward(message);
+      if (!forward(message)) {
+        throw BackendOperationCancelled("backend forwarding");
+      }
       if (terminal) {
         return message;
       }
@@ -279,6 +281,17 @@ void BoltBackendSession::Close() {
     socket_.reset();
   }
   connected_ = false;
+}
+
+void BoltBackendSession::Cancel() {
+  cancelled_.store(true);
+  io_context_.post([this]() {
+    if (socket_) {
+      boost::system::error_code ignored;
+      socket_->cancel(ignored);
+      socket_->close(ignored);
+    }
+  });
 }
 
 void BoltBackendSession::EnsureConnected() {
@@ -391,6 +404,9 @@ void BoltBackendSession::RunWithTimeout(
   }
   io_context_.run();
 
+  if (cancelled_.load()) {
+    throw BackendOperationCancelled(operation);
+  }
   if (timed_out && result == boost::asio::error::operation_aborted) {
     throw std::runtime_error(
         fmt::format("{} timed out after {}s", operation, timeout_seconds));

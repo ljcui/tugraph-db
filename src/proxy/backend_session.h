@@ -15,10 +15,12 @@
 #pragma once
 
 #include <any>
+#include <atomic>
 #include <boost/asio.hpp>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -48,6 +50,12 @@ struct BackendMessage {
   std::optional<bolt::Record> record;
 };
 
+class BackendOperationCancelled : public std::runtime_error {
+ public:
+  explicit BackendOperationCancelled(const std::string& operation)
+      : std::runtime_error(operation + " cancelled") {}
+};
+
 class BoltBackendSession {
  public:
   BoltBackendSession(BackendEndpoint endpoint,
@@ -58,10 +66,11 @@ class BoltBackendSession {
       const std::string& request, bool decode_records = false);
   BackendMessage SendAndForwardUntilTerminal(
       const std::string& request,
-      const std::function<void(const BackendMessage&)>& forward,
+      const std::function<bool(const BackendMessage&)>& forward,
       bool decode_records = false);
   std::vector<RaftNodeEndpoint> FetchRaftNodeInfos(
       const std::string& graph_name);
+  void Cancel();
   void Close();
 
  private:
@@ -87,6 +96,7 @@ class BoltBackendSession {
   std::unique_ptr<boost::asio::ip::tcp::socket> socket_;
   bolt::Hydrator hydrator_;
   bool connected_ = false;
+  std::atomic<bool> cancelled_{false};
 };
 
 }  // namespace proxy

@@ -16,6 +16,7 @@
 
 #include <pthread.h>
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -170,10 +171,12 @@ struct ProxySession {
   std::unordered_map<std::string, std::any> hello_meta;
   ProxySessionState state = ProxySessionState::Ready;
   std::optional<std::string> active_backend;
-  std::unordered_map<std::string, std::unique_ptr<BoltBackendSession>>
+  std::unordered_map<std::string, std::shared_ptr<BoltBackendSession>>
       backend_sessions;
+  std::mutex backend_mutex;
   bolt::BlockingQueue<ProxyMessage> messages;
   std::mutex schedule_mutex;
+  std::atomic<bool> interrupt_requested{false};
   bool scheduled = false;
 };
 
@@ -355,6 +358,40 @@ void ForwardMessages(const std::shared_ptr<bolt::BoltConnection>& conn,
   }
 }
 
+class ClientResponseBatcher {
+ public:
+  ClientResponseBatcher(std::shared_ptr<bolt::BoltConnection> conn,
+                        ProxySession* session)
+      : conn_(std::move(conn)), session_(session) {}
+
+  bool Forward(const BackendMessage& message) {
+    if (conn_->has_closed() || session_->interrupt_requested.load()) {
+      return false;
+    }
+    buffer_.append(message.raw);
+    if (buffer_.size() >= kFlushBytes) {
+      Flush();
+    }
+    return !conn_->has_closed() && !session_->interrupt_requested.load();
+  }
+
+  void Flush() {
+    if (buffer_.empty() || conn_->has_closed()) {
+      buffer_.clear();
+      return;
+    }
+    conn_->PostResponse(std::move(buffer_));
+    buffer_.clear();
+  }
+
+ private:
+  static constexpr size_t kFlushBytes = 64 * 1024;
+
+  std::shared_ptr<bolt::BoltConnection> conn_;
+  ProxySession* session_;
+  std::string buffer_;
+};
+
 BackendMessage LastMessage(const std::vector<BackendMessage>& messages) {
   if (messages.empty()) {
     throw std::runtime_error("backend returned no Bolt message");
@@ -362,24 +399,109 @@ BackendMessage LastMessage(const std::vector<BackendMessage>& messages) {
   return messages.back();
 }
 
-BoltBackendSession& GetBackendSession(ProxySession* session,
-                                      const BackendEndpoint& endpoint) {
+std::shared_ptr<BoltBackendSession> GetBackendSession(
+    ProxySession* session, const BackendEndpoint& endpoint) {
+  std::lock_guard<std::mutex> guard(session->backend_mutex);
   auto iter = session->backend_sessions.find(endpoint.name);
   if (iter != session->backend_sessions.end()) {
-    return *iter->second;
+    return iter->second;
   }
   auto backend_session =
-      std::make_unique<BoltBackendSession>(endpoint, session->hello_meta);
-  auto* ptr = backend_session.get();
-  session->backend_sessions.emplace(endpoint.name, std::move(backend_session));
-  return *ptr;
+      std::make_shared<BoltBackendSession>(endpoint, session->hello_meta);
+  session->backend_sessions.emplace(endpoint.name, backend_session);
+  return backend_session;
+}
+
+void SetActiveBackend(ProxySession* session, const std::string& name) {
+  std::lock_guard<std::mutex> guard(session->backend_mutex);
+  session->active_backend = name;
+}
+
+void ClearActiveBackend(ProxySession* session) {
+  std::lock_guard<std::mutex> guard(session->backend_mutex);
+  session->active_backend.reset();
+}
+
+void ClearActiveBackendIf(ProxySession* session,
+                          const BackendEndpoint& endpoint) {
+  if (endpoint.name.empty()) {
+    return;
+  }
+  std::lock_guard<std::mutex> guard(session->backend_mutex);
+  if (session->active_backend.has_value() &&
+      *session->active_backend == endpoint.name) {
+    session->active_backend.reset();
+  }
+}
+
+std::shared_ptr<BoltBackendSession> ActiveBackendSession(
+    ProxySession* session) {
+  std::lock_guard<std::mutex> guard(session->backend_mutex);
+  if (!session->active_backend.has_value()) {
+    return {};
+  }
+  auto iter = session->backend_sessions.find(*session->active_backend);
+  if (iter == session->backend_sessions.end()) {
+    return {};
+  }
+  return iter->second;
+}
+
+std::shared_ptr<BoltBackendSession> RemoveActiveBackendSession(
+    ProxySession* session) {
+  std::shared_ptr<BoltBackendSession> backend;
+  std::lock_guard<std::mutex> guard(session->backend_mutex);
+  if (!session->active_backend.has_value()) {
+    return {};
+  }
+  auto iter = session->backend_sessions.find(*session->active_backend);
+  if (iter != session->backend_sessions.end()) {
+    backend = iter->second;
+    session->backend_sessions.erase(iter);
+  }
+  session->active_backend.reset();
+  return backend;
 }
 
 void CloseBackendSession(ProxySession* session,
                          const BackendEndpoint& endpoint) {
-  auto iter = session->backend_sessions.find(endpoint.name);
-  if (iter != session->backend_sessions.end()) {
-    iter->second->Close();
+  std::shared_ptr<BoltBackendSession> backend;
+  {
+    std::lock_guard<std::mutex> guard(session->backend_mutex);
+    auto iter = session->backend_sessions.find(endpoint.name);
+    if (iter == session->backend_sessions.end()) {
+      return;
+    }
+    backend = iter->second;
+    session->backend_sessions.erase(iter);
+    if (session->active_backend.has_value() &&
+        *session->active_backend == endpoint.name) {
+      session->active_backend.reset();
+    }
+  }
+  backend->Close();
+}
+
+void CloseAllBackendSessions(ProxySession* session) {
+  std::vector<std::shared_ptr<BoltBackendSession>> backends;
+  {
+    std::lock_guard<std::mutex> guard(session->backend_mutex);
+    for (const auto& pair : session->backend_sessions) {
+      backends.emplace_back(pair.second);
+    }
+    session->backend_sessions.clear();
+    session->active_backend.reset();
+  }
+  for (const auto& backend : backends) {
+    backend->Close();
+  }
+}
+
+void RequestSessionInterrupt(const std::shared_ptr<ProxySession>& session) {
+  session->interrupt_requested.store(true);
+  auto backend = ActiveBackendSession(session.get());
+  if (backend) {
+    backend->Cancel();
   }
 }
 
@@ -451,24 +573,36 @@ bool IsNotLeaderFailure(const std::vector<BackendMessage>& messages) {
 
 void ProcessReset(const std::shared_ptr<bolt::BoltConnection>& conn,
                   ProxySession* session) {
-  if (!session->active_backend.has_value()) {
+  const bool interrupted = session->interrupt_requested.exchange(false);
+  auto backend = interrupted ? RemoveActiveBackendSession(session)
+                             : ActiveBackendSession(session);
+  if (interrupted) {
+    if (backend) {
+      backend->Close();
+    }
     session->state = ProxySessionState::Ready;
     SendSuccess(conn);
     return;
   }
 
-  auto iter = session->backend_sessions.find(*session->active_backend);
-  session->active_backend.reset();
-  session->state = ProxySessionState::Ready;
-  if (iter == session->backend_sessions.end()) {
+  if (!backend) {
+    ClearActiveBackend(session);
+    session->state = ProxySessionState::Ready;
     SendSuccess(conn);
     return;
   }
 
   bolt::PackStream ps;
   ps.AppendReset();
-  auto messages = iter->second->SendAndReadUntilTerminal(ps.ConstBuffer());
+  auto messages = backend->SendAndReadUntilTerminal(ps.ConstBuffer());
   ForwardMessages(conn, messages);
+  auto last = LastMessage(messages);
+  if (last.tag == bolt::BoltMsg::Success) {
+    ClearActiveBackend(session);
+    session->state = ProxySessionState::Ready;
+  } else {
+    session->state = ProxySessionState::Failed;
+  }
 }
 
 void ProcessRun(const std::shared_ptr<ProxyContext>& context,
@@ -477,6 +611,14 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
   if (fields.size() < 3) {
     SendFailure(conn, session, kArgumentError,
                 "RUN requires cypher, parameters, and metadata fields");
+    return;
+  }
+  if (fields.size() != 3) {
+    SendFailure(conn, session, kArgumentError, "RUN fields size should be 3");
+    return;
+  }
+  if (session->interrupt_requested.load()) {
+    session->state = ProxySessionState::Failed;
     return;
   }
 
@@ -510,6 +652,7 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
   BackendEndpoint selected_endpoint;
   std::string last_error;
   for (int attempt = 0; attempt < 2; ++attempt) {
+    selected_endpoint = {};
     try {
       if (attempt == 0) {
         auto cached_leader = leader_cache->Get(route.graph_name);
@@ -520,8 +663,12 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
         selected_endpoint = DiscoverLeader(route, session->hello_meta);
       }
 
-      auto& backend = GetBackendSession(session, selected_endpoint);
-      messages = backend.SendAndReadUntilTerminal(ps.ConstBuffer());
+      auto backend = GetBackendSession(session, selected_endpoint);
+      SetActiveBackend(session, selected_endpoint.name);
+      if (session->interrupt_requested.load()) {
+        throw BackendOperationCancelled("proxy RUN");
+      }
+      messages = backend->SendAndReadUntilTerminal(ps.ConstBuffer());
       if (!IsNotLeaderFailure(messages)) {
         leader_cache->Put(route.graph_name, selected_endpoint);
         break;
@@ -534,6 +681,9 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
                route.graph_name, selected_endpoint.host, selected_endpoint.port,
                last_error);
       messages.clear();
+    } catch (const BackendOperationCancelled&) {
+      CloseBackendSession(session, selected_endpoint);
+      throw;
     } catch (const std::exception& e) {
       last_error = e.what();
       CloseBackendSession(session, selected_endpoint);
@@ -547,6 +697,7 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
     }
   }
   if (messages.empty()) {
+    ClearActiveBackendIf(session, selected_endpoint);
     SendFailure(conn, session, kNetworkError,
                 fmt::format("failed to route graph {} shard {}: {}",
                             route.graph_name, route.shard_id, last_error));
@@ -555,7 +706,6 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
   auto last = LastMessage(messages);
   ForwardMessages(conn, messages);
 
-  session->active_backend = selected_endpoint.name;
   if (last.tag == bolt::BoltMsg::Success) {
     session->state = ProxySessionState::Streaming;
   } else {
@@ -569,15 +719,14 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
 void ProcessPullOrDiscard(const std::shared_ptr<bolt::BoltConnection>& conn,
                           ProxySession* session, bolt::BoltMsg type,
                           const std::vector<std::any>& fields) {
-  if (!session->active_backend.has_value()) {
+  auto backend = ActiveBackendSession(session);
+  if (!backend) {
     SendFailure(conn, session, kNetworkError,
                 "active backend session is missing");
     return;
   }
-  auto iter = session->backend_sessions.find(*session->active_backend);
-  if (iter == session->backend_sessions.end()) {
-    SendFailure(conn, session, kNetworkError,
-                "active backend session is missing");
+  if (session->interrupt_requested.load()) {
+    session->state = ProxySessionState::Failed;
     return;
   }
 
@@ -595,14 +744,16 @@ void ProcessPullOrDiscard(const std::shared_ptr<bolt::BoltConnection>& conn,
   } else {
     ps.AppendDiscardN(n);
   }
-  auto last = iter->second->SendAndForwardUntilTerminal(
-      ps.ConstBuffer(), [&conn](const BackendMessage& message) {
-        conn->PostResponse(message.raw);
+  ClientResponseBatcher batcher(conn, session);
+  auto last = backend->SendAndForwardUntilTerminal(
+      ps.ConstBuffer(), [&batcher](const BackendMessage& message) {
+        return batcher.Forward(message);
       });
+  batcher.Flush();
 
   if (last.tag == bolt::BoltMsg::Success && !last.success_has_more) {
     session->state = ProxySessionState::Ready;
-    session->active_backend.reset();
+    ClearActiveBackend(session);
   } else if (last.tag == bolt::BoltMsg::Failure) {
     session->state = ProxySessionState::Failed;
   }
@@ -653,6 +804,15 @@ void ProcessProxyMessage(const std::shared_ptr<ProxyContext>& context,
                          const std::shared_ptr<bolt::BoltConnection>& conn,
                          ProxySession* session, ProxyMessage message) {
   try {
+    if (session->interrupt_requested.load() &&
+        message.type != bolt::BoltMsg::Reset) {
+      if (IsProxySessionRequest(message.type)) {
+        SendIgnored(conn);
+      } else {
+        CloseProtocolError(conn, session, message.type);
+      }
+      return;
+    }
     switch (session->state) {
       case ProxySessionState::Ready:
         ProcessReadyState(context, conn, session, message);
@@ -666,6 +826,20 @@ void ProcessProxyMessage(const std::shared_ptr<ProxyContext>& context,
       case ProxySessionState::Defunct:
         CloseProtocolError(conn, session, message.type);
         break;
+    }
+  } catch (const BackendOperationCancelled& e) {
+    LOG_INFO("proxy message cancelled: {}", e.what());
+    if (conn->has_closed()) {
+      session->state = ProxySessionState::Defunct;
+      CloseAllBackendSessions(session);
+      return;
+    }
+    if (session->interrupt_requested.load()) {
+      session->state = ProxySessionState::Failed;
+      return;
+    }
+    if (session->state != ProxySessionState::Defunct) {
+      SendFailure(conn, session, kNetworkError, e.what());
     }
   } catch (const ProxyClientError& e) {
     LOG_WARN("proxy client message failed: {}", e.what());
@@ -710,6 +884,7 @@ void ScheduleSession(const std::shared_ptr<ProxyContext>& context,
   if (!pool->Post([context, conn, session, weak_pool]() mutable {
         ProcessSession(context, conn, session, weak_pool);
       })) {
+    RequestSessionInterrupt(session);
     conn->Close();
   }
 }
@@ -724,6 +899,11 @@ void ProcessSession(std::shared_ptr<ProxyContext> context,
       break;
     }
     ProcessProxyMessage(context, conn, session.get(), std::move(*message));
+  }
+  if (conn->has_closed()) {
+    RequestSessionInterrupt(session);
+    CloseAllBackendSessions(session.get());
+    return;
   }
 
   bool should_reschedule = false;
@@ -741,12 +921,14 @@ void ProcessSession(std::shared_ptr<ProxyContext> context,
   }
   auto pool = weak_pool.lock();
   if (!pool) {
+    RequestSessionInterrupt(session);
     conn->Close();
     return;
   }
   if (!pool->Post([context, conn, session, weak_pool]() mutable {
         ProcessSession(context, conn, session, weak_pool);
       })) {
+    RequestSessionInterrupt(session);
     conn->Close();
   }
 }
@@ -759,6 +941,7 @@ bool EnqueueSessionMessage(const std::shared_ptr<ProxyContext>& context,
   if (!session->messages.Push(std::move(message))) {
     LOG_WARN("close proxy connection {}: pending message queue is full",
              conn.conn_id());
+    RequestSessionInterrupt(session);
     conn.Close();
     return false;
   }
@@ -811,8 +994,10 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
              bolt::BoltConnection& conn, bolt::BoltMsg msg,
              std::vector<std::any> fields) mutable {
     if (msg == bolt::BoltMsg::Hello) {
-      if (GetSession(conn)) {
+      auto existing_session = GetSession(conn);
+      if (existing_session) {
         LOG_WARN("receive duplicate proxy HELLO, close the connection");
+        RequestSessionInterrupt(existing_session);
         conn.Close();
         return;
       }
@@ -828,6 +1013,10 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
     }
 
     if (msg == bolt::BoltMsg::Goodbye) {
+      auto session = GetSession(conn);
+      if (session) {
+        RequestSessionInterrupt(session);
+      }
       conn.Close();
       return;
     }
@@ -844,6 +1033,9 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
         msg == bolt::BoltMsg::DiscardN || msg == bolt::BoltMsg::Reset ||
         msg == bolt::BoltMsg::Begin || msg == bolt::BoltMsg::Commit ||
         msg == bolt::BoltMsg::Rollback || msg == bolt::BoltMsg::Route) {
+      if (msg == bolt::BoltMsg::Reset) {
+        RequestSessionInterrupt(session);
+      }
       EnqueueSessionMessage(context, worker_pool, conn, std::move(session),
                             {.type = msg, .fields = std::move(fields)});
       return;

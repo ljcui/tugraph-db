@@ -22,8 +22,10 @@
 #include "bolt/hydrator.h"
 #include "bolt/pack_stream.h"
 #include "common/exceptions.h"
+#include "proto/meta.pb.h"
 #include "proxy/proxy_server.h"
 #include "server/lgraph_server.h"
+#include "test_util.h"
 
 namespace {
 
@@ -96,7 +98,9 @@ class RawBoltClient {
 
   void SendHello() {
     bolt::PackStream ps;
-    ps.AppendHello({{"user_agent", std::string("tugraph-test")}});
+    ps.AppendHello({{"user_agent", std::string("tugraph-test")},
+                    {"principal", std::string("admin")},
+                    {"credentials", std::string("73@TuGraph")}});
     Send(ps.ConstBuffer());
   }
 
@@ -110,6 +114,25 @@ class RawBoltClient {
     bolt::PackStream ps;
     ps.AppendPullN(n);
     Send(ps.ConstBuffer());
+  }
+
+  void SendRun(const std::string& cypher,
+               const std::unordered_map<std::string, std::any>& params,
+               const std::unordered_map<std::string, std::any>& extra) {
+    bolt::PackStream ps;
+    ps.AppendRun(cypher, params, extra);
+    Send(ps.ConstBuffer());
+  }
+
+  void SendRunWithExtraField() {
+    std::string payload;
+    payload.push_back(static_cast<char>(0xb4));
+    payload.push_back(static_cast<char>(bolt::BoltMsg::Run));
+    payload.push_back(static_cast<char>(0x80));
+    payload.push_back(static_cast<char>(0xa0));
+    payload.push_back(static_cast<char>(0xa0));
+    payload.push_back(static_cast<char>(0xc0));
+    Send(ChunkPayload(payload));
   }
 
   void SendRoute() { Send(MakeRouteMessage()); }
@@ -247,6 +270,98 @@ class BoltProxyTestServer {
  private:
   int32_t bolt_port_ = 0;
   std::unique_ptr<proxy::ProxyServer> server_;
+};
+
+class BoltProxyBackendTestServer {
+ public:
+  BoltProxyBackendTestServer()
+      : backend_bolt_port_(AllocateFreePort()),
+        backend_raft_port_(AllocateFreePort()),
+        proxy_bolt_port_(AllocateFreePort()) {
+    data_path_ =
+        "test_bolt_proxy_backend_" + std::to_string(backend_bolt_port_);
+  }
+
+  ~BoltProxyBackendTestServer() { Stop(); }
+
+  bool Start() {
+    Stop();
+    fs::remove_all(data_path_);
+
+    server::LGraphServerOptions backend_options;
+    backend_options.data_path = data_path_;
+    backend_options.local_node_options.host = "127.0.0.1";
+    backend_options.local_node_options.bolt_port = backend_bolt_port_;
+    backend_options.local_node_options.raft_port = backend_raft_port_;
+    backend_options.bolt_io_thread_num = 1;
+    backend_options.bolt_worker_thread_num = 2;
+    backend_options.bolt_connection_options.handshake_timeout_seconds = 5;
+    backend_options.bolt_connection_options.login_timeout_seconds = 5;
+    backend_options.bolt_connection_options.idle_timeout_seconds = 30;
+    backend_options.galaxy_options.block_cache_size = 8 * 1024 * 1024;
+    backend_options.galaxy_options.row_cache_size = 4 * 1024 * 1024;
+    backend_options.galaxy_options.raft_log_block_cache_size = 8 * 1024 * 1024;
+    backend_options.galaxy_options.raft_scheduler_shards = 1;
+    backend_options.galaxy_options.assistant_thread_num = 1;
+
+    backend_ =
+        std::make_unique<server::LGraphServer>(std::move(backend_options));
+    if (!backend_->Start()) {
+      return false;
+    }
+
+    meta::RaftNodeInfo node_info;
+    node_info.set_node_id(1);
+    node_info.set_graph("default_s00");
+    node_info.set_ip("127.0.0.1");
+    node_info.set_bolt_port(backend_bolt_port_);
+    node_info.set_raft_poft(backend_raft_port_);
+    meta::RaftNodeInfos node_infos;
+    (*node_infos.mutable_nodes())[1] = node_info;
+    backend_->galaxy()->CreateGraphWithRaft("default_s00", node_infos);
+
+    proxy::ProxyServerOptions proxy_options;
+    proxy_options.listen_port = proxy_bolt_port_;
+    proxy_options.bolt_io_thread_num = 1;
+    proxy_options.worker_thread_num = 1;
+    proxy_options.max_pending_messages_per_connection = 8;
+    proxy_options.bolt_connection_options.handshake_timeout_seconds = 5;
+    proxy_options.bolt_connection_options.login_timeout_seconds = 5;
+    proxy_options.bolt_connection_options.idle_timeout_seconds = 30;
+    proxy_options.shard_map = proxy::ShardMap::FromConfig(
+        "default", "default_s", 1, 2,
+        "0-0=1@127.0.0.1:" + std::to_string(backend_bolt_port_) + ":" +
+            std::to_string(backend_raft_port_));
+    proxy_ = std::make_unique<proxy::ProxyServer>(std::move(proxy_options));
+    return proxy_->Start() &&
+           testutil::WaitUntilRaftLeader(
+               backend_->galaxy()->OpenGraph("default_s00")->raft_driver(),
+               std::chrono::seconds(10));
+  }
+
+  void Stop() {
+    if (proxy_) {
+      proxy_->Stop();
+      proxy_.reset();
+    }
+    if (backend_) {
+      backend_->Stop();
+      backend_.reset();
+    }
+    if (!data_path_.empty()) {
+      fs::remove_all(data_path_);
+    }
+  }
+
+  int32_t proxy_bolt_port() const { return proxy_bolt_port_; }
+
+ private:
+  int32_t backend_bolt_port_ = 0;
+  int32_t backend_raft_port_ = 0;
+  int32_t proxy_bolt_port_ = 0;
+  std::string data_path_;
+  std::unique_ptr<server::LGraphServer> backend_;
+  std::unique_ptr<proxy::ProxyServer> proxy_;
 };
 
 class BoltNeo4jDriverServer {
@@ -426,6 +541,47 @@ TEST(ProxyBoltProtocol, PullWithoutStreamClosesConnection) {
 
   client.SendPull(-1);
   EXPECT_TRUE(client.WaitForClose(std::chrono::milliseconds(2000)));
+}
+
+TEST(ProxyBoltProtocol, RejectsRunWithUnexpectedFieldCount) {
+  BoltProxyTestServer server;
+  ASSERT_TRUE(server.Start());
+
+  RawBoltClient client(server.bolt_port());
+  client.SendHello();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendRunWithExtraField();
+  auto run_failure = client.ReadResponse();
+  EXPECT_EQ(run_failure.tag, bolt::BoltMsg::Failure);
+  EXPECT_EQ(run_failure.failure_code,
+            "Neo.ClientError.Statement.ArgumentError");
+  EXPECT_NE(run_failure.failure_message.find("fields size"), std::string::npos);
+}
+
+TEST(ProxyBoltProtocol, ResetInterruptsActiveBackendStream) {
+  BoltProxyBackendTestServer server;
+  ASSERT_TRUE(server.Start());
+
+  RawBoltClient client(server.proxy_bolt_port());
+  client.SendHello();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendRun("UNWIND range(0, 10000) AS n RETURN n",
+                 {{"_shard_key_", std::string("user-1")}}, {{"db", "default"}});
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendReset();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendRun(
+      "RETURN $value AS n",
+      {{"_shard_key_", std::string("user-1")}, {"value", int64_t{7}}},
+      {{"db", "default"}});
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+  client.SendPull(-1);
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Record);
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
 }
 
 TEST(BoltNeo4jDriver, HandlesBolt4PlaceholdersAndRecovery) {
