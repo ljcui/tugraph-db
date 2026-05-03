@@ -473,7 +473,7 @@ TEST(ProxyBoltProtocol, DuplicateHelloClosesConnection) {
   EXPECT_TRUE(client.WaitForClose(std::chrono::milliseconds(2000)));
 }
 
-TEST(ProxyBoltProtocol, RouteFailureIsRecoverableWithReset) {
+TEST(ProxyBoltProtocol, RouteFailureDoesNotBlockNextRequest) {
   BoltProxyTestServer server;
   ASSERT_TRUE(server.Start());
 
@@ -488,7 +488,7 @@ TEST(ProxyBoltProtocol, RouteFailureIsRecoverableWithReset) {
   EXPECT_NE(route_failure.failure_message.find("routing"), std::string::npos);
 
   client.SendRoute();
-  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Ignored);
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Failure);
 
   client.SendReset();
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
@@ -497,7 +497,7 @@ TEST(ProxyBoltProtocol, RouteFailureIsRecoverableWithReset) {
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Failure);
 }
 
-TEST(ProxyBoltProtocol, ExplicitTransactionFailureIsRecoverableWithReset) {
+TEST(ProxyBoltProtocol, ExplicitTransactionFailureDoesNotBlockNextRequest) {
   BoltProxyTestServer server;
   ASSERT_TRUE(server.Start());
 
@@ -512,6 +512,9 @@ TEST(ProxyBoltProtocol, ExplicitTransactionFailureIsRecoverableWithReset) {
   EXPECT_NE(begin_failure.failure_message.find("transactions"),
             std::string::npos);
 
+  client.SendBegin();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Failure);
+
   client.SendReset();
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
 
@@ -519,7 +522,7 @@ TEST(ProxyBoltProtocol, ExplicitTransactionFailureIsRecoverableWithReset) {
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Failure);
 }
 
-TEST(ProxyBoltProtocol, PullWithoutStreamClosesConnection) {
+TEST(ProxyBoltProtocol, PullWithoutStreamReturnsFailure) {
   BoltProxyTestServer server;
   ASSERT_TRUE(server.Start());
 
@@ -528,7 +531,12 @@ TEST(ProxyBoltProtocol, PullWithoutStreamClosesConnection) {
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
 
   client.SendPull(-1);
-  EXPECT_TRUE(client.WaitForClose(std::chrono::milliseconds(2000)));
+  auto pull_failure = client.ReadResponse();
+  EXPECT_EQ(pull_failure.tag, bolt::BoltMsg::Failure);
+  EXPECT_EQ(pull_failure.failure_code,
+            "Neo.TransientError.Network.CommunicationError");
+  EXPECT_NE(pull_failure.failure_message.find("active backend"),
+            std::string::npos);
 }
 
 TEST(ProxyBoltProtocol, RejectsRunWithUnexpectedFieldCount) {
