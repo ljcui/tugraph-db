@@ -13,6 +13,7 @@
  */
 
 #include "proxy/backend_session.h"
+
 #include <boost/endian/conversion.hpp>
 #include <cstring>
 #include <stdexcept>
@@ -27,10 +28,26 @@ namespace {
 using boost::asio::ip::tcp;
 using boost::endian::big_to_native;
 
+constexpr int kSupportedBoltMajor = 4;
+constexpr int kMinSupportedBoltMinor = 0;
+constexpr int kMaxSupportedBoltMinor = 4;
 constexpr uint8_t kBoltHandshake[] = {
-    0x60, 0x60, 0xb0, 0x17, 0x00, 0x00, 0x04, 0x04, 0x00, 0x00,
+    0x60, 0x60, 0xb0, 0x17, 0x00, 0x04, 0x04, 0x04, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 };
+
+bool IsAcceptedBoltVersion(const uint8_t* version, int* minor) {
+  if (version[0] != 0 || version[1] != 0 || version[3] != kSupportedBoltMajor) {
+    return false;
+  }
+  auto selected_minor = static_cast<int>(version[2]);
+  if (selected_minor < kMinSupportedBoltMinor ||
+      selected_minor > kMaxSupportedBoltMinor) {
+    return false;
+  }
+  *minor = selected_minor;
+  return true;
+}
 
 void SkipValue(bolt::Unpacker& unpacker) {
   switch (unpacker.CurrentType()) {
@@ -277,8 +294,9 @@ void BoltBackendSession::Connect() {
   boost::asio::write(*socket_, boost::asio::buffer(kBoltHandshake));
   uint8_t accepted_version[4] = {0};
   boost::asio::read(*socket_, boost::asio::buffer(accepted_version));
-  if (accepted_version[2] != 4 || accepted_version[3] != 4) {
-    throw std::runtime_error("backend does not accept Bolt v4.4");
+  int selected_minor = -1;
+  if (!IsAcceptedBoltVersion(accepted_version, &selected_minor)) {
+    throw std::runtime_error("backend does not accept Bolt v4.0-v4.4");
   }
 
   bolt::PackStream ps;
@@ -287,7 +305,8 @@ void BoltBackendSession::Connect() {
   auto hello_response = ReadMessage();
   if (hello_response.tag == bolt::BoltMsg::Success) {
     connected_ = true;
-    LOG_INFO("proxy connected backend {}:{}", endpoint_.host, endpoint_.port);
+    LOG_INFO("proxy connected backend {}:{} with Bolt v4.{}", endpoint_.host,
+             endpoint_.port, selected_minor);
     return;
   }
   auto failure = FailureMessage(hello_response, &hydrator_);

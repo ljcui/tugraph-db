@@ -23,6 +23,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -62,6 +63,8 @@ const char* BoltMsgName(bolt::BoltMsg msg) {
       return "COMMIT";
     case bolt::BoltMsg::Rollback:
       return "ROLLBACK";
+    case bolt::BoltMsg::Route:
+      return "ROUTE";
     default:
       return "UNKNOWN";
   }
@@ -146,7 +149,7 @@ struct ProxyMessage {
   std::vector<std::any> fields;
 };
 
-enum class ProxySessionState { Ready = 0, Streaming, Failed };
+enum class ProxySessionState { Ready = 0, Streaming, Failed, Defunct };
 
 struct ProxySession {
   explicit ProxySession(size_t max_pending_messages)
@@ -255,7 +258,35 @@ int64_t ExtractPullN(const std::vector<std::any>& fields) {
   if (n == nullptr) {
     throw std::runtime_error("PULL/DISCARD n type should be Integer");
   }
+  if (*n == 0) {
+    throw std::runtime_error("PULL/DISCARD n should not be 0");
+  }
   return *n;
+}
+
+bool IsExplicitTransactionRequest(bolt::BoltMsg type) {
+  return type == bolt::BoltMsg::Begin || type == bolt::BoltMsg::Commit ||
+         type == bolt::BoltMsg::Rollback;
+}
+
+bool IsProxySessionRequest(bolt::BoltMsg type) {
+  return type == bolt::BoltMsg::Run || type == bolt::BoltMsg::PullN ||
+         type == bolt::BoltMsg::DiscardN || type == bolt::BoltMsg::Route ||
+         IsExplicitTransactionRequest(type);
+}
+
+std::string_view ProxySessionStateName(ProxySessionState state) {
+  switch (state) {
+    case ProxySessionState::Ready:
+      return "READY";
+    case ProxySessionState::Streaming:
+      return "STREAMING";
+    case ProxySessionState::Failed:
+      return "FAILED";
+    case ProxySessionState::Defunct:
+      return "DEFUNCT";
+  }
+  return "UNKNOWN";
 }
 
 void SendFailure(const std::shared_ptr<bolt::BoltConnection>& conn,
@@ -277,6 +308,14 @@ void SendSuccess(const std::shared_ptr<bolt::BoltConnection>& conn) {
   bolt::PackStream ps;
   ps.AppendSuccess();
   conn->PostResponse(std::move(ps.MutableBuffer()));
+}
+
+void CloseProtocolError(const std::shared_ptr<bolt::BoltConnection>& conn,
+                        ProxySession* session, bolt::BoltMsg type) {
+  LOG_ERROR("unexpected {} in proxy {} state, close the connection",
+            BoltMsgName(type), ProxySessionStateName(session->state));
+  session->state = ProxySessionState::Defunct;
+  conn->Close();
 }
 
 void ForwardMessages(const std::shared_ptr<bolt::BoltConnection>& conn,
@@ -401,11 +440,6 @@ void ProcessRun(const ShardMap& shard_map,
                 const std::shared_ptr<LeaderCache>& leader_cache,
                 const std::shared_ptr<bolt::BoltConnection>& conn,
                 ProxySession* session, const std::vector<std::any>& fields) {
-  if (session->state == ProxySessionState::Streaming) {
-    SendFailure(conn, session, kRequestError,
-                "cannot RUN while previous result stream is open");
-    return;
-  }
   if (fields.size() < 3) {
     SendFailure(conn, session, kArgumentError,
                 "RUN requires cypher, parameters, and metadata fields");
@@ -497,10 +531,9 @@ void ProcessRun(const ShardMap& shard_map,
 void ProcessPullOrDiscard(const std::shared_ptr<bolt::BoltConnection>& conn,
                           ProxySession* session, bolt::BoltMsg type,
                           const std::vector<std::any>& fields) {
-  if (session->state != ProxySessionState::Streaming ||
-      !session->active_backend.has_value()) {
-    SendFailure(conn, session, kRequestError,
-                "PULL/DISCARD requires an active result stream");
+  if (!session->active_backend.has_value()) {
+    SendFailure(conn, session, kNetworkError,
+                "active backend session is missing");
     return;
   }
   auto iter = session->backend_sessions.find(*session->active_backend);
@@ -510,7 +543,14 @@ void ProcessPullOrDiscard(const std::shared_ptr<bolt::BoltConnection>& conn,
     return;
   }
 
-  auto n = ExtractPullN(fields);
+  int64_t n = 0;
+  try {
+    n = ExtractPullN(fields);
+  } catch (const std::exception& e) {
+    SendFailure(conn, session, kRequestError, e.what());
+    return;
+  }
+
   bolt::PackStream ps;
   if (type == bolt::BoltMsg::PullN) {
     ps.AppendPullN(n);
@@ -530,45 +570,72 @@ void ProcessPullOrDiscard(const std::shared_ptr<bolt::BoltConnection>& conn,
   }
 }
 
+void ProcessRecoverableState(const std::shared_ptr<bolt::BoltConnection>& conn,
+                             ProxySession* session, bolt::BoltMsg type) {
+  if (type == bolt::BoltMsg::Reset) {
+    ProcessReset(conn, session);
+  } else if (IsProxySessionRequest(type)) {
+    SendIgnored(conn);
+  } else {
+    CloseProtocolError(conn, session, type);
+  }
+}
+
+void ProcessReadyState(const ShardMap& shard_map,
+                       const std::shared_ptr<LeaderCache>& leader_cache,
+                       const std::shared_ptr<bolt::BoltConnection>& conn,
+                       ProxySession* session, const ProxyMessage& message) {
+  if (message.type == bolt::BoltMsg::Run) {
+    ProcessRun(shard_map, leader_cache, conn, session, message.fields);
+  } else if (message.type == bolt::BoltMsg::Route) {
+    SendFailure(conn, session, kRequestError,
+                "routing is not supported by lgraph_proxy");
+  } else if (IsExplicitTransactionRequest(message.type)) {
+    SendFailure(conn, session, kRequestError,
+                "explicit transactions are not supported by lgraph_proxy");
+  } else if (message.type == bolt::BoltMsg::Reset) {
+    ProcessReset(conn, session);
+  } else {
+    CloseProtocolError(conn, session, message.type);
+  }
+}
+
+void ProcessStreamingState(const std::shared_ptr<bolt::BoltConnection>& conn,
+                           ProxySession* session, const ProxyMessage& message) {
+  if (message.type == bolt::BoltMsg::PullN ||
+      message.type == bolt::BoltMsg::DiscardN) {
+    ProcessPullOrDiscard(conn, session, message.type, message.fields);
+  } else if (message.type == bolt::BoltMsg::Reset) {
+    ProcessReset(conn, session);
+  } else {
+    CloseProtocolError(conn, session, message.type);
+  }
+}
+
 void ProcessProxyMessage(const ShardMap& shard_map,
                          const std::shared_ptr<LeaderCache>& leader_cache,
                          const std::shared_ptr<bolt::BoltConnection>& conn,
                          ProxySession* session, ProxyMessage message) {
   try {
-    if (session->state == ProxySessionState::Failed) {
-      if (message.type == bolt::BoltMsg::Reset) {
-        ProcessReset(conn, session);
-      } else {
-        SendIgnored(conn);
-      }
-      return;
-    }
-
-    switch (message.type) {
-      case bolt::BoltMsg::Run:
-        ProcessRun(shard_map, leader_cache, conn, session, message.fields);
-        return;
-      case bolt::BoltMsg::PullN:
-      case bolt::BoltMsg::DiscardN:
-        ProcessPullOrDiscard(conn, session, message.type, message.fields);
-        return;
-      case bolt::BoltMsg::Reset:
-        ProcessReset(conn, session);
-        return;
-      case bolt::BoltMsg::Begin:
-      case bolt::BoltMsg::Commit:
-      case bolt::BoltMsg::Rollback:
-        SendFailure(conn, session, kRequestError,
-                    "explicit transactions are not supported by lgraph_proxy");
-        return;
-      default:
-        SendFailure(conn, session, kRequestError,
-                    "unsupported Bolt message for lgraph_proxy");
-        return;
+    switch (session->state) {
+      case ProxySessionState::Ready:
+        ProcessReadyState(shard_map, leader_cache, conn, session, message);
+        break;
+      case ProxySessionState::Streaming:
+        ProcessStreamingState(conn, session, message);
+        break;
+      case ProxySessionState::Failed:
+        ProcessRecoverableState(conn, session, message.type);
+        break;
+      case ProxySessionState::Defunct:
+        CloseProtocolError(conn, session, message.type);
+        break;
     }
   } catch (const std::exception& e) {
     LOG_WARN("proxy message failed: {}", e.what());
-    SendFailure(conn, session, kNetworkError, e.what());
+    if (!conn->has_closed() && session->state != ProxySessionState::Defunct) {
+      SendFailure(conn, session, kNetworkError, e.what());
+    }
   }
 }
 
@@ -706,6 +773,11 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
              bolt::BoltConnection& conn, bolt::BoltMsg msg,
              std::vector<std::any> fields) mutable {
     if (msg == bolt::BoltMsg::Hello) {
+      if (GetSession(conn)) {
+        LOG_WARN("receive duplicate proxy HELLO, close the connection");
+        conn.Close();
+        return;
+      }
       try {
         HandleHello(conn, std::move(fields), max_pending_messages);
       } catch (const std::exception& e) {
@@ -733,7 +805,7 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
     if (msg == bolt::BoltMsg::Run || msg == bolt::BoltMsg::PullN ||
         msg == bolt::BoltMsg::DiscardN || msg == bolt::BoltMsg::Reset ||
         msg == bolt::BoltMsg::Begin || msg == bolt::BoltMsg::Commit ||
-        msg == bolt::BoltMsg::Rollback) {
+        msg == bolt::BoltMsg::Rollback || msg == bolt::BoltMsg::Route) {
       EnqueueSessionMessage(shard_map, leader_cache, worker_pool, conn,
                             std::move(session),
                             {.type = msg, .fields = std::move(fields)});

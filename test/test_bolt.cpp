@@ -1,14 +1,27 @@
 #include <gtest/gtest.h>
 #include <sys/wait.h>
 
+#include <any>
+#include <array>
 #include <boost/asio.hpp>
+#include <boost/endian/conversion.hpp>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
+#include <thread>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "bolt/blocking_queue.h"
+#include "bolt/errors.h"
+#include "bolt/hydrator.h"
+#include "bolt/pack_stream.h"
+#include "proxy/proxy_server.h"
 #include "server/lgraph_server.h"
 
 namespace {
@@ -32,6 +45,208 @@ int RunShellCommand(const std::string& command) {
   }
   return status;
 }
+
+std::string ChunkPayload(const std::string& payload) {
+  auto size =
+      boost::endian::native_to_big(static_cast<uint16_t>(payload.size()));
+  std::string message(reinterpret_cast<const char*>(&size), sizeof(size));
+  message.append(payload);
+  message.append(2, '\0');
+  return message;
+}
+
+std::string MakeStructMessage(bolt::BoltMsg type) {
+  std::string payload;
+  payload.push_back(static_cast<char>(0xb0));
+  payload.push_back(static_cast<char>(type));
+  return ChunkPayload(payload);
+}
+
+std::string MakeRouteMessage() {
+  std::string payload;
+  payload.push_back(static_cast<char>(0xb3));
+  payload.push_back(static_cast<char>(bolt::BoltMsg::Route));
+  payload.push_back(static_cast<char>(0xa0));
+  payload.push_back(static_cast<char>(0x90));
+  payload.push_back(static_cast<char>(0xc0));
+  return ChunkPayload(payload);
+}
+
+struct BoltClientResponse {
+  bolt::BoltMsg tag = bolt::BoltMsg::Ignored;
+  std::string failure_code;
+  std::string failure_message;
+  std::string server;
+};
+
+class RawBoltClient {
+ public:
+  explicit RawBoltClient(int32_t port) : socket_(io_context_) {
+    boost::asio::ip::tcp::endpoint endpoint(
+        boost::asio::ip::address::from_string("127.0.0.1"), port);
+    socket_.connect(endpoint);
+    Handshake();
+  }
+
+  ~RawBoltClient() {
+    boost::system::error_code ec;
+    socket_.close(ec);
+  }
+
+  void SendHello() {
+    bolt::PackStream ps;
+    ps.AppendHello({{"user_agent", std::string("tugraph-test")}});
+    Send(ps.ConstBuffer());
+  }
+
+  void SendReset() {
+    bolt::PackStream ps;
+    ps.AppendReset();
+    Send(ps.ConstBuffer());
+  }
+
+  void SendPull(int64_t n) {
+    bolt::PackStream ps;
+    ps.AppendPullN(n);
+    Send(ps.ConstBuffer());
+  }
+
+  void SendRoute() { Send(MakeRouteMessage()); }
+
+  void SendBegin() { Send(MakeStructMessage(bolt::BoltMsg::Begin)); }
+
+  BoltClientResponse ReadResponse() {
+    auto payload = ReadPayload();
+
+    bolt::Unpacker unpacker;
+    unpacker.Reset(payload);
+    unpacker.Next();
+    if (unpacker.CurrentType() != bolt::PackType::Structure) {
+      throw std::runtime_error("Bolt response should be a struct");
+    }
+    unpacker.Len();
+    BoltClientResponse response;
+    response.tag = static_cast<bolt::BoltMsg>(unpacker.StructTag());
+
+    bolt::Hydrator hydrator;
+    auto parsed = hydrator.Hydrate(payload);
+    if (parsed.second) {
+      throw std::runtime_error(parsed.second.value());
+    }
+    if (response.tag == bolt::BoltMsg::Failure) {
+      auto error = std::any_cast<std::optional<bolt::Neo4jError>>(parsed.first);
+      if (error.has_value()) {
+        response.failure_code = error->code;
+        response.failure_message = error->msg;
+      }
+    } else if (response.tag == bolt::BoltMsg::Success) {
+      auto* success = std::any_cast<bolt::Success*>(parsed.first);
+      if (success != nullptr) {
+        response.server = success->server;
+      }
+    }
+    return response;
+  }
+
+  bool WaitForClose(std::chrono::milliseconds timeout) {
+    boost::system::error_code ec;
+    socket_.non_blocking(true, ec);
+    auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+      char byte = 0;
+      auto n = socket_.read_some(boost::asio::buffer(&byte, 1), ec);
+      if (!ec && n > 0) {
+        return false;
+      }
+      if (ec == boost::asio::error::eof ||
+          ec == boost::asio::error::connection_reset ||
+          ec == boost::asio::error::bad_descriptor ||
+          ec == boost::asio::error::not_connected) {
+        return true;
+      }
+      if (ec != boost::asio::error::would_block &&
+          ec != boost::asio::error::try_again) {
+        return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+  }
+
+ private:
+  void Send(const std::string& message) {
+    boost::asio::write(socket_, boost::asio::buffer(message));
+  }
+
+  void Handshake() {
+    constexpr std::array<uint8_t, 20> handshake = {
+        0x60, 0x60, 0xb0, 0x17, 0x00, 0x04, 0x04, 0x04, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    boost::asio::write(socket_, boost::asio::buffer(handshake));
+    std::array<uint8_t, 4> selected = {0};
+    boost::asio::read(socket_, boost::asio::buffer(selected));
+    if (selected[2] != 4 || selected[3] != 4) {
+      throw std::runtime_error("server did not select Bolt v4.4");
+    }
+  }
+
+  std::string ReadPayload() {
+    std::string payload;
+    while (true) {
+      uint16_t size = 0;
+      boost::asio::read(socket_, boost::asio::buffer(&size, sizeof(size)));
+      size = boost::endian::big_to_native(size);
+      if (size == 0) {
+        if (!payload.empty()) {
+          return payload;
+        }
+        continue;
+      }
+      std::string chunk(size, '\0');
+      boost::asio::read(socket_, boost::asio::buffer(chunk));
+      payload.append(chunk);
+    }
+  }
+
+  boost::asio::io_context io_context_;
+  boost::asio::ip::tcp::socket socket_;
+};
+
+class BoltProxyTestServer {
+ public:
+  BoltProxyTestServer() : bolt_port_(AllocateFreePort()) {}
+  ~BoltProxyTestServer() { Stop(); }
+
+  bool Start() {
+    Stop();
+    proxy::ProxyServerOptions options;
+    options.listen_port = bolt_port_;
+    options.bolt_io_thread_num = 1;
+    options.worker_thread_num = 1;
+    options.max_pending_messages_per_connection = 8;
+    options.bolt_connection_options.handshake_timeout_seconds = 5;
+    options.bolt_connection_options.login_timeout_seconds = 5;
+    options.bolt_connection_options.idle_timeout_seconds = 30;
+    options.shard_map = proxy::ShardMap::FromConfig("default", "default_s", 1,
+                                                    2, "0-0=1@127.0.0.1:1:2");
+    server_ = std::make_unique<proxy::ProxyServer>(std::move(options));
+    return server_->Start();
+  }
+
+  void Stop() {
+    if (server_) {
+      server_->Stop();
+      server_.reset();
+    }
+  }
+
+  int32_t bolt_port() const { return bolt_port_; }
+
+ private:
+  int32_t bolt_port_ = 0;
+  std::unique_ptr<proxy::ProxyServer> server_;
+};
 
 class BoltNeo4jDriverServer {
  public:
@@ -126,6 +341,78 @@ TEST(BoltBlockingQueue, ZeroCapacityMeansUnlimited) {
     EXPECT_EQ(value.value(), i);
   }
   EXPECT_TRUE(queue.Empty());
+}
+
+TEST(ProxyBoltProtocol, DuplicateHelloClosesConnection) {
+  BoltProxyTestServer server;
+  ASSERT_TRUE(server.Start());
+
+  RawBoltClient client(server.bolt_port());
+  client.SendHello();
+  auto hello = client.ReadResponse();
+  EXPECT_EQ(hello.tag, bolt::BoltMsg::Success);
+  EXPECT_EQ(hello.server, "Neo4j/tugraph-db-proxy");
+
+  client.SendHello();
+  EXPECT_TRUE(client.WaitForClose(std::chrono::milliseconds(2000)));
+}
+
+TEST(ProxyBoltProtocol, RouteFailureIsRecoverableWithReset) {
+  BoltProxyTestServer server;
+  ASSERT_TRUE(server.Start());
+
+  RawBoltClient client(server.bolt_port());
+  client.SendHello();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendRoute();
+  auto route_failure = client.ReadResponse();
+  EXPECT_EQ(route_failure.tag, bolt::BoltMsg::Failure);
+  EXPECT_EQ(route_failure.failure_code, "Neo.ClientError.Request.Invalid");
+  EXPECT_NE(route_failure.failure_message.find("routing"), std::string::npos);
+
+  client.SendRoute();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Ignored);
+
+  client.SendReset();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendRoute();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Failure);
+}
+
+TEST(ProxyBoltProtocol, ExplicitTransactionFailureIsRecoverableWithReset) {
+  BoltProxyTestServer server;
+  ASSERT_TRUE(server.Start());
+
+  RawBoltClient client(server.bolt_port());
+  client.SendHello();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendBegin();
+  auto begin_failure = client.ReadResponse();
+  EXPECT_EQ(begin_failure.tag, bolt::BoltMsg::Failure);
+  EXPECT_EQ(begin_failure.failure_code, "Neo.ClientError.Request.Invalid");
+  EXPECT_NE(begin_failure.failure_message.find("transactions"),
+            std::string::npos);
+
+  client.SendReset();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendBegin();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Failure);
+}
+
+TEST(ProxyBoltProtocol, PullWithoutStreamClosesConnection) {
+  BoltProxyTestServer server;
+  ASSERT_TRUE(server.Start());
+
+  RawBoltClient client(server.bolt_port());
+  client.SendHello();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendPull(-1);
+  EXPECT_TRUE(client.WaitForClose(std::chrono::milliseconds(2000)));
 }
 
 TEST(BoltNeo4jDriver, HandlesBolt4PlaceholdersAndRecovery) {

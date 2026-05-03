@@ -330,6 +330,12 @@ set(SERVER_SOURCES src/server/galaxy.cpp src/server/bolt_handler.cpp src/server/
 
 set(PROTO_SOURCES src/proto/meta.pb.cc)
 
+set(LGRAPH_PROXY_CORE_SOURCES
+    src/proxy/backend_session.cpp
+    src/proxy/proxy_server.cpp
+    src/proxy/shard_map.cpp
+)
+
 set(TEST_CASE_SOURCES
     test/main.cpp
     test/test_cypher.cpp
@@ -348,15 +354,14 @@ set(TEST_CASE_SOURCES
     test/test_plan.cpp
     test/test_temporal.cpp
     test/test_benchmark.cpp
+    ${LGRAPH_PROXY_CORE_SOURCES}
 )
 
 set(LGRAPH_CLI_SOURCES src/toolkits/lgraph_cli.cpp src/toolkits/linenoise/linenoise.c)
 
 set(LGRAPH_PROXY_SOURCES
-    src/proxy/backend_session.cpp
     src/proxy/proxy_main.cpp
-    src/proxy/proxy_server.cpp
-    src/proxy/shard_map.cpp
+    ${LGRAPH_PROXY_CORE_SOURCES}
 )
 
 # Libraries
