@@ -130,50 +130,15 @@ void BoltConnection::ReadMagicDone(const boost::system::error_code& ec) {
 }
 
 void BoltConnection::Start() {
-  ArmTimeout(options_.handshake_timeout_seconds, "bolt handshake");
   async_read(socket(), buffer(buffer4_),
              std::bind(&BoltConnection::ReadMagicDone, shared_from_this(),
                        std::placeholders::_1));
 }
 
 void BoltConnection::Close() {
-  boost::system::error_code ec;
-  timeout_timer_.cancel(ec);
   Connection::Close();
   { std::lock_guard<std::mutex> lock(msg_queue_size_mutex_); }
   msg_queue_drained_.notify_all();
-}
-
-void BoltConnection::ArmTimeout(uint32_t seconds, const char* reason) {
-  timeout_reason_ = reason;
-  boost::system::error_code ec;
-  timeout_timer_.cancel(ec);
-  if (seconds == 0) {
-    return;
-  }
-  timeout_timer_.expires_from_now(boost::posix_time::seconds(seconds));
-  timeout_timer_.async_wait(std::bind(
-      &BoltConnection::TimeoutDone, shared_from_this(), std::placeholders::_1));
-}
-
-void BoltConnection::TimeoutDone(const boost::system::error_code& ec) {
-  if (ec || has_closed()) {
-    return;
-  }
-  LOG_WARN("bolt connection {} timeout: {}", conn_id(), timeout_reason_);
-  Close();
-}
-
-void BoltConnection::MarkAuthenticated() {
-  authenticated_.store(true);
-  RefreshIdleTimeout();
-}
-
-void BoltConnection::RefreshIdleTimeout() {
-  if (!authenticated_.load() || has_closed()) {
-    return;
-  }
-  ArmTimeout(options_.idle_timeout_seconds, "bolt idle");
 }
 
 void BoltConnection::DoSend() {
@@ -326,7 +291,6 @@ void BoltConnection::WriteResponseDone(const boost::system::error_code& ec) {
     Close();
     return;
   }
-  ArmTimeout(options_.login_timeout_seconds, "bolt login");
   // read chunk size
   if (protocol_ == Protocol::Socket) {
     async_read(socket(), buffer(&chunk_size_, sizeof(chunk_size_)),  // NOLINT
@@ -360,7 +324,6 @@ void BoltConnection::ReadChunkSizeDone(const boost::system::error_code& ec) {
       }
       LOG_DEBUG("msg: {}, fields: {}", ToString(tag), Print(fields));
       handle_(*this, tag, std::move(fields));
-      RefreshIdleTimeout();
     } catch (const std::exception& e) {
       LOG_ERROR("Exception in bolt connection: {}", e.what());
       Close();

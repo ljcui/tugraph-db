@@ -963,7 +963,6 @@ void HandleHello(bolt::BoltConnection& conn, std::vector<std::any> fields,
   auto session = std::make_shared<ProxySession>(max_pending_messages);
   session->hello_meta = hello_meta;
   conn.SetContext(session);
-  conn.MarkAuthenticated();
 
   std::unordered_map<std::string, std::any> meta;
   meta["connection_id"] = std::string("proxy") + std::to_string(conn.conn_id());
@@ -1062,9 +1061,7 @@ bool ProxyServer::Start() {
   auto handler = NewProxyHandler(options_.shard_map, options_.worker_thread_num,
                                  options_.max_pending_messages_per_connection);
   if (!bolt_server_.Start(options_.listen_port, options_.bolt_io_thread_num,
-                          options_.max_connections,
-                          options_.bolt_connection_options,
-                          std::move(handler))) {
+                          options_.max_connections, std::move(handler))) {
     return false;
   }
   started_.store(true);

@@ -55,12 +55,6 @@ DEFINE_uint64(max_bolt_connections, 10000,
 DEFINE_uint64(max_pending_bolt_messages_per_connection, 1024,
               "Maximum pending Bolt messages per connection. 0 means "
               "unlimited.");
-DEFINE_uint32(bolt_handshake_timeout_seconds, 5,
-              "Bolt protocol handshake timeout in seconds. 0 disables it.");
-DEFINE_uint32(bolt_login_timeout_seconds, 10,
-              "Bolt HELLO/login timeout in seconds. 0 disables it.");
-DEFINE_uint32(bolt_idle_timeout_seconds, 1800,
-              "Bolt idle connection timeout in seconds. 0 disables it.");
 
 DEFINE_uint64(graph_block_cache, (uint64_t)8 * 1024 * 1024 * 1024,
               "Graph data block cache size, in bytes.");

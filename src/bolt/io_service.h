@@ -95,14 +95,12 @@ class IOService : private boost::asio::noncopyable {
     io_service_pool_.Stop();
   }
   IOService(boost::asio::io_service& service, uint32_t port,
-            uint32_t thread_num, size_t max_connections, F handler,
-            typename T::Options connection_options)
+            uint32_t thread_num, size_t max_connections, F handler)
       : handler_(handler),
         acceptor_(service, tcp::endpoint(tcp::v4(), port),
                   /*reuse_addr*/ true),
         io_service_pool_(thread_num),
         max_connections_(max_connections),
-        connection_options_(connection_options),
         interval_(10),
         timer_(service) {
     io_service_pool_.Run();
@@ -133,8 +131,7 @@ class IOService : private boost::asio::noncopyable {
   }
 
   void invoke_async_accept() {
-    conn_.reset(
-        new T(io_service_pool_.GetIOService(), handler_, connection_options_));
+    conn_.reset(new T(io_service_pool_.GetIOService(), handler_));
     acceptor_.async_accept(conn_->socket(), [this](
                                                 boost::system::error_code ec) {
       if (ec) {
@@ -178,7 +175,6 @@ class IOService : private boost::asio::noncopyable {
   IOServicePool io_service_pool_;
   int next_conn_id_ = 0;
   size_t max_connections_;
-  typename T::Options connection_options_;
   boost::posix_time::seconds interval_;
   boost::asio::deadline_timer timer_;
 };

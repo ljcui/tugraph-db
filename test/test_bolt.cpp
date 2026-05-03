@@ -249,9 +249,6 @@ class BoltProxyTestServer {
     options.bolt_io_thread_num = 1;
     options.worker_thread_num = 1;
     options.max_pending_messages_per_connection = 8;
-    options.bolt_connection_options.handshake_timeout_seconds = 5;
-    options.bolt_connection_options.login_timeout_seconds = 5;
-    options.bolt_connection_options.idle_timeout_seconds = 30;
     options.shard_map = proxy::ShardMap::FromConfig("default", "default_s", 1,
                                                     2, "0-0=1@127.0.0.1:1:2");
     server_ = std::make_unique<proxy::ProxyServer>(std::move(options));
@@ -295,9 +292,6 @@ class BoltProxyBackendTestServer {
     backend_options.local_node_options.raft_port = backend_raft_port_;
     backend_options.bolt_io_thread_num = 1;
     backend_options.bolt_worker_thread_num = 2;
-    backend_options.bolt_connection_options.handshake_timeout_seconds = 5;
-    backend_options.bolt_connection_options.login_timeout_seconds = 5;
-    backend_options.bolt_connection_options.idle_timeout_seconds = 30;
     backend_options.galaxy_options.block_cache_size = 8 * 1024 * 1024;
     backend_options.galaxy_options.row_cache_size = 4 * 1024 * 1024;
     backend_options.galaxy_options.raft_log_block_cache_size = 8 * 1024 * 1024;
@@ -325,9 +319,6 @@ class BoltProxyBackendTestServer {
     proxy_options.bolt_io_thread_num = 1;
     proxy_options.worker_thread_num = 1;
     proxy_options.max_pending_messages_per_connection = 8;
-    proxy_options.bolt_connection_options.handshake_timeout_seconds = 5;
-    proxy_options.bolt_connection_options.login_timeout_seconds = 5;
-    proxy_options.bolt_connection_options.idle_timeout_seconds = 30;
     proxy_options.shard_map = proxy::ShardMap::FromConfig(
         "default", "default_s", 1, 2,
         "0-0=1@127.0.0.1:" + std::to_string(backend_bolt_port_) + ":" +
@@ -384,9 +375,6 @@ class BoltNeo4jDriverServer {
     options.local_node_options.raft_port = raft_port_;
     options.bolt_io_thread_num = 1;
     options.bolt_worker_thread_num = 2;
-    options.bolt_connection_options.handshake_timeout_seconds = 5;
-    options.bolt_connection_options.login_timeout_seconds = 5;
-    options.bolt_connection_options.idle_timeout_seconds = 30;
     options.galaxy_options.block_cache_size = 8 * 1024 * 1024;
     options.galaxy_options.row_cache_size = 4 * 1024 * 1024;
     options.galaxy_options.raft_log_block_cache_size = 8 * 1024 * 1024;

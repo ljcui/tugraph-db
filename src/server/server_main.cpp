@@ -196,10 +196,6 @@ class LGraphDaemon : public Service {
          .max_bolt_connections = FLAGS_max_bolt_connections,
          .max_pending_bolt_messages_per_connection =
              FLAGS_max_pending_bolt_messages_per_connection,
-         .bolt_connection_options =
-             {.handshake_timeout_seconds = FLAGS_bolt_handshake_timeout_seconds,
-              .login_timeout_seconds = FLAGS_bolt_login_timeout_seconds,
-              .idle_timeout_seconds = FLAGS_bolt_idle_timeout_seconds},
          .galaxy_options = {
              .block_cache_size = FLAGS_graph_block_cache,
              .row_cache_size = FLAGS_graph_row_cache,

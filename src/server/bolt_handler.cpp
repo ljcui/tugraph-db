@@ -845,7 +845,6 @@ BoltHandler NewBoltHandler(Galaxy* galaxy, BoltHandlerOptions options) {
       session->state = SessionState::READY;
       session->user = *principal;
       conn.SetContext(session);
-      conn.MarkAuthenticated();
       bolt::PackStream ps;
       ps.AppendSuccess(meta);
       conn.Respond(std::move(ps.MutableBuffer()));

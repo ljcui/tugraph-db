@@ -42,9 +42,6 @@ DECLARE_uint32(bolt_io_thread_num);
 DECLARE_uint32(bolt_worker_thread_num);
 DECLARE_uint64(max_bolt_connections);
 DECLARE_uint64(max_pending_bolt_messages_per_connection);
-DECLARE_uint32(bolt_handshake_timeout_seconds);
-DECLARE_uint32(bolt_login_timeout_seconds);
-DECLARE_uint32(bolt_idle_timeout_seconds);
 
 DECLARE_uint64(graph_block_cache);
 DECLARE_uint64(graph_row_cache);

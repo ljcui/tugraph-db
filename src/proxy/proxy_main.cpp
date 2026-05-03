@@ -104,10 +104,6 @@ int main(int argc, char* argv[]) {
          .max_connections = FLAGS_proxy_max_connections,
          .max_pending_messages_per_connection =
              FLAGS_proxy_max_pending_messages_per_connection,
-         .bolt_connection_options =
-             {.handshake_timeout_seconds = FLAGS_bolt_handshake_timeout_seconds,
-              .login_timeout_seconds = FLAGS_bolt_login_timeout_seconds,
-              .idle_timeout_seconds = FLAGS_bolt_idle_timeout_seconds},
          .shard_map = std::move(shard_map)});
     if (!server.Start()) {
       throw std::runtime_error("failed to start lgraph_proxy");

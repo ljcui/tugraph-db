@@ -46,7 +46,7 @@ bool LGraphServer::Start() {
 
   if (!bolt_server_.Start(
           options_.local_node_options.bolt_port, options_.bolt_io_thread_num,
-          options_.max_bolt_connections, options_.bolt_connection_options,
+          options_.max_bolt_connections,
           NewBoltHandler(
               galaxy_.get(),
               {.worker_thread_num = options_.bolt_worker_thread_num,

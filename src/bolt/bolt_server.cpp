@@ -16,14 +16,16 @@
  * written by botu.wzy
  */
 #include "bolt_server.h"
+
 #include <pthread.h>
+
 #include <future>
+
 #include "common/logger.h"
 
 namespace bolt {
 bool BoltServer::Start(
     uint32_t port, uint32_t io_thread_num, size_t max_connections,
-    BoltConnectionOptions connection_options,
     const std::function<void(bolt::BoltConnection& conn, bolt::BoltMsg msg,
                              std::vector<std::any> fields)>& handler) {
   if (started_.load()) {
@@ -38,15 +40,15 @@ bool BoltServer::Start(
 
   std::promise<bool> promise;
   auto future = promise.get_future();
-  threads_.emplace_back([this, port, io_thread_num, max_connections,
-                         connection_options, handler, &promise]() {
+  threads_.emplace_back([this, port, io_thread_num, max_connections, handler,
+                         &promise]() {
     bool promise_done = false;
     try {
       bolt::IOService<bolt::BoltConnection,
                       std::function<void(bolt::BoltConnection&, bolt::BoltMsg,
                                          std::vector<std::any> fields)>>
-          bolt_service(listener_, port, io_thread_num, max_connections, handler,
-                       connection_options);
+          bolt_service(listener_, port, io_thread_num, max_connections,
+                       handler);
       boost::asio::io_service::work holder(listener_);
 
       started_.store(true);
