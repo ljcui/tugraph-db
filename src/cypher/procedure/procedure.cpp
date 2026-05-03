@@ -17,8 +17,6 @@
 //
 
 #include "cypher/procedure/procedure.h"
-
-#include <spdlog/fmt/fmt.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 
 #include <limits>

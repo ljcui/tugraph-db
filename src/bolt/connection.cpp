@@ -16,10 +16,7 @@
  * written by botu.wzy
  */
 #include "bolt/connection.h"
-
 #include <boost/endian/conversion.hpp>
-#include <chrono>
-
 #include "bolt/messages.h"
 #include "bolt/to_string.h"
 #include "common/logger.h"

@@ -16,12 +16,8 @@
  * written by botu.wzy
  */
 #include "bolt_server.h"
-
 #include <pthread.h>
-
 #include <future>
-#include <stdexcept>
-
 #include "common/logger.h"
 
 namespace bolt {

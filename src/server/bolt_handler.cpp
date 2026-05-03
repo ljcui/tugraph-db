@@ -20,8 +20,6 @@
 
 #include <pthread.h>
 #include <spdlog/fmt/chrono.h>
-#include <spdlog/fmt/fmt.h>
-
 #include <boost/algorithm/string.hpp>
 #include <cctype>
 #include <condition_variable>

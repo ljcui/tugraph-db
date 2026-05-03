@@ -166,11 +166,6 @@ class TestServerCluster final {
     servers_[index] = std::move(server);
   }
 
-  void CreateRaftGraphOnAllServers(const std::string& graph_name) {
-    CreateRaftGraphOnAllServers(graph_name,
-                                BuildNodeInfos(server_configs_, graph_name));
-  }
-
   void CreateRaftGraphOnAllServers(const std::string& graph_name,
                                    const meta::RaftNodeInfos& node_infos) {
     for (const auto& server : servers_) {

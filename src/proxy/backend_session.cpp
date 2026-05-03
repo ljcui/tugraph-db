@@ -13,9 +13,6 @@
  */
 
 #include "proxy/backend_session.h"
-
-#include <spdlog/fmt/fmt.h>
-
 #include <boost/endian/conversion.hpp>
 #include <cstring>
 #include <stdexcept>
