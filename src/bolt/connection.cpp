@@ -16,7 +16,10 @@
  * written by botu.wzy
  */
 #include "bolt/connection.h"
+
 #include <boost/endian/conversion.hpp>
+#include <cstring>
+
 #include "bolt/messages.h"
 #include "bolt/to_string.h"
 #include "common/logger.h"
@@ -24,6 +27,45 @@ using namespace boost::asio;
 using namespace boost::endian;
 namespace beast = boost::beast;
 namespace bolt {
+namespace {
+
+constexpr int kSupportedBoltMajor = 4;
+constexpr int kMinSupportedBoltMinor = 0;
+constexpr int kMaxSupportedBoltMinor = 4;
+
+bool GetSupportedBoltMinor(const uint8_t* proposal, int* minor) {
+  const int major = proposal[3];
+  if (major != kSupportedBoltMajor) {
+    return false;
+  }
+
+  const int max_minor = proposal[2];
+  const int range = proposal[1];
+  const int min_minor = range > max_minor ? 0 : max_minor - range;
+  if (max_minor < kMinSupportedBoltMinor ||
+      min_minor > kMaxSupportedBoltMinor) {
+    return false;
+  }
+
+  const int selected_minor =
+      max_minor < kMaxSupportedBoltMinor ? max_minor : kMaxSupportedBoltMinor;
+  if (selected_minor < min_minor) {
+    return false;
+  }
+
+  *minor = selected_minor;
+  return true;
+}
+
+void SetSelectedBoltVersion(int minor, uint8_t* selected) {
+  selected[0] = 0;
+  selected[1] = 0;
+  selected[2] = static_cast<uint8_t>(minor);
+  selected[3] = static_cast<uint8_t>(kSupportedBoltMajor);
+}
+
+}  // namespace
+
 void socket_set_options(tcp::socket& socket) {
   socket.set_option(ip::tcp::no_delay(true));
   socket.set_option(socket_base::keep_alive(true));
@@ -68,13 +110,13 @@ void BoltConnection::ReadMagicDone(const boost::system::error_code& ec) {
     Close();
     return;
   }
-  if (*(uint32_t*)buffer4_ == *(uint32_t*)bolt_magic_) {
+  if (std::memcmp(buffer4_, bolt_magic_, sizeof(buffer4_)) == 0) {
     protocol_ = Protocol::Socket;
     // Read bolt versions
     async_read(socket(), buffer(buffer16_),
                std::bind(&BoltConnection::ReadVersionNegotiationDone,
                          shared_from_this(), std::placeholders::_1));
-  } else if (*(uint32_t*)buffer4_ == *(uint32_t*)ws_magic_) {
+  } else if (std::memcmp(buffer4_, ws_magic_, sizeof(buffer4_)) == 0) {
     protocol_ = Protocol::WebSocket;
     ResetToWebSocket();
     // Accept the websocket handshake
@@ -216,7 +258,7 @@ void BoltConnection::ReadBoltIdentificationDone(
     Close();
     return;
   }
-  if (*(uint32_t*)buffer4_ == *(uint32_t*)bolt_magic_) {
+  if (std::memcmp(buffer4_, bolt_magic_, sizeof(buffer4_)) == 0) {
     // read bolt versions
     WebSocketAsyncRead(buffer(buffer16_),
                        std::bind(&BoltConnection::ReadVersionNegotiationDone,
@@ -245,25 +287,27 @@ void BoltConnection::ReadVersionNegotiationDone(
     Close();
     return;
   }
-  bool match = false;
+  int selected_minor = -1;
   for (int i = 0; i < 4; i++) {
-    if (buffer16_[i * 4 + 3] == 4) {
-      *(uint32_t*)buffer4_ = *(uint32_t*)(buffer16_ + 4 * i);
-      match = true;
-      break;
+    int candidate_minor = -1;
+    if (GetSupportedBoltMinor(buffer16_ + 4 * i, &candidate_minor) &&
+        candidate_minor > selected_minor) {
+      selected_minor = candidate_minor;
     }
   }
   if (spdlog::get_level() <= spdlog::level::debug) {
     for (int i = 0; i < 4; i++) {
-      LOG_DEBUG("protocol version {} major:{}, minor:{}", std::to_string(i),
-                (int)buffer16_[i * 4 + 3], (int)buffer16_[i * 4 + 2]);
+      LOG_DEBUG("protocol version {} major:{}, minor:{}, range:{}",
+                std::to_string(i), (int)buffer16_[i * 4 + 3],
+                (int)buffer16_[i * 4 + 2], (int)buffer16_[i * 4 + 1]);
     }
   }
-  if (!match) {
+  if (selected_minor < 0) {
     LOG_WARN("No matching bolt version found");
     Close();
     return;
   }
+  SetSelectedBoltVersion(selected_minor, buffer4_);
   // write accepted version
   if (protocol_ == Protocol::Socket) {
     async_write(socket(), buffer(buffer4_),  // NOLINT

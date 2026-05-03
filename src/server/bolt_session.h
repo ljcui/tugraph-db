@@ -45,19 +45,18 @@ class Transaction;
 namespace bolt {
 
 enum class SessionState {
-  DISCONNECTED = 0,
-  DEFUNCT,
-  CONNECTED,
-  READY,
+  READY = 0,
   STREAMING,
+  TX_READY,
+  TX_STREAMING,
   FAILED,
-  INTERRUPTED
+  INTERRUPTED,
+  DEFUNCT
 };
 
 struct BoltMsgDetail {
   BoltMsg type;
   std::vector<std::any> fields;
-  int64_t n = -1;
 };
 
 struct ActiveBoltQuery {
@@ -80,7 +79,6 @@ struct BoltSession {
       : msgs(max_pending_messages) {}
 
   std::unique_ptr<ActiveBoltQuery> active_query;
-  std::optional<BoltMsgDetail> streaming_msg;
   PackStream ps;
   std::string user;
   SessionState state;
