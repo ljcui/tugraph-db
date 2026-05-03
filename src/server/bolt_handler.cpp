@@ -287,6 +287,18 @@ static void AbortActiveQuery(BoltSession* session) {
   session->ps.Reset();
 }
 
+static void RequestSessionInterrupt(BoltSession* session) {
+  session->RequestInterrupt();
+}
+
+static bool ConsumeSessionInterrupt(BoltSession* session) {
+  return session->ConsumeInterrupt();
+}
+
+static bool IsSessionInterrupted(BoltSession* session) {
+  return session->HasInterrupt();
+}
+
 static bool IsExplicitTransactionRequest(BoltMsg type) {
   return type == BoltMsg::Begin || type == BoltMsg::Commit ||
          type == BoltMsg::Rollback;
@@ -297,6 +309,8 @@ static bool IsSessionRequest(BoltMsg type) {
          type == BoltMsg::DiscardN || type == BoltMsg::Route ||
          IsExplicitTransactionRequest(type);
 }
+
+static bool IsResetMessage(BoltMsg type) { return type == BoltMsg::Reset; }
 
 static std::string_view SessionStateName(SessionState state) {
   switch (state) {
@@ -340,26 +354,27 @@ static void PostFailure(const std::shared_ptr<BoltConnection>& conn,
 static void CompleteReset(const std::shared_ptr<BoltConnection>& conn,
                           BoltSession* session) {
   AbortActiveQuery(session);
-  session->interrupt_requested.store(false);
-  session->state = SessionState::READY;
-  PostSuccess(conn);
-}
-
-static void ProcessGoodbye(const std::shared_ptr<BoltConnection>& conn,
-                           BoltSession* session) {
-  session->interrupt_requested.store(true);
-  AbortActiveQuery(session);
-  conn->Close();
-}
-
-static bool CancelIfInterruptedOrClosed(
-    const std::shared_ptr<BoltConnection>& conn, BoltSession* session) {
-  if (!conn->has_closed() && !session->interrupt_requested.load()) {
-    return false;
+  if (ConsumeSessionInterrupt(session)) {
+    session->state = SessionState::READY;
+    PostSuccess(conn);
+  } else {
+    session->state = SessionState::INTERRUPTED;
+    PostIgnored(conn);
   }
-  session->state = SessionState::INTERRUPTED;
-  LOG_INFO("The bolt session is interrupted, cancel the op execution.");
-  return true;
+}
+
+static bool InterruptedOrClosed(const std::shared_ptr<BoltConnection>& conn,
+                                BoltSession* session) {
+  if (conn->has_closed()) {
+    LOG_INFO("The bolt connection is closed, cancel the op execution.");
+    return true;
+  }
+  if (IsSessionInterrupted(session)) {
+    session->state = SessionState::INTERRUPTED;
+    LOG_INFO("The bolt session is interrupted, cancel the op execution.");
+    return true;
+  }
+  return false;
 }
 
 static void FailSession(const std::shared_ptr<BoltConnection>& conn,
@@ -370,6 +385,16 @@ static void FailSession(const std::shared_ptr<BoltConnection>& conn,
   session->state = SessionState::FAILED;
 }
 
+static void FailSessionUnlessInterruptedOrClosed(
+    const std::shared_ptr<BoltConnection>& conn, BoltSession* session,
+    ErrorCode code, std::string msg) {
+  if (InterruptedOrClosed(conn, session)) {
+    return;
+  }
+  LOG_ERROR("{}", msg);
+  FailSession(conn, session, code, msg);
+}
+
 static void CloseProtocolError(const std::shared_ptr<BoltConnection>& conn,
                                BoltSession* session, BoltMsg type) {
   LOG_ERROR("Unexpected msg:{} in {} state, close the connection",
@@ -378,14 +403,28 @@ static void CloseProtocolError(const std::shared_ptr<BoltConnection>& conn,
   conn->Close();
 }
 
+static bool HandleInterruptedSessionMessage(
+    const std::shared_ptr<BoltConnection>& conn, BoltSession* session,
+    BoltMsg type) {
+  if (!IsSessionInterrupted(session) || IsResetMessage(type)) {
+    return false;
+  }
+  AbortActiveQuery(session);
+  session->state = SessionState::INTERRUPTED;
+  if (IsSessionRequest(type)) {
+    PostIgnored(conn);
+  } else {
+    CloseProtocolError(conn, session, type);
+  }
+  return true;
+}
+
 static void ProcessRecoverableState(const std::shared_ptr<BoltConnection>& conn,
                                     BoltSession* session, BoltMsg type) {
   if (IsSessionRequest(type)) {
     PostIgnored(conn);
   } else if (type == bolt::BoltMsg::Reset) {
     CompleteReset(conn, session);
-  } else if (type == bolt::BoltMsg::Goodbye) {
-    ProcessGoodbye(conn, session);
   } else {
     CloseProtocolError(conn, session, type);
   }
@@ -440,12 +479,9 @@ static void ProcessPullOrDiscard(const std::shared_ptr<BoltConnection>& conn,
   int64_t remaining = n;
   auto* result = session->active_query->result.get();
 
-  while (!conn->has_closed() && result->Valid() &&
-         (unlimited || remaining > 0)) {
-    if (session->interrupt_requested.load()) {
-      session->state = SessionState::INTERRUPTED;
+  while (result->Valid() && (unlimited || remaining > 0)) {
+    if (InterruptedOrClosed(conn, session)) {
       AbortActiveQuery(session);
-      LOG_INFO("The bolt session is interrupted, cancel the op execution.");
       return;
     }
 
@@ -461,15 +497,8 @@ static void ProcessPullOrDiscard(const std::shared_ptr<BoltConnection>& conn,
     }
   }
 
-  if (conn->has_closed()) {
+  if (InterruptedOrClosed(conn, session)) {
     AbortActiveQuery(session);
-    LOG_INFO("The bolt connection is closed, cancel the op execution.");
-    return;
-  }
-  if (session->interrupt_requested.load()) {
-    session->state = SessionState::INTERRUPTED;
-    AbortActiveQuery(session);
-    LOG_INFO("The bolt session is interrupted, cancel the op execution.");
     return;
   }
 
@@ -544,22 +573,19 @@ static void ProcessRun(Galaxy* galaxy,
           "$" + pair.first, ConvertParameters(active_query->ctx->obj_alloc_,
                                               std::move(pair.second)));
     }
-    if (CancelIfInterruptedOrClosed(conn, session)) {
-      return;
-    }
     if (!system_context) {
       active_query->graph_db = galaxy->OpenGraph(graph);
       active_query->txn = active_query->graph_db->BeginTransaction();
       active_query->txn->SetConn(conn);
     }
-    if (CancelIfInterruptedOrClosed(conn, session)) {
+    if (InterruptedOrClosed(conn, session)) {
       return;
     }
     LOG_DEBUG("Execute {}", active_query->cypher.substr(0, 256));
     active_query->result = std::make_unique<ResultIterator>(
         active_query->ctx.get(), active_query->txn.get(), active_query->cypher);
     auto header = active_query->result->GetHeader();
-    if (CancelIfInterruptedOrClosed(conn, session)) {
+    if (InterruptedOrClosed(conn, session)) {
       return;
     }
 
@@ -571,17 +597,10 @@ static void ProcessRun(Galaxy* galaxy,
     session->active_query = std::move(active_query);
     session->state = bolt::SessionState::STREAMING;
   } catch (const LgraphException& e) {
-    if (CancelIfInterruptedOrClosed(conn, session)) {
-      return;
-    }
-    LOG_ERROR(e.what());
-    FailSession(conn, session, e.code(), e.msg());
+    FailSessionUnlessInterruptedOrClosed(conn, session, e.code(), e.msg());
   } catch (std::exception& e) {
-    if (CancelIfInterruptedOrClosed(conn, session)) {
-      return;
-    }
-    LOG_ERROR(e.what());
-    FailSession(conn, session, ErrorCode::UnknownError, e.what());
+    FailSessionUnlessInterruptedOrClosed(conn, session, ErrorCode::UnknownError,
+                                         e.what());
   }
 }
 
@@ -595,8 +614,6 @@ static void ProcessReadyState(Galaxy* galaxy,
     FailUnsupportedRequest(conn, session, type, "routing");
   } else if (type == bolt::BoltMsg::Reset) {
     CompleteReset(conn, session);
-  } else if (type == bolt::BoltMsg::Goodbye) {
-    ProcessGoodbye(conn, session);
   } else if (type == bolt::BoltMsg::Run) {
     ProcessRun(galaxy, conn, session, fields);
   } else {
@@ -612,17 +629,14 @@ static void ProcessStreamingState(const std::shared_ptr<BoltConnection>& conn,
       ProcessPullOrDiscard(conn, session, type, fields);
     } else if (type == bolt::BoltMsg::Reset) {
       CompleteReset(conn, session);
-    } else if (type == bolt::BoltMsg::Goodbye) {
-      ProcessGoodbye(conn, session);
     } else {
       CloseProtocolError(conn, session, type);
     }
   } catch (const LgraphException& e) {
-    LOG_ERROR(e.what());
-    FailSession(conn, session, e.code(), e.msg());
+    FailSessionUnlessInterruptedOrClosed(conn, session, e.code(), e.msg());
   } catch (std::exception& e) {
-    LOG_ERROR(e.what());
-    FailSession(conn, session, ErrorCode::UnknownError, e.what());
+    FailSessionUnlessInterruptedOrClosed(conn, session, ErrorCode::UnknownError,
+                                         e.what());
   }
 }
 
@@ -631,15 +645,7 @@ static void ProcessBoltMessage(Galaxy* galaxy,
                                BoltSession* session, BoltMsgDetail msg) {
   auto& fields = msg.fields;
   auto type = msg.type;
-  if (session->interrupt_requested.load() && type != bolt::BoltMsg::Reset &&
-      type != bolt::BoltMsg::Goodbye) {
-    AbortActiveQuery(session);
-    session->state = SessionState::INTERRUPTED;
-    if (IsSessionRequest(type)) {
-      PostIgnored(conn);
-    } else {
-      CloseProtocolError(conn, session, type);
-    }
+  if (HandleInterruptedSessionMessage(conn, session, type)) {
     return;
   }
 
@@ -683,7 +689,6 @@ static void ScheduleSession(Galaxy* galaxy,
         ProcessSession(galaxy, conn, session, weak_pool);
       })) {
     LOG_WARN("failed to schedule bolt session: worker pool is stopped");
-    session->interrupt_requested.store(true);
     conn->Close();
   }
 }
@@ -725,7 +730,6 @@ void ProcessSession(Galaxy* galaxy, std::shared_ptr<BoltConnection> conn,
         ProcessSession(galaxy, conn, session, weak_pool);
       })) {
     LOG_WARN("failed to reschedule bolt session: worker pool is stopped");
-    session->interrupt_requested.store(true);
     conn->Close();
   }
 }
@@ -746,7 +750,6 @@ static bool EnqueueSessionMessage(Galaxy* galaxy,
   if (!session->msgs.Push(std::move(msg))) {
     LOG_WARN("close bolt connection {}: pending message queue is full",
              conn.conn_id());
-    session->interrupt_requested.store(true);
     conn.Close();
     return false;
   }
@@ -765,7 +768,6 @@ BoltHandler NewBoltHandler(Galaxy* galaxy, BoltHandlerOptions options) {
       auto existing_session = GetSession(conn);
       if (existing_session) {
         LOG_WARN("receive duplicate Bolt HELLO, close the connection");
-        existing_session->interrupt_requested.store(true);
         conn.Close();
         return;
       }
@@ -848,11 +850,13 @@ BoltHandler NewBoltHandler(Galaxy* galaxy, BoltHandlerOptions options) {
       bolt::PackStream ps;
       ps.AppendSuccess(meta);
       conn.Respond(std::move(ps.MutableBuffer()));
+    } else if (msg == BoltMsg::Goodbye) {
+      conn.Close();
+      return;
     } else if (msg == BoltMsg::Run || msg == BoltMsg::PullN ||
                msg == BoltMsg::DiscardN || msg == BoltMsg::Begin ||
                msg == BoltMsg::Commit || msg == BoltMsg::Rollback ||
-               msg == BoltMsg::Route || msg == BoltMsg::Reset ||
-               msg == BoltMsg::Goodbye) {
+               msg == BoltMsg::Route || msg == BoltMsg::Reset) {
       auto session = GetSession(conn);
       if (!session) {
         LOG_WARN("receive {} before Bolt HELLO, close the connection",
@@ -860,8 +864,8 @@ BoltHandler NewBoltHandler(Galaxy* galaxy, BoltHandlerOptions options) {
         conn.Close();
         return;
       }
-      if (msg == BoltMsg::Reset || msg == BoltMsg::Goodbye) {
-        session->interrupt_requested.store(true);
+      if (msg == BoltMsg::Reset) {
+        RequestSessionInterrupt(session.get());
       }
       EnqueueSessionMessage(galaxy, worker_pool, conn, std::move(session),
                             {msg, std::move(fields)});

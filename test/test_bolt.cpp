@@ -24,6 +24,7 @@
 #include "common/exceptions.h"
 #include "proto/meta.pb.h"
 #include "proxy/proxy_server.h"
+#include "server/bolt_session.h"
 #include "server/lgraph_server.h"
 #include "test_util.h"
 
@@ -109,6 +110,8 @@ class RawBoltClient {
     ps.AppendReset();
     Send(ps.ConstBuffer());
   }
+
+  void SendGoodbye() { Send(MakeStructMessage(bolt::BoltMsg::Goodbye)); }
 
   void SendPull(int64_t n) {
     bolt::PackStream ps;
@@ -355,14 +358,14 @@ class BoltProxyBackendTestServer {
   std::unique_ptr<proxy::ProxyServer> proxy_;
 };
 
-class BoltNeo4jDriverServer {
+class BoltServerTestServer {
  public:
-  BoltNeo4jDriverServer()
+  BoltServerTestServer()
       : bolt_port_(AllocateFreePort()), raft_port_(AllocateFreePort()) {
-    data_path_ = "test_bolt_neo4j_driver_" + std::to_string(bolt_port_);
+    data_path_ = "test_bolt_server_" + std::to_string(bolt_port_);
   }
 
-  ~BoltNeo4jDriverServer() { Stop(); }
+  ~BoltServerTestServer() { Stop(); }
 
   bool Start() {
     Stop();
@@ -445,6 +448,23 @@ TEST(BoltBlockingQueue, ZeroCapacityMeansUnlimited) {
     EXPECT_EQ(value.value(), i);
   }
   EXPECT_TRUE(queue.Empty());
+}
+
+TEST(BoltSessionInterrupts, RequiresLastResetToClearInterrupt) {
+  bolt::BoltSession session;
+
+  EXPECT_FALSE(session.HasInterrupt());
+  session.RequestInterrupt();
+  session.RequestInterrupt();
+  EXPECT_TRUE(session.HasInterrupt());
+
+  EXPECT_FALSE(session.ConsumeInterrupt());
+  EXPECT_TRUE(session.HasInterrupt());
+
+  EXPECT_TRUE(session.ConsumeInterrupt());
+  EXPECT_FALSE(session.HasInterrupt());
+
+  EXPECT_TRUE(session.ConsumeInterrupt());
 }
 
 TEST(ProxyShardMap, RejectsInvalidShardRange) {
@@ -580,12 +600,47 @@ TEST(ProxyBoltProtocol, ResetInterruptsActiveBackendStream) {
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
 }
 
+TEST(BoltServerProtocol, GoodbyeClosesConnection) {
+  BoltServerTestServer server;
+  ASSERT_TRUE(server.Start());
+
+  RawBoltClient client(server.bolt_port());
+  client.SendHello();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendGoodbye();
+  EXPECT_TRUE(client.WaitForClose(std::chrono::milliseconds(2000)));
+}
+
+TEST(BoltServerProtocol, ResetInterruptsActiveStreamAndRecovers) {
+  BoltServerTestServer server;
+  ASSERT_TRUE(server.Start());
+
+  RawBoltClient client(server.bolt_port());
+  client.SendHello();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendRun("UNWIND range(0, 10000) AS n RETURN n", {},
+                 {{"db", "default"}});
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendReset();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendRun("RETURN $value AS n", {{"value", int64_t{7}}},
+                 {{"db", "default"}});
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+  client.SendPull(-1);
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Record);
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+}
+
 TEST(BoltNeo4jDriver, HandlesBolt4PlaceholdersAndRecovery) {
   if (RunShellCommand("python3 -c 'import neo4j'") != 0) {
     GTEST_SKIP() << "neo4j Python driver is not installed";
   }
 
-  BoltNeo4jDriverServer server;
+  BoltServerTestServer server;
   ASSERT_TRUE(server.Start());
 
   std::string command = "python3 ../test/scripts/test_bolt_neo4j_driver.py " +

@@ -78,6 +78,20 @@ struct BoltSession {
   explicit BoltSession(size_t max_pending_messages = 0)
       : msgs(max_pending_messages) {}
 
+  void RequestInterrupt() { remaining_interrupts.fetch_add(1); }
+
+  bool HasInterrupt() const { return remaining_interrupts.load() != 0; }
+
+  bool ConsumeInterrupt() {
+    size_t current = remaining_interrupts.load();
+    while (current != 0) {
+      if (remaining_interrupts.compare_exchange_weak(current, current - 1)) {
+        return current == 1;
+      }
+    }
+    return true;
+  }
+
   std::unique_ptr<ActiveBoltQuery> active_query;
   PackStream ps;
   std::string user;
@@ -85,7 +99,7 @@ struct BoltSession {
   BlockingQueue<BoltMsgDetail> msgs;
   std::mutex schedule_mutex;
   bool scheduled = false;
-  std::atomic<bool> interrupt_requested = false;
+  std::atomic<size_t> remaining_interrupts = 0;
   bool utc_patch = false;
   bool python_driver = false;
 };
