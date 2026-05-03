@@ -493,7 +493,7 @@ TEST(ProxyBoltProtocol, DuplicateHelloClosesConnection) {
   EXPECT_TRUE(client.WaitForClose(std::chrono::milliseconds(2000)));
 }
 
-TEST(ProxyBoltProtocol, RouteFailureDoesNotBlockNextRequest) {
+TEST(ProxyBoltProtocol, RouteFailureNeedsResetBeforeNextRequest) {
   BoltProxyTestServer server;
   ASSERT_TRUE(server.Start());
 
@@ -508,7 +508,7 @@ TEST(ProxyBoltProtocol, RouteFailureDoesNotBlockNextRequest) {
   EXPECT_NE(route_failure.failure_message.find("routing"), std::string::npos);
 
   client.SendRoute();
-  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Failure);
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Ignored);
 
   client.SendReset();
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
@@ -517,7 +517,7 @@ TEST(ProxyBoltProtocol, RouteFailureDoesNotBlockNextRequest) {
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Failure);
 }
 
-TEST(ProxyBoltProtocol, ExplicitTransactionFailureDoesNotBlockNextRequest) {
+TEST(ProxyBoltProtocol, ExplicitTransactionFailureNeedsResetBeforeNextRequest) {
   BoltProxyTestServer server;
   ASSERT_TRUE(server.Start());
 
@@ -533,7 +533,7 @@ TEST(ProxyBoltProtocol, ExplicitTransactionFailureDoesNotBlockNextRequest) {
             std::string::npos);
 
   client.SendBegin();
-  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Failure);
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Ignored);
 
   client.SendReset();
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
@@ -542,7 +542,7 @@ TEST(ProxyBoltProtocol, ExplicitTransactionFailureDoesNotBlockNextRequest) {
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Failure);
 }
 
-TEST(ProxyBoltProtocol, PullWithoutStreamReturnsFailure) {
+TEST(ProxyBoltProtocol, PullWithoutStreamClosesConnection) {
   BoltProxyTestServer server;
   ASSERT_TRUE(server.Start());
 
@@ -551,12 +551,7 @@ TEST(ProxyBoltProtocol, PullWithoutStreamReturnsFailure) {
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
 
   client.SendPull(-1);
-  auto pull_failure = client.ReadResponse();
-  EXPECT_EQ(pull_failure.tag, bolt::BoltMsg::Failure);
-  EXPECT_EQ(pull_failure.failure_code,
-            "Neo.TransientError.Network.CommunicationError");
-  EXPECT_NE(pull_failure.failure_message.find("active backend"),
-            std::string::npos);
+  EXPECT_TRUE(client.WaitForClose(std::chrono::milliseconds(2000)));
 }
 
 TEST(ProxyBoltProtocol, RejectsRunWithUnexpectedFieldCount) {
@@ -573,6 +568,15 @@ TEST(ProxyBoltProtocol, RejectsRunWithUnexpectedFieldCount) {
   EXPECT_EQ(run_failure.failure_code,
             "Neo.ClientError.Statement.ArgumentError");
   EXPECT_NE(run_failure.failure_message.find("fields size"), std::string::npos);
+
+  client.SendRunWithExtraField();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Ignored);
+
+  client.SendReset();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  client.SendRunWithExtraField();
+  EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Failure);
 }
 
 TEST(ProxyBoltProtocol, ResetInterruptsActiveBackendStream) {
@@ -645,5 +649,18 @@ TEST(BoltNeo4jDriver, HandlesBolt4PlaceholdersAndRecovery) {
 
   std::string command = "python3 ../test/scripts/test_bolt_neo4j_driver.py " +
                         std::to_string(server.bolt_port());
+  EXPECT_EQ(RunShellCommand(command), 0);
+}
+
+TEST(ProxyBoltNeo4jDriver, HandlesBolt4PlaceholdersAndRecovery) {
+  if (RunShellCommand("python3 -c 'import neo4j'") != 0) {
+    GTEST_SKIP() << "neo4j Python driver is not installed";
+  }
+
+  BoltProxyBackendTestServer server;
+  ASSERT_TRUE(server.Start());
+
+  std::string command = "python3 ../test/scripts/test_bolt_neo4j_driver.py " +
+                        std::to_string(server.proxy_bolt_port()) + " proxy";
   EXPECT_EQ(RunShellCommand(command), 0);
 }
