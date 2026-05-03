@@ -15,6 +15,7 @@
 #pragma once
 
 #include <any>
+#include <array>
 #include <atomic>
 #include <boost/asio.hpp>
 #include <functional>
@@ -85,6 +86,13 @@ class BoltBackendSession {
       const std::function<
           void(const std::function<void(const boost::system::error_code&)>&)>&
           start);
+  void ReadMessageWithTimeout(BackendMessage* message, const char* operation);
+  void AsyncReadMessageChunkHeader(
+      BackendMessage* message,
+      const std::function<void(const boost::system::error_code&)>& done);
+  void AsyncReadMessageChunkBody(
+      BackendMessage* message, uint16_t size,
+      const std::function<void(const boost::system::error_code&)>& done);
   BackendMessage ReadMessage(bool decode_records = false);
   static bolt::BoltMsg DecodeTag(std::string_view payload);
   static bool DecodeSuccessHasMore(std::string_view payload);
@@ -93,8 +101,11 @@ class BoltBackendSession {
   BackendEndpoint endpoint_;
   std::unordered_map<std::string, std::any> hello_meta_;
   boost::asio::io_context io_context_;
+  boost::asio::steady_timer timeout_timer_;
   std::unique_ptr<boost::asio::ip::tcp::socket> socket_;
   bolt::Hydrator hydrator_;
+  std::array<char, 2> chunk_header_buffer_{};
+  std::string chunk_buffer_;
   bool connected_ = false;
   std::atomic<bool> cancelled_{false};
 };

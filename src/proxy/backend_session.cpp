@@ -15,6 +15,7 @@
 #include "proxy/backend_session.h"
 
 #include <boost/endian/conversion.hpp>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 
@@ -173,7 +174,9 @@ bool CastBoolField(const std::any& value, const char* field_name) {
 BoltBackendSession::BoltBackendSession(
     BackendEndpoint endpoint,
     std::unordered_map<std::string, std::any> hello_meta)
-    : endpoint_(std::move(endpoint)), hello_meta_(std::move(hello_meta)) {}
+    : endpoint_(std::move(endpoint)),
+      hello_meta_(std::move(hello_meta)),
+      timeout_timer_(io_context_) {}
 
 BoltBackendSession::~BoltBackendSession() { Close(); }
 
@@ -378,24 +381,24 @@ void BoltBackendSession::RunWithTimeout(
   boost::system::error_code result;
   bool completed = false;
   bool timed_out = false;
-  boost::asio::deadline_timer timer(io_context_);
-  timer.expires_from_now(boost::posix_time::seconds(timeout_seconds));
-  timer.async_wait([this, &timed_out](const boost::system::error_code& ec) {
-    if (ec) {
-      return;
-    }
-    timed_out = true;
-    if (socket_) {
-      boost::system::error_code ignored;
-      socket_->cancel(ignored);
-    }
-  });
+  timeout_timer_.expires_after(std::chrono::seconds(timeout_seconds));
+  timeout_timer_.async_wait(
+      [this, &timed_out](const boost::system::error_code& ec) {
+        if (ec) {
+          return;
+        }
+        timed_out = true;
+        if (socket_) {
+          boost::system::error_code ignored;
+          socket_->cancel(ignored);
+        }
+      });
 
   start([&](const boost::system::error_code& ec) {
     result = ec;
     completed = true;
     boost::system::error_code ignored;
-    timer.cancel(ignored);
+    timeout_timer_.cancel(ignored);
   });
 
   io_context_.restart();
@@ -416,28 +419,64 @@ void BoltBackendSession::RunWithTimeout(
   }
 }
 
+void BoltBackendSession::ReadMessageWithTimeout(BackendMessage* message,
+                                                const char* operation) {
+  RunWithTimeout(
+      operation, kBackendIoTimeoutSeconds,
+      [this, message](
+          const std::function<void(const boost::system::error_code&)>& done) {
+        AsyncReadMessageChunkHeader(message, done);
+      });
+}
+
+void BoltBackendSession::AsyncReadMessageChunkHeader(
+    BackendMessage* message,
+    const std::function<void(const boost::system::error_code&)>& done) {
+  boost::asio::async_read(
+      *socket_, boost::asio::buffer(chunk_header_buffer_),
+      [this, message, done](const boost::system::error_code& ec, size_t) {
+        if (ec) {
+          done(ec);
+          return;
+        }
+        message->raw.append(chunk_header_buffer_.data(),
+                            chunk_header_buffer_.size());
+
+        uint16_t size = 0;
+        std::memcpy(&size, chunk_header_buffer_.data(), sizeof(size));
+        size = big_to_native(size);
+        if (size == 0) {
+          if (!message->payload.empty()) {
+            done(ec);
+            return;
+          }
+          AsyncReadMessageChunkHeader(message, done);
+          return;
+        }
+        AsyncReadMessageChunkBody(message, size, done);
+      });
+}
+
+void BoltBackendSession::AsyncReadMessageChunkBody(
+    BackendMessage* message, uint16_t size,
+    const std::function<void(const boost::system::error_code&)>& done) {
+  chunk_buffer_.assign(size, '\0');
+  boost::asio::async_read(
+      *socket_, boost::asio::buffer(chunk_buffer_),
+      [this, message, done](const boost::system::error_code& ec, size_t) {
+        if (ec) {
+          done(ec);
+          return;
+        }
+        message->raw.append(chunk_buffer_);
+        message->payload.append(chunk_buffer_);
+        AsyncReadMessageChunkHeader(message, done);
+      });
+}
+
 BackendMessage BoltBackendSession::ReadMessage(bool decode_records) {
   BackendMessage message;
-  while (true) {
-    char header[2] = {0};
-    ReadWithTimeout(header, sizeof(header), "backend chunk header read");
-    message.raw.append(header, sizeof(header));
-
-    uint16_t size = 0;
-    std::memcpy(&size, header, sizeof(size));
-    size = big_to_native(size);
-    if (size == 0) {
-      if (!message.payload.empty()) {
-        break;
-      }
-      continue;
-    }
-
-    std::string chunk(size, '\0');
-    ReadWithTimeout(chunk.data(), chunk.size(), "backend chunk read");
-    message.raw.append(chunk);
-    message.payload.append(chunk);
-  }
+  ReadMessageWithTimeout(&message, "backend message read");
 
   message.tag = DecodeTag(message.payload);
   if (message.tag == bolt::BoltMsg::Success) {
