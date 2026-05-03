@@ -21,6 +21,7 @@
 #include "bolt/errors.h"
 #include "bolt/hydrator.h"
 #include "bolt/pack_stream.h"
+#include "common/exceptions.h"
 #include "proxy/proxy_server.h"
 #include "server/lgraph_server.h"
 
@@ -341,6 +342,18 @@ TEST(BoltBlockingQueue, ZeroCapacityMeansUnlimited) {
     EXPECT_EQ(value.value(), i);
   }
   EXPECT_TRUE(queue.Empty());
+}
+
+TEST(ProxyShardMap, RejectsInvalidShardRange) {
+  EXPECT_THROW(proxy::ShardMap::FromConfig("default", "default_s", 2, 2,
+                                           "bad=1@127.0.0.1:7687:7688"),
+               LgraphException);
+}
+
+TEST(ProxyShardMap, RejectsInvalidBackendPort) {
+  EXPECT_THROW(proxy::ShardMap::FromConfig("default", "default_s", 1, 2,
+                                           "0=1@127.0.0.1:70000:7688"),
+               LgraphException);
 }
 
 TEST(ProxyBoltProtocol, DuplicateHelloClosesConnection) {

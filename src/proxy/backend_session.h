@@ -43,6 +43,7 @@ struct BackendMessage {
   std::string payload;
   bolt::BoltMsg tag = bolt::BoltMsg::Ignored;
   bool success_has_more = false;
+  std::string failure_code;
   std::string failure_message;
   std::optional<bolt::Record> record;
 };
@@ -66,6 +67,15 @@ class BoltBackendSession {
  private:
   void EnsureConnected();
   void Connect();
+  void ConnectWithTimeout(
+      const boost::asio::ip::tcp::resolver::results_type& endpoints);
+  void WriteWithTimeout(const void* data, size_t size, const char* operation);
+  void ReadWithTimeout(void* data, size_t size, const char* operation);
+  void RunWithTimeout(
+      const char* operation, uint32_t timeout_seconds,
+      const std::function<
+          void(const std::function<void(const boost::system::error_code&)>&)>&
+          start);
   BackendMessage ReadMessage(bool decode_records = false);
   static bolt::BoltMsg DecodeTag(std::string_view payload);
   static bool DecodeSuccessHasMore(std::string_view payload);

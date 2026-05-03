@@ -30,6 +30,7 @@
 
 #include "bolt/blocking_queue.h"
 #include "bolt/pack_stream.h"
+#include "common/exceptions.h"
 #include "common/logger.h"
 #include "proxy/backend_session.h"
 
@@ -42,6 +43,17 @@ constexpr const char* kArgumentError =
 constexpr const char* kRequestError = "Neo.ClientError.Request.Invalid";
 constexpr const char* kNetworkError =
     "Neo.TransientError.Network.CommunicationError";
+
+class ProxyClientError : public std::runtime_error {
+ public:
+  ProxyClientError(std::string code, std::string message)
+      : std::runtime_error(message), code_(std::move(code)) {}
+
+  const std::string& code() const { return code_; }
+
+ private:
+  std::string code_;
+};
 
 const char* BoltMsgName(bolt::BoltMsg msg) {
   switch (msg) {
@@ -181,14 +193,27 @@ class LeaderCache {
     leaders_[graph_name] = std::move(endpoint);
   }
 
-  void Invalidate(const std::string& graph_name) {
+  void InvalidateIf(const std::string& graph_name,
+                    const BackendEndpoint& endpoint) {
     std::lock_guard<std::mutex> guard(mutex_);
-    leaders_.erase(graph_name);
+    auto iter = leaders_.find(graph_name);
+    if (iter != leaders_.end() && iter->second.name == endpoint.name) {
+      leaders_.erase(iter);
+    }
   }
 
  private:
   std::mutex mutex_;
   std::unordered_map<std::string, BackendEndpoint> leaders_;
+};
+
+struct ProxyContext {
+  explicit ProxyContext(ShardMap shard_map)
+      : shard_map(std::make_shared<ShardMap>(std::move(shard_map))),
+        leader_cache(std::make_shared<LeaderCache>()) {}
+
+  std::shared_ptr<const ShardMap> shard_map;
+  std::shared_ptr<LeaderCache> leader_cache;
 };
 
 std::shared_ptr<ProxySession> GetSession(bolt::BoltConnection& conn) {
@@ -201,15 +226,15 @@ std::shared_ptr<ProxySession> GetSession(bolt::BoltConnection& conn) {
 
 std::string AnyToShardKey(const std::any& value) {
   if (!value.has_value()) {
-    throw std::runtime_error(
-        "routing parameter _shard_key_ should not be null");
+    throw ProxyClientError(kArgumentError,
+                           "routing parameter _shard_key_ should not be null");
   }
   const auto& type = value.type();
   if (type == typeid(std::string)) {
     auto shard_key = std::any_cast<std::string>(value);
     if (shard_key.empty()) {
-      throw std::runtime_error(
-          "routing parameter _shard_key_ should not be empty");
+      throw ProxyClientError(
+          kArgumentError, "routing parameter _shard_key_ should not be empty");
     }
     return shard_key;
   }
@@ -222,7 +247,8 @@ std::string AnyToShardKey(const std::any& value) {
   if (type == typeid(double)) {
     return fmt::format("{:.17g}", std::any_cast<double>(value));
   }
-  throw std::runtime_error(
+  throw ProxyClientError(
+      kArgumentError,
       "routing parameter _shard_key_ type should be String, Integer, Bool, or "
       "Float");
 }
@@ -231,7 +257,8 @@ std::unordered_map<std::string, std::any> CastMapField(const std::any& value,
                                                        const char* field_name) {
   auto* map = std::any_cast<std::unordered_map<std::string, std::any>>(&value);
   if (map == nullptr) {
-    throw std::runtime_error(fmt::format("{} type should be Map", field_name));
+    throw ProxyClientError(kArgumentError,
+                           fmt::format("{} type should be Map", field_name));
   }
   return *map;
 }
@@ -239,27 +266,30 @@ std::unordered_map<std::string, std::any> CastMapField(const std::any& value,
 std::string CastStringField(const std::any& value, const char* field_name) {
   auto* str = std::any_cast<std::string>(&value);
   if (str == nullptr) {
-    throw std::runtime_error(
-        fmt::format("{} type should be String", field_name));
+    throw ProxyClientError(kArgumentError,
+                           fmt::format("{} type should be String", field_name));
   }
   return *str;
 }
 
 int64_t ExtractPullN(const std::vector<std::any>& fields) {
   if (fields.size() != 1) {
-    throw std::runtime_error("PULL/DISCARD fields size should be 1");
+    throw ProxyClientError(kRequestError,
+                           "PULL/DISCARD fields size should be 1");
   }
   auto metadata = CastMapField(fields[0], "PULL/DISCARD metadata");
   auto iter = metadata.find("n");
   if (iter == metadata.end()) {
-    throw std::runtime_error("PULL/DISCARD metadata should contain n");
+    throw ProxyClientError(kRequestError,
+                           "PULL/DISCARD metadata should contain n");
   }
   auto* n = std::any_cast<int64_t>(&iter->second);
   if (n == nullptr) {
-    throw std::runtime_error("PULL/DISCARD n type should be Integer");
+    throw ProxyClientError(kRequestError,
+                           "PULL/DISCARD n type should be Integer");
   }
   if (*n == 0) {
-    throw std::runtime_error("PULL/DISCARD n should not be 0");
+    throw ProxyClientError(kRequestError, "PULL/DISCARD n should not be 0");
   }
   return *n;
 }
@@ -410,8 +440,13 @@ bool IsNotLeaderFailure(const std::vector<BackendMessage>& messages) {
   if (messages.empty() || messages.back().tag != bolt::BoltMsg::Failure) {
     return false;
   }
-  return messages.back().failure_message.find("not leader") !=
-         std::string::npos;
+  const auto& failure = messages.back();
+  if (failure.failure_code == "Neo.ClientError.Cluster.NotALeader" ||
+      failure.failure_code ==
+          "Neo.ClientError.General.ForbiddenOnReadOnlyDatabase") {
+    return true;
+  }
+  return failure.failure_message.find("not leader") != std::string::npos;
 }
 
 void ProcessReset(const std::shared_ptr<bolt::BoltConnection>& conn,
@@ -436,8 +471,7 @@ void ProcessReset(const std::shared_ptr<bolt::BoltConnection>& conn,
   ForwardMessages(conn, messages);
 }
 
-void ProcessRun(const ShardMap& shard_map,
-                const std::shared_ptr<LeaderCache>& leader_cache,
+void ProcessRun(const std::shared_ptr<ProxyContext>& context,
                 const std::shared_ptr<bolt::BoltConnection>& conn,
                 ProxySession* session, const std::vector<std::any>& fields) {
   if (fields.size() < 3) {
@@ -459,6 +493,8 @@ void ProcessRun(const ShardMap& shard_map,
   auto shard_key = AnyToShardKey(shard_key_iter->second);
   params.erase(shard_key_iter);
 
+  const auto& shard_map = *context->shard_map;
+  auto& leader_cache = context->leader_cache;
   std::string logical_graph = shard_map.logical_graph();
   auto db_iter = extra.find("db");
   if (db_iter != extra.end() && db_iter->second.has_value()) {
@@ -493,7 +529,7 @@ void ProcessRun(const ShardMap& shard_map,
 
       last_error = messages.back().failure_message;
       CloseBackendSession(session, selected_endpoint);
-      leader_cache->Invalidate(route.graph_name);
+      leader_cache->InvalidateIf(route.graph_name, selected_endpoint);
       LOG_WARN("proxy stale leader for graph {} backend {}:{}: {}",
                route.graph_name, selected_endpoint.host, selected_endpoint.port,
                last_error);
@@ -501,7 +537,9 @@ void ProcessRun(const ShardMap& shard_map,
     } catch (const std::exception& e) {
       last_error = e.what();
       CloseBackendSession(session, selected_endpoint);
-      leader_cache->Invalidate(route.graph_name);
+      if (!selected_endpoint.name.empty()) {
+        leader_cache->InvalidateIf(route.graph_name, selected_endpoint);
+      }
       LOG_WARN("proxy backend attempt failed for graph {} backend {}:{}: {}",
                route.graph_name, selected_endpoint.host, selected_endpoint.port,
                e.what());
@@ -581,12 +619,11 @@ void ProcessRecoverableState(const std::shared_ptr<bolt::BoltConnection>& conn,
   }
 }
 
-void ProcessReadyState(const ShardMap& shard_map,
-                       const std::shared_ptr<LeaderCache>& leader_cache,
+void ProcessReadyState(const std::shared_ptr<ProxyContext>& context,
                        const std::shared_ptr<bolt::BoltConnection>& conn,
                        ProxySession* session, const ProxyMessage& message) {
   if (message.type == bolt::BoltMsg::Run) {
-    ProcessRun(shard_map, leader_cache, conn, session, message.fields);
+    ProcessRun(context, conn, session, message.fields);
   } else if (message.type == bolt::BoltMsg::Route) {
     SendFailure(conn, session, kRequestError,
                 "routing is not supported by lgraph_proxy");
@@ -612,14 +649,13 @@ void ProcessStreamingState(const std::shared_ptr<bolt::BoltConnection>& conn,
   }
 }
 
-void ProcessProxyMessage(const ShardMap& shard_map,
-                         const std::shared_ptr<LeaderCache>& leader_cache,
+void ProcessProxyMessage(const std::shared_ptr<ProxyContext>& context,
                          const std::shared_ptr<bolt::BoltConnection>& conn,
                          ProxySession* session, ProxyMessage message) {
   try {
     switch (session->state) {
       case ProxySessionState::Ready:
-        ProcessReadyState(shard_map, leader_cache, conn, session, message);
+        ProcessReadyState(context, conn, session, message);
         break;
       case ProxySessionState::Streaming:
         ProcessStreamingState(conn, session, message);
@@ -631,6 +667,16 @@ void ProcessProxyMessage(const ShardMap& shard_map,
         CloseProtocolError(conn, session, message.type);
         break;
     }
+  } catch (const ProxyClientError& e) {
+    LOG_WARN("proxy client message failed: {}", e.what());
+    if (!conn->has_closed() && session->state != ProxySessionState::Defunct) {
+      SendFailure(conn, session, e.code(), e.what());
+    }
+  } catch (const LgraphException& e) {
+    LOG_WARN("proxy client message failed: {}", e.what());
+    if (!conn->has_closed() && session->state != ProxySessionState::Defunct) {
+      SendFailure(conn, session, kArgumentError, e.msg());
+    }
   } catch (const std::exception& e) {
     LOG_WARN("proxy message failed: {}", e.what());
     if (!conn->has_closed() && session->state != ProxySessionState::Defunct) {
@@ -639,14 +685,12 @@ void ProcessProxyMessage(const ShardMap& shard_map,
   }
 }
 
-void ProcessSession(const ShardMap& shard_map,
-                    std::shared_ptr<LeaderCache> leader_cache,
+void ProcessSession(std::shared_ptr<ProxyContext> context,
                     std::shared_ptr<bolt::BoltConnection> conn,
                     std::shared_ptr<ProxySession> session,
                     std::weak_ptr<ProxyWorkerPool> weak_pool);
 
-void ScheduleSession(const ShardMap& shard_map,
-                     const std::shared_ptr<LeaderCache>& leader_cache,
+void ScheduleSession(const std::shared_ptr<ProxyContext>& context,
                      const std::shared_ptr<ProxyWorkerPool>& pool,
                      std::shared_ptr<bolt::BoltConnection> conn,
                      std::shared_ptr<ProxySession> session) {
@@ -663,16 +707,14 @@ void ScheduleSession(const ShardMap& shard_map,
   }
 
   std::weak_ptr<ProxyWorkerPool> weak_pool = pool;
-  if (!pool->Post(
-          [shard_map, leader_cache, conn, session, weak_pool]() mutable {
-            ProcessSession(shard_map, leader_cache, conn, session, weak_pool);
-          })) {
+  if (!pool->Post([context, conn, session, weak_pool]() mutable {
+        ProcessSession(context, conn, session, weak_pool);
+      })) {
     conn->Close();
   }
 }
 
-void ProcessSession(const ShardMap& shard_map,
-                    std::shared_ptr<LeaderCache> leader_cache,
+void ProcessSession(std::shared_ptr<ProxyContext> context,
                     std::shared_ptr<bolt::BoltConnection> conn,
                     std::shared_ptr<ProxySession> session,
                     std::weak_ptr<ProxyWorkerPool> weak_pool) {
@@ -681,8 +723,7 @@ void ProcessSession(const ShardMap& shard_map,
     if (!message) {
       break;
     }
-    ProcessProxyMessage(shard_map, leader_cache, conn, session.get(),
-                        std::move(*message));
+    ProcessProxyMessage(context, conn, session.get(), std::move(*message));
   }
 
   bool should_reschedule = false;
@@ -703,16 +744,14 @@ void ProcessSession(const ShardMap& shard_map,
     conn->Close();
     return;
   }
-  if (!pool->Post(
-          [shard_map, leader_cache, conn, session, weak_pool]() mutable {
-            ProcessSession(shard_map, leader_cache, conn, session, weak_pool);
-          })) {
+  if (!pool->Post([context, conn, session, weak_pool]() mutable {
+        ProcessSession(context, conn, session, weak_pool);
+      })) {
     conn->Close();
   }
 }
 
-bool EnqueueSessionMessage(const ShardMap& shard_map,
-                           const std::shared_ptr<LeaderCache>& leader_cache,
+bool EnqueueSessionMessage(const std::shared_ptr<ProxyContext>& context,
                            const std::shared_ptr<ProxyWorkerPool>& pool,
                            bolt::BoltConnection& conn,
                            std::shared_ptr<ProxySession> session,
@@ -723,8 +762,7 @@ bool EnqueueSessionMessage(const ShardMap& shard_map,
     conn.Close();
     return false;
   }
-  ScheduleSession(shard_map, leader_cache, pool, conn.shared_from_this(),
-                  std::move(session));
+  ScheduleSession(context, pool, conn.shared_from_this(), std::move(session));
   return true;
 }
 
@@ -768,8 +806,8 @@ std::function<void(bolt::BoltConnection&, bolt::BoltMsg, std::vector<std::any>)>
 NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
                 size_t max_pending_messages) {
   auto worker_pool = std::make_shared<ProxyWorkerPool>(worker_thread_num);
-  auto leader_cache = std::make_shared<LeaderCache>();
-  return [shard_map, worker_pool, leader_cache, max_pending_messages](
+  auto context = std::make_shared<ProxyContext>(shard_map);
+  return [context, worker_pool, max_pending_messages](
              bolt::BoltConnection& conn, bolt::BoltMsg msg,
              std::vector<std::any> fields) mutable {
     if (msg == bolt::BoltMsg::Hello) {
@@ -806,8 +844,7 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
         msg == bolt::BoltMsg::DiscardN || msg == bolt::BoltMsg::Reset ||
         msg == bolt::BoltMsg::Begin || msg == bolt::BoltMsg::Commit ||
         msg == bolt::BoltMsg::Rollback || msg == bolt::BoltMsg::Route) {
-      EnqueueSessionMessage(shard_map, leader_cache, worker_pool, conn,
-                            std::move(session),
+      EnqueueSessionMessage(context, worker_pool, conn, std::move(session),
                             {.type = msg, .fields = std::move(fields)});
       return;
     }

@@ -30,6 +30,7 @@ struct BackendEndpoint {
 
 struct ShardReplicaGroup {
   size_t shard_id = 0;
+  std::string graph_name;
   std::vector<BackendEndpoint> replicas;
 };
 

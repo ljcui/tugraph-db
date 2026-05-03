@@ -16,10 +16,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <iomanip>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 #include "common/exceptions.h"
@@ -49,21 +51,27 @@ std::vector<std::string> Split(const std::string& value, char delim) {
   return parts;
 }
 
-uint64_t ParsePositiveUInt64(const std::string& value,
-                             const std::string& field_name) {
-  size_t pos = 0;
-  auto parsed = std::stoull(value, &pos, 10);
-  if (pos != value.size() || parsed == 0) {
+uint64_t ParseUInt64(const std::string& value, const std::string& field_name,
+                     bool allow_zero) {
+  uint64_t parsed = 0;
+  auto* begin = value.data();
+  auto* end = value.data() + value.size();
+  auto [ptr, ec] = std::from_chars(begin, end, parsed, 10);
+  if (value.empty() || ec != std::errc() || ptr != end ||
+      (!allow_zero && parsed == 0)) {
     THROW_CODE(InvalidParameter, "invalid {} [{}]", field_name, value);
   }
   return parsed;
 }
 
+uint64_t ParsePositiveUInt64(const std::string& value,
+                             const std::string& field_name) {
+  return ParseUInt64(value, field_name, false);
+}
+
 uint32_t ParsePort(const std::string& value, const std::string& field_name) {
-  size_t pos = 0;
-  auto parsed = std::stoul(value, &pos, 10);
-  if (pos != value.size() || parsed == 0 ||
-      parsed > std::numeric_limits<uint32_t>::max()) {
+  auto parsed = ParsePositiveUInt64(value, field_name);
+  if (parsed > 65535) {
     THROW_CODE(InvalidParameter, "invalid {} [{}]", field_name, value);
   }
   return static_cast<uint32_t>(parsed);
@@ -78,22 +86,16 @@ std::pair<size_t, size_t> ParseShardRange(const std::string& value,
     first = value.substr(0, dash);
     second = value.substr(dash + 1);
   }
-  size_t pos = 0;
-  auto begin = std::stoull(first, &pos, 10);
-  if (pos != first.size()) {
-    THROW_CODE(InvalidParameter, "invalid proxy shard range [{}]", value);
-  }
-  pos = 0;
-  auto end = std::stoull(second, &pos, 10);
-  if (pos != second.size()) {
-    THROW_CODE(InvalidParameter, "invalid proxy shard range [{}]", value);
-  }
-  if (begin > end || end >= shard_count) {
+  auto begin = ParseUInt64(first, "proxy shard range", true);
+  auto end = ParseUInt64(second, "proxy shard range", true);
+  if (begin > end || end >= shard_count ||
+      begin > std::numeric_limits<size_t>::max() ||
+      end > std::numeric_limits<size_t>::max()) {
     THROW_CODE(InvalidParameter,
                "proxy shard range [{}] is outside shard count {}", value,
                shard_count);
   }
-  return {begin, end};
+  return {static_cast<size_t>(begin), static_cast<size_t>(end)};
 }
 
 BackendEndpoint ParseReplica(const std::string& value) {
@@ -154,6 +156,10 @@ ShardMap ShardMap::FromConfig(std::string logical_graph,
   if (shard_count == 0) {
     THROW_CODE(InvalidParameter, "proxy shard count should be greater than 0");
   }
+  if (shard_id_width > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    THROW_CODE(InvalidParameter, "proxy shard id width {} is too large",
+               shard_id_width);
+  }
   if (backend_specs.empty()) {
     THROW_CODE(InvalidParameter, "proxy backend specs should not be empty");
   }
@@ -166,6 +172,7 @@ ShardMap ShardMap::FromConfig(std::string logical_graph,
 
   for (size_t shard_id = 0; shard_id < map.shards_.size(); ++shard_id) {
     map.shards_[shard_id].shard_id = shard_id;
+    map.shards_[shard_id].graph_name = map.FormatGraphName(shard_id);
   }
 
   for (const auto& raw_spec : Split(backend_specs, ';')) {
@@ -211,7 +218,7 @@ ShardRoute ShardMap::Route(const std::string& logical_graph,
   }
   auto shard_id = StableHash(shard_key) % shards_.size();
   return {.shard_id = shard_id,
-          .graph_name = FormatGraphName(shard_id),
+          .graph_name = shards_[shard_id].graph_name,
           .replica_group = &shards_[shard_id]};
 }
 

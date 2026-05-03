@@ -31,6 +31,8 @@ using boost::endian::big_to_native;
 constexpr int kSupportedBoltMajor = 4;
 constexpr int kMinSupportedBoltMinor = 0;
 constexpr int kMaxSupportedBoltMinor = 4;
+constexpr uint32_t kBackendConnectTimeoutSeconds = 5;
+constexpr uint32_t kBackendIoTimeoutSeconds = 30;
 constexpr uint8_t kBoltHandshake[] = {
     0x60, 0x60, 0xb0, 0x17, 0x00, 0x04, 0x04, 0x04, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -101,24 +103,27 @@ void SkipValue(bolt::Unpacker& unpacker) {
   }
 }
 
-std::string FailureMessage(const BackendMessage& msg,
-                           bolt::Hydrator* hydrator) {
+bolt::Neo4jError DecodeFailure(const BackendMessage& msg,
+                               bolt::Hydrator* hydrator) {
+  bolt::Neo4jError failure;
   if (msg.tag != bolt::BoltMsg::Failure) {
-    return {};
+    return failure;
   }
   hydrator->ClearErr();
   auto parsed = hydrator->Hydrate({msg.payload.data(), msg.payload.size()});
   if (parsed.second) {
-    return parsed.second.value();
+    failure.msg = parsed.second.value();
+    return failure;
   }
   if (parsed.first.type() == typeid(std::optional<bolt::Neo4jError>)) {
     const auto& error =
         std::any_cast<const std::optional<bolt::Neo4jError>&>(parsed.first);
     if (error.has_value()) {
-      return error->msg;
+      return *error;
     }
   }
-  return "backend returned failure";
+  failure.msg = "backend returned failure";
+  return failure;
 }
 
 bolt::Record DecodeRecord(const BackendMessage& msg, bolt::Hydrator* hydrator) {
@@ -174,9 +179,9 @@ BoltBackendSession::~BoltBackendSession() { Close(); }
 
 std::vector<BackendMessage> BoltBackendSession::SendAndReadUntilTerminal(
     const std::string& request, bool decode_records) {
-  EnsureConnected();
   try {
-    boost::asio::write(*socket_, boost::asio::buffer(request));
+    EnsureConnected();
+    WriteWithTimeout(request.data(), request.size(), "backend write");
     std::vector<BackendMessage> messages;
     while (true) {
       auto message = ReadMessage(decode_records);
@@ -196,9 +201,9 @@ BackendMessage BoltBackendSession::SendAndForwardUntilTerminal(
     const std::string& request,
     const std::function<void(const BackendMessage&)>& forward,
     bool decode_records) {
-  EnsureConnected();
   try {
-    boost::asio::write(*socket_, boost::asio::buffer(request));
+    EnsureConnected();
+    WriteWithTimeout(request.data(), request.size(), "backend write");
     while (true) {
       auto message = ReadMessage(decode_records);
       const bool terminal = IsTerminal(message.tag);
@@ -288,12 +293,14 @@ void BoltBackendSession::Connect() {
   tcp::resolver resolver(io_context_);
   auto endpoints =
       resolver.resolve(endpoint_.host, std::to_string(endpoint_.port));
-  boost::asio::connect(*socket_, endpoints);
+  ConnectWithTimeout(endpoints);
   bolt::socket_set_options(*socket_);
 
-  boost::asio::write(*socket_, boost::asio::buffer(kBoltHandshake));
+  WriteWithTimeout(kBoltHandshake, sizeof(kBoltHandshake),
+                   "backend Bolt handshake write");
   uint8_t accepted_version[4] = {0};
-  boost::asio::read(*socket_, boost::asio::buffer(accepted_version));
+  ReadWithTimeout(accepted_version, sizeof(accepted_version),
+                  "backend Bolt handshake read");
   int selected_minor = -1;
   if (!IsAcceptedBoltVersion(accepted_version, &selected_minor)) {
     throw std::runtime_error("backend does not accept Bolt v4.0-v4.4");
@@ -301,7 +308,8 @@ void BoltBackendSession::Connect() {
 
   bolt::PackStream ps;
   ps.AppendHello(hello_meta_);
-  boost::asio::write(*socket_, boost::asio::buffer(ps.ConstBuffer()));
+  WriteWithTimeout(ps.ConstBuffer().data(), ps.ConstBuffer().size(),
+                   "backend HELLO write");
   auto hello_response = ReadMessage();
   if (hello_response.tag == bolt::BoltMsg::Success) {
     connected_ = true;
@@ -309,16 +317,94 @@ void BoltBackendSession::Connect() {
              endpoint_.port, selected_minor);
     return;
   }
-  auto failure = FailureMessage(hello_response, &hydrator_);
+  auto failure = DecodeFailure(hello_response, &hydrator_);
   Close();
-  throw std::runtime_error("backend HELLO failed: " + failure);
+  throw std::runtime_error("backend HELLO failed: " + failure.msg);
+}
+
+void BoltBackendSession::ConnectWithTimeout(
+    const tcp::resolver::results_type& endpoints) {
+  RunWithTimeout(
+      "backend connect", kBackendConnectTimeoutSeconds,
+      [this, &endpoints](
+          const std::function<void(const boost::system::error_code&)>& done) {
+        boost::asio::async_connect(*socket_, endpoints,
+                                   [done](const boost::system::error_code& ec,
+                                          const tcp::endpoint&) { done(ec); });
+      });
+}
+
+void BoltBackendSession::WriteWithTimeout(const void* data, size_t size,
+                                          const char* operation) {
+  RunWithTimeout(
+      operation, kBackendIoTimeoutSeconds,
+      [this, data, size](
+          const std::function<void(const boost::system::error_code&)>& done) {
+        boost::asio::async_write(
+            *socket_, boost::asio::buffer(data, size),
+            [done](const boost::system::error_code& ec, size_t) { done(ec); });
+      });
+}
+
+void BoltBackendSession::ReadWithTimeout(void* data, size_t size,
+                                         const char* operation) {
+  RunWithTimeout(
+      operation, kBackendIoTimeoutSeconds,
+      [this, data, size](
+          const std::function<void(const boost::system::error_code&)>& done) {
+        boost::asio::async_read(
+            *socket_, boost::asio::buffer(data, size),
+            [done](const boost::system::error_code& ec, size_t) { done(ec); });
+      });
+}
+
+void BoltBackendSession::RunWithTimeout(
+    const char* operation, uint32_t timeout_seconds,
+    const std::function<void(
+        const std::function<void(const boost::system::error_code&)>&)>& start) {
+  boost::system::error_code result;
+  bool completed = false;
+  bool timed_out = false;
+  boost::asio::deadline_timer timer(io_context_);
+  timer.expires_from_now(boost::posix_time::seconds(timeout_seconds));
+  timer.async_wait([this, &timed_out](const boost::system::error_code& ec) {
+    if (ec) {
+      return;
+    }
+    timed_out = true;
+    if (socket_) {
+      boost::system::error_code ignored;
+      socket_->cancel(ignored);
+    }
+  });
+
+  start([&](const boost::system::error_code& ec) {
+    result = ec;
+    completed = true;
+    boost::system::error_code ignored;
+    timer.cancel(ignored);
+  });
+
+  io_context_.restart();
+  while (!completed) {
+    io_context_.run_one();
+  }
+  io_context_.run();
+
+  if (timed_out && result == boost::asio::error::operation_aborted) {
+    throw std::runtime_error(
+        fmt::format("{} timed out after {}s", operation, timeout_seconds));
+  }
+  if (result) {
+    throw boost::system::system_error(result, operation);
+  }
 }
 
 BackendMessage BoltBackendSession::ReadMessage(bool decode_records) {
   BackendMessage message;
   while (true) {
     char header[2] = {0};
-    boost::asio::read(*socket_, boost::asio::buffer(header));
+    ReadWithTimeout(header, sizeof(header), "backend chunk header read");
     message.raw.append(header, sizeof(header));
 
     uint16_t size = 0;
@@ -332,7 +418,7 @@ BackendMessage BoltBackendSession::ReadMessage(bool decode_records) {
     }
 
     std::string chunk(size, '\0');
-    boost::asio::read(*socket_, boost::asio::buffer(chunk));
+    ReadWithTimeout(chunk.data(), chunk.size(), "backend chunk read");
     message.raw.append(chunk);
     message.payload.append(chunk);
   }
@@ -341,7 +427,9 @@ BackendMessage BoltBackendSession::ReadMessage(bool decode_records) {
   if (message.tag == bolt::BoltMsg::Success) {
     message.success_has_more = DecodeSuccessHasMore(message.payload);
   } else if (message.tag == bolt::BoltMsg::Failure) {
-    message.failure_message = FailureMessage(message, &hydrator_);
+    auto failure = DecodeFailure(message, &hydrator_);
+    message.failure_code = std::move(failure.code);
+    message.failure_message = std::move(failure.msg);
   } else if (decode_records && message.tag == bolt::BoltMsg::Record) {
     message.record = DecodeRecord(message, &hydrator_);
   }
