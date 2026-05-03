@@ -28,7 +28,6 @@ namespace server {
 enum class GalaxyMetaDataType : char {
   GraphDB = 0,
   NextGraphID = 1,
-  RaftApplyIndex = 2,
 };
 
 struct GalaxyOptions {
@@ -57,41 +56,25 @@ class Galaxy {
   Galaxy(const Galaxy&) = delete;
   void operator=(const Galaxy&) = delete;
 
-  static std::unique_ptr<Galaxy> Open(
-      const std::string& path, const GalaxyOptions& galaxy_options,
-      LocalNodeOptions local_node_options = {},
-      std::optional<meta::RaftNodeInfos> galaxy_raft_node_infos = std::nullopt);
-  static const std::string& RaftGraphName();
+  static std::unique_ptr<Galaxy> Open(const std::string& path,
+                                      const GalaxyOptions& galaxy_options,
+                                      LocalNodeOptions local_node_options = {});
   std::shared_ptr<graphdb::GraphDB> OpenGraph(const std::string& name);
   graphdb::GraphDB* CreateGraph(const std::string& name);
   graphdb::GraphDB* CreateGraphWithRaft(const std::string& name,
                                         const meta::RaftNodeInfos& node_infos);
   graphdb::GraphDB* ClearGraph(const std::string& name);
   void DeleteGraph(const std::string& name);
-  void StepGalaxyRaftMessage(raftpb::Message msg);
-  raft::RaftDriver* galaxy_raft_driver() const;
   const std::unordered_map<std::string, std::shared_ptr<graphdb::GraphDB>>&
   Graphs() {
     return graphs_;
   }
 
  private:
-  void StartGalaxyRaft(const meta::RaftNodeInfos* node_infos);
-  uint64_t GetGalaxyRaftApplyIndex() const;
-  rocksdb::Status SetGalaxyRaftApplyIndex(uint64_t apply_index,
-                                          rocksdb::WriteBatch* wb) const;
-  void ApplyGalaxyRaftRequest(uint64_t index, const meta::RaftRequest& request);
-  graphdb::GraphDB* ApplyCreateGraphWithRaft(
-      uint64_t apply_index, const meta::CreateGraphRequest& request);
-  void ApplyDeleteGraphWithRaft(uint64_t apply_index,
-                                const meta::GraphLifecycleRequest& request);
-  graphdb::GraphDB* ApplyClearGraphWithRaft(
-      uint64_t apply_index, const meta::GraphLifecycleRequest& request);
   graphdb::GraphDB* CreateGraphInternal(const std::string& name,
                                         const meta::RaftNodeInfos* node_infos);
   graphdb::GraphDB* CreateGraphWithId(const meta::GraphDBMetaInfo& meta,
-                                      const meta::RaftNodeInfos* node_infos,
-                                      uint64_t apply_index);
+                                      const meta::RaftNodeInfos* node_infos);
   void StartGraphRaft(graphdb::GraphDB* graph_db,
                       const meta::RaftNodeInfos* node_infos);
   rocksdb::TransactionDB* meta_db_ = nullptr;
@@ -106,6 +89,5 @@ class Galaxy {
   std::string path_;
   GalaxyOptions options_;
   LocalNodeOptions local_node_options_;
-  std::unique_ptr<raft::RaftDriver> galaxy_raft_driver_;
 };
 }  // namespace server

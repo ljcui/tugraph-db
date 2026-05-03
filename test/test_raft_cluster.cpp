@@ -110,8 +110,6 @@ class TestServerCluster final {
     fs::remove_all(base_path_);
     server_configs_ = BuildServerConfigs();
     graph_node_infos_ = BuildNodeInfos(server_configs_, kGraphName);
-    galaxy_node_infos_ =
-        BuildNodeInfos(server_configs_, server::Galaxy::RaftGraphName());
     servers_.clear();
     servers_.resize(server_configs_.size());
     try {
@@ -119,16 +117,10 @@ class TestServerCluster final {
         StartServer(i);
       }
 
-      auto* galaxy_leader = WaitForGalaxyLeader(std::chrono::seconds(15));
-      if (galaxy_leader == nullptr) {
-        throw std::runtime_error("failed to elect galaxy raft leader: " +
-                                 GalaxyStatusSummary());
-      }
-      galaxy_leader->galaxy()->CreateGraphWithRaft(kGraphName,
-                                                   graph_node_infos_);
+      CreateRaftGraphOnAllServers(kGraphName, graph_node_infos_);
       if (!WaitForGraphCreated(std::chrono::seconds(15))) {
         throw std::runtime_error("failed to create graph on all servers: " +
-                                 GalaxyStatusSummary());
+                                 StatusSummary());
       }
     } catch (...) {
       Stop();
@@ -174,6 +166,21 @@ class TestServerCluster final {
     servers_[index] = std::move(server);
   }
 
+  void CreateRaftGraphOnAllServers(const std::string& graph_name) {
+    CreateRaftGraphOnAllServers(graph_name,
+                                BuildNodeInfos(server_configs_, graph_name));
+  }
+
+  void CreateRaftGraphOnAllServers(const std::string& graph_name,
+                                   const meta::RaftNodeInfos& node_infos) {
+    for (const auto& server : servers_) {
+      if (server == nullptr) {
+        continue;
+      }
+      server->galaxy()->CreateGraphWithRaft(graph_name, node_infos);
+    }
+  }
+
   server::LGraphServer* WaitForLeader(
       std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
     return WaitForLeader(kGraphName, timeout);
@@ -201,38 +208,6 @@ class TestServerCluster final {
     if (!WaitUntil(
             [this, &graph_name, &leader_index]() {
               leader_index = FindConsistentLeaderIndex(graph_name);
-              return leader_index.has_value();
-            },
-            timeout)) {
-      return std::nullopt;
-    }
-    return leader_index;
-  }
-
-  server::LGraphServer* WaitForGalaxyLeader(
-      std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
-    size_t leader_index = 0;
-    if (!WaitUntil(
-            [this, &leader_index]() {
-              auto found = FindConsistentGalaxyLeaderIndex();
-              if (!found.has_value()) {
-                return false;
-              }
-              leader_index = *found;
-              return true;
-            },
-            timeout)) {
-      return nullptr;
-    }
-    return servers_[leader_index].get();
-  }
-
-  std::optional<size_t> WaitForGalaxyLeaderIndex(
-      std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
-    std::optional<size_t> leader_index;
-    if (!WaitUntil(
-            [this, &leader_index]() {
-              leader_index = FindConsistentGalaxyLeaderIndex();
               return leader_index.has_value();
             },
             timeout)) {
@@ -313,6 +288,22 @@ class TestServerCluster final {
         timeout);
   }
 
+  size_t VertexCount(size_t server_index,
+                     const std::string& graph_name = kGraphName) const {
+    auto* target = server(server_index);
+    if (target == nullptr) {
+      throw std::runtime_error("raft test server is not running");
+    }
+    auto graph = target->galaxy()->OpenGraph(graph_name);
+    auto txn = graph->BeginTransaction();
+    size_t vertex_count = 0;
+    for (auto iter = txn->NewVertexIterator(); iter->Valid(); iter->Next()) {
+      ++vertex_count;
+    }
+    txn->Commit();
+    return vertex_count;
+  }
+
   bool WaitForApplyIndex(
       uint64_t apply_index,
       std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
@@ -389,32 +380,6 @@ class TestServerCluster final {
     return out.str();
   }
 
-  std::string GalaxyStatusSummary() const {
-    std::ostringstream out;
-    for (size_t i = 0; i < servers_.size(); ++i) {
-      const auto& server = servers_[i];
-      if (server == nullptr) {
-        out << "[node_id=" << server_configs_[i].node_id << ", stopped]";
-        continue;
-      }
-      auto* raft_driver = server->galaxy()->galaxy_raft_driver();
-      if (raft_driver == nullptr) {
-        out << "[bolt_port=" << server->options().local_node_options.bolt_port
-            << ", galaxy_raft=disabled]";
-        continue;
-      }
-      auto status = raft_driver->GetRaftStatus();
-      out << "[bolt_port=" << server->options().local_node_options.bolt_port
-          << ", raft_port=" << server->options().local_node_options.raft_port
-          << ", galaxy_lead=" << status.s.basicStatus_.softState_.lead_
-          << ", galaxy_state="
-          << eraft::ToString(status.s.basicStatus_.softState_.raftState_)
-          << ", first_log=" << status.first_log
-          << ", last_log=" << status.last_log << "]";
-    }
-    return out.str();
-  }
-
  private:
   std::shared_ptr<GraphDB> OpenGraph(
       const server::LGraphServer* server,
@@ -428,7 +393,6 @@ class TestServerCluster final {
     options.data_path = config.data_path;
     options.local_node_options.host = "127.0.0.1";
     options.local_node_options.bolt_port = config.bolt_port;
-    options.galaxy_raft_node_infos = galaxy_node_infos_;
     options.bolt_io_thread_num = 1;
     options.local_node_options.raft_port = config.raft_port;
     return std::make_unique<server::LGraphServer>(std::move(options));
@@ -511,55 +475,10 @@ class TestServerCluster final {
     return leader_index;
   }
 
-  std::optional<size_t> FindConsistentGalaxyLeaderIndex() const {
-    std::optional<size_t> leader_index;
-    uint64_t leader_id = 0;
-    bool has_running_server = false;
-
-    for (size_t i = 0; i < servers_.size(); ++i) {
-      if (servers_[i] == nullptr) {
-        continue;
-      }
-      has_running_server = true;
-      auto* raft_driver = servers_[i]->galaxy()->galaxy_raft_driver();
-      if (raft_driver == nullptr) {
-        return std::nullopt;
-      }
-      auto status = raft_driver->GetRaftStatus();
-      auto reported_leader = status.s.basicStatus_.softState_.lead_;
-      if (reported_leader == 0) {
-        return std::nullopt;
-      }
-      if (leader_id == 0) {
-        leader_id = reported_leader;
-      } else if (leader_id != reported_leader) {
-        return std::nullopt;
-      }
-      if (status.s.basicStatus_.softState_.raftState_ == eraft::StateLeader) {
-        if (leader_index.has_value()) {
-          return std::nullopt;
-        }
-        leader_index = i;
-      }
-    }
-
-    if (!has_running_server) {
-      return std::nullopt;
-    }
-    if (!leader_index.has_value()) {
-      return std::nullopt;
-    }
-    if (server_configs_[*leader_index].node_id != leader_id) {
-      return std::nullopt;
-    }
-    return leader_index;
-  }
-
   std::string base_path_;
   size_t node_count_;
   std::vector<TestServerConfig> server_configs_;
   meta::RaftNodeInfos graph_node_infos_;
-  meta::RaftNodeInfos galaxy_node_infos_;
   std::vector<std::unique_ptr<server::LGraphServer>> servers_;
 };
 
@@ -1213,15 +1132,12 @@ TEST(RaftCluster, multipleRaftGraphsElectLeadersAndReplicateWrites) {
 
   for (size_t i = 1; i < graph_names.size(); ++i) {
     const auto& graph_name = graph_names[i];
-    auto* galaxy_leader = cluster.WaitForGalaxyLeader(std::chrono::seconds(15));
-    ASSERT_NE(galaxy_leader, nullptr) << cluster.GalaxyStatusSummary();
     auto node_infos = cluster.NodeInfosForGraph(graph_name);
-    ASSERT_NO_THROW(
-        galaxy_leader->galaxy()->CreateGraphWithRaft(graph_name, node_infos))
+    ASSERT_NO_THROW(cluster.CreateRaftGraphOnAllServers(graph_name, node_infos))
         << graph_name;
     ASSERT_TRUE(
         cluster.WaitForGraphCreated(graph_name, std::chrono::seconds(20)))
-        << graph_name << " " << cluster.GalaxyStatusSummary();
+        << graph_name << " " << cluster.StatusSummary(graph_name);
   }
 
   struct WrittenVertex {
@@ -1320,15 +1236,12 @@ TEST(RaftCluster,
 
   for (size_t i = 1; i < graph_cases.size(); ++i) {
     const auto& graph_name = graph_cases[i].graph_name;
-    auto* galaxy_leader = cluster.WaitForGalaxyLeader(std::chrono::seconds(15));
-    ASSERT_NE(galaxy_leader, nullptr) << cluster.GalaxyStatusSummary();
     auto node_infos = cluster.NodeInfosForGraph(graph_name);
-    ASSERT_NO_THROW(
-        galaxy_leader->galaxy()->CreateGraphWithRaft(graph_name, node_infos))
+    ASSERT_NO_THROW(cluster.CreateRaftGraphOnAllServers(graph_name, node_infos))
         << graph_name;
     ASSERT_TRUE(
         cluster.WaitForGraphCreated(graph_name, std::chrono::seconds(20)))
-        << graph_name << " " << cluster.GalaxyStatusSummary();
+        << graph_name << " " << cluster.StatusSummary(graph_name);
   }
 
   for (const auto& graph_case : graph_cases) {
@@ -1687,70 +1600,35 @@ TEST(RaftCluster, raftNodeInfosProcedureMarksCurrentLeader) {
             cluster.node_id(*leader_index));
 }
 
-TEST(RaftCluster, galaxyFailoverCanCreateRaftGraph) {
-  constexpr char kFailoverGraphName[] = "galaxy_failover_graph";
+TEST(RaftCluster, createRaftGraphWithRaftUpdatesOnlyLocalMetadata) {
+  constexpr char kLocalGraphName[] = "local_only_raft_graph";
 
   TestServerCluster cluster("testdb_raft_cluster");
   ASSERT_NO_THROW(cluster.Start());
 
-  auto old_galaxy_leader_index =
-      cluster.WaitForGalaxyLeaderIndex(std::chrono::seconds(15));
-  ASSERT_TRUE(old_galaxy_leader_index.has_value())
-      << cluster.GalaxyStatusSummary();
-  ASSERT_NO_THROW(cluster.StopServer(*old_galaxy_leader_index));
+  auto* local_server = cluster.server(0);
+  ASSERT_NE(local_server, nullptr);
+  auto node_infos = cluster.NodeInfosForGraph(kLocalGraphName);
+  ASSERT_NO_THROW(
+      local_server->galaxy()->CreateGraphWithRaft(kLocalGraphName, node_infos));
+  ASSERT_NO_THROW(local_server->galaxy()->OpenGraph(kLocalGraphName));
 
-  auto* new_galaxy_leader =
-      cluster.WaitForGalaxyLeader(std::chrono::seconds(20));
-  ASSERT_NE(new_galaxy_leader, nullptr) << cluster.GalaxyStatusSummary();
-
-  auto node_infos = cluster.NodeInfosForGraph(kFailoverGraphName);
-  ASSERT_NO_THROW(new_galaxy_leader->galaxy()->CreateGraphWithRaft(
-      kFailoverGraphName, node_infos));
-  ASSERT_TRUE(
-      cluster.WaitForGraphCreated(kFailoverGraphName, std::chrono::seconds(20)))
-      << cluster.GalaxyStatusSummary();
-
-  auto* graph_leader =
-      cluster.WaitForLeader(kFailoverGraphName, std::chrono::seconds(20));
-  ASSERT_NE(graph_leader, nullptr) << cluster.StatusSummary();
-
-  int64_t vertex_id = 0;
-  uint64_t applied_index = 0;
-  {
-    auto graph = graph_leader->galaxy()->OpenGraph(kFailoverGraphName);
-    auto txn = graph->BeginTransaction();
-    auto vertex = txn->CreateVertex({"galaxy_failover_label"}, kProperties);
-    vertex_id = vertex.GetId();
-    txn->Commit();
-    applied_index = graph->GetRaftApplyIndex();
-  }
-  ASSERT_TRUE(cluster.WaitForApplyIndex(kFailoverGraphName, applied_index,
-                                        std::chrono::seconds(15)))
-      << cluster.StatusSummary();
-
-  ASSERT_NO_THROW(cluster.StartServer(*old_galaxy_leader_index));
-  ASSERT_TRUE(
-      cluster.WaitForGraphCreated(kFailoverGraphName, std::chrono::seconds(30)))
-      << cluster.GalaxyStatusSummary();
-  ASSERT_TRUE(cluster.WaitForApplyIndex(kFailoverGraphName, applied_index,
-                                        std::chrono::seconds(30)))
-      << cluster.StatusSummary();
-
-  for (auto* server : cluster.servers()) {
-    auto graph = server->galaxy()->OpenGraph(kFailoverGraphName);
-    auto read_txn = graph->BeginTransaction();
-    auto persisted_vertex = read_txn->GetVertexById(vertex_id);
-    EXPECT_EQ(persisted_vertex.GetAllProperty(), kProperties);
-    read_txn->Commit();
+  for (size_t i = 1; i < cluster.size(); ++i) {
+    auto* server = cluster.server(i);
+    ASSERT_NE(server, nullptr);
+    EXPECT_THROW_CODE(server->galaxy()->OpenGraph(kLocalGraphName),
+                      NoSuchGraph);
   }
 }
 
-TEST(RaftCluster, clearRaftGraphUsesGalaxyRaftOnAllServers) {
+TEST(RaftCluster, clearRaftGraphUpdatesOnlyLocalServer) {
   TestServerCluster cluster("testdb_raft_cluster");
   ASSERT_NO_THROW(cluster.Start());
 
-  auto* graph_leader = cluster.WaitForLeader(std::chrono::seconds(15));
-  ASSERT_NE(graph_leader, nullptr) << cluster.StatusSummary();
+  auto leader_index = cluster.WaitForLeaderIndex(std::chrono::seconds(15));
+  ASSERT_TRUE(leader_index.has_value()) << cluster.StatusSummary();
+  auto* graph_leader = cluster.server(*leader_index);
+  ASSERT_NE(graph_leader, nullptr);
   auto leader_graph = graph_leader->galaxy()->OpenGraph(kGraphName);
 
   auto txn = leader_graph->BeginTransaction();
@@ -1763,54 +1641,39 @@ TEST(RaftCluster, clearRaftGraphUsesGalaxyRaftOnAllServers) {
   ASSERT_TRUE(
       cluster.WaitForGraphVertexCount(kGraphName, 1, std::chrono::seconds(15)));
 
-  auto* galaxy_leader = cluster.WaitForGalaxyLeader(std::chrono::seconds(15));
-  ASSERT_NE(galaxy_leader, nullptr) << cluster.GalaxyStatusSummary();
-  ASSERT_NO_THROW(galaxy_leader->galaxy()->ClearGraph(kGraphName));
-  ASSERT_TRUE(
-      cluster.WaitForGraphVertexCount(kGraphName, 0, std::chrono::seconds(15)))
-      << cluster.GalaxyStatusSummary();
-
-  graph_leader = cluster.WaitForLeader(std::chrono::seconds(15));
-  ASSERT_NE(graph_leader, nullptr) << cluster.StatusSummary();
-  leader_graph = graph_leader->galaxy()->OpenGraph(kGraphName);
-  txn = leader_graph->BeginTransaction();
-  txn->CreateVertex({"person"}, {{"name", Value::String("after_clear")}});
-  txn->Commit();
-  const auto after_clear_apply_index = leader_graph->GetRaftApplyIndex();
-  ASSERT_TRUE(cluster.WaitForApplyIndex(after_clear_apply_index,
-                                        std::chrono::seconds(15)))
-      << cluster.StatusSummary();
-  ASSERT_TRUE(
-      cluster.WaitForGraphVertexCount(kGraphName, 1, std::chrono::seconds(15)));
+  ASSERT_NO_THROW(graph_leader->galaxy()->ClearGraph(kGraphName));
+  EXPECT_EQ(cluster.VertexCount(*leader_index), 0U);
+  for (size_t i = 0; i < cluster.size(); ++i) {
+    if (i == *leader_index) {
+      continue;
+    }
+    EXPECT_EQ(cluster.VertexCount(i), 1U);
+  }
 }
 
-TEST(RaftCluster, deleteRaftGraphStopsGroupAndRemovesDataOnAllServers) {
+TEST(RaftCluster, deleteRaftGraphStopsGroupAndRemovesLocalDataOnly) {
   TestServerCluster cluster("testdb_raft_cluster");
   ASSERT_NO_THROW(cluster.Start());
 
-  std::vector<std::string> graph_paths;
-  graph_paths.reserve(cluster.servers().size());
-  for (auto* server : cluster.servers()) {
-    auto graph = server->galaxy()->OpenGraph(kGraphName);
-    ASSERT_TRUE(graph->db_meta().enable_raft());
-    ASSERT_NE(graph->raft_driver(), nullptr);
-    graph_paths.emplace_back(graph->path());
+  auto* local_server = cluster.server(0);
+  ASSERT_NE(local_server, nullptr);
+  auto graph = local_server->galaxy()->OpenGraph(kGraphName);
+  ASSERT_TRUE(graph->db_meta().enable_raft());
+  ASSERT_NE(graph->raft_driver(), nullptr);
+  const auto local_graph_path = graph->path();
+  graph.reset();
+
+  ASSERT_NO_THROW(local_server->galaxy()->DeleteGraph(kGraphName));
+  EXPECT_THROW_CODE(local_server->galaxy()->OpenGraph(kGraphName), NoSuchGraph);
+  ASSERT_TRUE(
+      WaitUntil([&local_graph_path]() { return !fs::exists(local_graph_path); },
+                std::chrono::seconds(15)));
+
+  for (size_t i = 1; i < cluster.size(); ++i) {
+    auto* server = cluster.server(i);
+    ASSERT_NE(server, nullptr);
+    ASSERT_NO_THROW(server->galaxy()->OpenGraph(kGraphName));
   }
-
-  auto* galaxy_leader = cluster.WaitForGalaxyLeader(std::chrono::seconds(15));
-  ASSERT_NE(galaxy_leader, nullptr) << cluster.GalaxyStatusSummary();
-  ASSERT_NO_THROW(galaxy_leader->galaxy()->DeleteGraph(kGraphName));
-  ASSERT_TRUE(cluster.WaitForGraphDeleted(kGraphName, std::chrono::seconds(15)))
-      << cluster.GalaxyStatusSummary();
-
-  ASSERT_TRUE(WaitUntil(
-      [&graph_paths]() {
-        return std::all_of(
-            graph_paths.begin(), graph_paths.end(), [](const auto& path) {
-              return !fs::exists(path) && !fs::exists(path + "/raft");
-            });
-      },
-      std::chrono::seconds(15)));
 }
 
 TEST(RaftCluster, removeLeaderFromGraphRaftElectsNewLeaderAndCommits) {
@@ -2037,10 +1900,8 @@ TEST(RaftCluster, allServersRestartAndRecoverCommittedData) {
     ASSERT_NO_THROW(cluster.StartServer(i));
   }
 
-  ASSERT_NE(cluster.WaitForGalaxyLeader(std::chrono::seconds(20)), nullptr)
-      << cluster.GalaxyStatusSummary();
   ASSERT_TRUE(cluster.WaitForGraphCreated(std::chrono::seconds(20)))
-      << cluster.GalaxyStatusSummary();
+      << cluster.StatusSummary();
   ASSERT_NE(cluster.WaitForLeader(std::chrono::seconds(20)), nullptr)
       << cluster.StatusSummary();
   ASSERT_TRUE(

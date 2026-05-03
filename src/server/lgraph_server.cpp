@@ -31,8 +31,7 @@ bool LGraphServer::Start() {
 
   try {
     galaxy_ = Galaxy::Open(options_.data_path, options_.galaxy_options,
-                           options_.local_node_options,
-                           options_.galaxy_raft_node_infos);
+                           options_.local_node_options);
   } catch (const std::exception& e) {
     LOG_ERROR("failed to open galaxy: {}", e.what());
     galaxy_.reset();
