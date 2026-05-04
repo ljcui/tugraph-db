@@ -688,9 +688,6 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
                 "RUN fields size should be 3");
     return;
   }
-  if (IsSessionInterrupted(session)) {
-    return;
-  }
 
   auto cypher = CastStringField(fields[0], "RUN cypher");
   auto params = CastMapField(fields[1], "RUN parameters");
@@ -737,9 +734,6 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
 
       auto backend =
           BorrowActiveBackend(backend_pool, session, selected_endpoint);
-      if (IsSessionInterrupted(session)) {
-        throw BackendOperationCancelled("proxy RUN");
-      }
       messages = backend->SendAndReadUntilTerminal(ps.ConstBuffer());
       if (!IsNotLeaderFailure(messages)) {
         leader_cache->Put(route.graph_name, selected_endpoint);
@@ -756,9 +750,6 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
     } catch (const BackendPoolExhausted&) {
       DropActiveBackendIf(backend_pool, session, selected_endpoint);
       throw;
-    } catch (const BackendOperationCancelled&) {
-      DropActiveBackendIf(backend_pool, session, selected_endpoint);
-      throw;
     } catch (const std::exception& e) {
       last_error = e.what();
       DropActiveBackendIf(backend_pool, session, selected_endpoint);
@@ -770,21 +761,12 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
                e.what());
       messages.clear();
     }
-    if (IsSessionInterrupted(session)) {
-      throw BackendOperationCancelled("proxy RUN");
-    }
   }
   if (messages.empty()) {
     DropActiveBackendIf(backend_pool, session, selected_endpoint);
-    if (IsSessionInterrupted(session)) {
-      return;
-    }
     FailSession(backend_pool, conn, session, kNetworkError,
                 fmt::format("failed to route graph {} shard {}: {}",
                             route.graph_name, route.shard_id, last_error));
-    return;
-  }
-  if (IsSessionInterrupted(session)) {
     return;
   }
   auto last = LastMessage(messages);

@@ -78,13 +78,26 @@ class BoltBackendSession {
   void ConnectWithTimeout(
       const boost::asio::ip::tcp::resolver::results_type& endpoints);
   void WriteWithTimeout(const void* data, size_t size, const char* operation);
+  void WriteWithTimeoutUntil(
+      const void* data, size_t size, const char* operation,
+      boost::asio::steady_timer::clock_type::time_point deadline);
   void ReadWithTimeout(void* data, size_t size, const char* operation);
   void RunWithTimeout(
       const char* operation, uint32_t timeout_seconds,
       const std::function<
           void(const std::function<void(const boost::system::error_code&)>&)>&
           start);
+  void RunWithTimeoutUntil(
+      const char* operation,
+      boost::asio::steady_timer::clock_type::time_point deadline,
+      uint32_t timeout_seconds,
+      const std::function<
+          void(const std::function<void(const boost::system::error_code&)>&)>&
+          start);
   void ReadMessageWithTimeout(BackendMessage* message, const char* operation);
+  void ReadMessageWithTimeoutUntil(
+      BackendMessage* message, const char* operation,
+      boost::asio::steady_timer::clock_type::time_point deadline);
   void AsyncReadMessageChunkHeader(
       BackendMessage* message,
       const std::function<void(const boost::system::error_code&)>& done);
@@ -92,6 +105,9 @@ class BoltBackendSession {
       BackendMessage* message, uint16_t size,
       const std::function<void(const boost::system::error_code&)>& done);
   BackendMessage ReadMessage(bool decode_records = false);
+  BackendMessage ReadMessageUntil(
+      boost::asio::steady_timer::clock_type::time_point deadline,
+      bool decode_records = false);
   static bolt::BoltMsg DecodeTag(std::string_view payload);
   static bool DecodeSuccessHasMore(std::string_view payload);
   static bool IsTerminal(bolt::BoltMsg tag);

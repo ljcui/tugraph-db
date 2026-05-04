@@ -39,6 +39,11 @@ constexpr uint8_t kBoltHandshake[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 };
 
+boost::asio::steady_timer::clock_type::time_point BackendIoDeadline() {
+  return boost::asio::steady_timer::clock_type::now() +
+         std::chrono::seconds(kBackendIoTimeoutSeconds);
+}
+
 bool IsAcceptedBoltVersion(const uint8_t* version, int* minor) {
   if (version[0] != 0 || version[1] != 0 || version[3] != kSupportedBoltMajor) {
     return false;
@@ -184,10 +189,12 @@ std::vector<BackendMessage> BoltBackendSession::SendAndReadUntilTerminal(
     const std::string& request, bool decode_records) {
   try {
     EnsureConnected();
-    WriteWithTimeout(request.data(), request.size(), "backend write");
+    const auto deadline = BackendIoDeadline();
+    WriteWithTimeoutUntil(request.data(), request.size(), "backend write",
+                          deadline);
     std::vector<BackendMessage> messages;
     while (true) {
-      auto message = ReadMessage(decode_records);
+      auto message = ReadMessageUntil(deadline, decode_records);
       auto terminal = IsTerminal(message.tag);
       messages.emplace_back(std::move(message));
       if (terminal) {
@@ -206,9 +213,11 @@ BackendMessage BoltBackendSession::SendAndForwardUntilTerminal(
     bool decode_records) {
   try {
     EnsureConnected();
-    WriteWithTimeout(request.data(), request.size(), "backend write");
+    const auto deadline = BackendIoDeadline();
+    WriteWithTimeoutUntil(request.data(), request.size(), "backend write",
+                          deadline);
     while (true) {
-      auto message = ReadMessage(decode_records);
+      auto message = ReadMessageUntil(deadline, decode_records);
       const bool terminal = IsTerminal(message.tag);
       if (!forward(message)) {
         throw BackendOperationCancelled("backend forwarding");
@@ -340,8 +349,14 @@ void BoltBackendSession::ConnectWithTimeout(
 
 void BoltBackendSession::WriteWithTimeout(const void* data, size_t size,
                                           const char* operation) {
-  RunWithTimeout(
-      operation, kBackendIoTimeoutSeconds,
+  WriteWithTimeoutUntil(data, size, operation, BackendIoDeadline());
+}
+
+void BoltBackendSession::WriteWithTimeoutUntil(
+    const void* data, size_t size, const char* operation,
+    boost::asio::steady_timer::clock_type::time_point deadline) {
+  RunWithTimeoutUntil(
+      operation, deadline, kBackendIoTimeoutSeconds,
       [this, data, size](
           const std::function<void(const boost::system::error_code&)>& done) {
         boost::asio::async_write(
@@ -366,10 +381,22 @@ void BoltBackendSession::RunWithTimeout(
     const char* operation, uint32_t timeout_seconds,
     const std::function<void(
         const std::function<void(const boost::system::error_code&)>&)>& start) {
+  RunWithTimeoutUntil(operation,
+                      boost::asio::steady_timer::clock_type::now() +
+                          std::chrono::seconds(timeout_seconds),
+                      timeout_seconds, start);
+}
+
+void BoltBackendSession::RunWithTimeoutUntil(
+    const char* operation,
+    boost::asio::steady_timer::clock_type::time_point deadline,
+    uint32_t timeout_seconds,
+    const std::function<void(
+        const std::function<void(const boost::system::error_code&)>&)>& start) {
   boost::system::error_code result;
   bool completed = false;
   bool timed_out = false;
-  timeout_timer_.expires_after(std::chrono::seconds(timeout_seconds));
+  timeout_timer_.expires_at(deadline);
   timeout_timer_.async_wait(
       [this, &timed_out](const boost::system::error_code& ec) {
         if (ec) {
@@ -406,8 +433,14 @@ void BoltBackendSession::RunWithTimeout(
 
 void BoltBackendSession::ReadMessageWithTimeout(BackendMessage* message,
                                                 const char* operation) {
-  RunWithTimeout(
-      operation, kBackendIoTimeoutSeconds,
+  ReadMessageWithTimeoutUntil(message, operation, BackendIoDeadline());
+}
+
+void BoltBackendSession::ReadMessageWithTimeoutUntil(
+    BackendMessage* message, const char* operation,
+    boost::asio::steady_timer::clock_type::time_point deadline) {
+  RunWithTimeoutUntil(
+      operation, deadline, kBackendIoTimeoutSeconds,
       [this, message](
           const std::function<void(const boost::system::error_code&)>& done) {
         AsyncReadMessageChunkHeader(message, done);
@@ -460,8 +493,14 @@ void BoltBackendSession::AsyncReadMessageChunkBody(
 }
 
 BackendMessage BoltBackendSession::ReadMessage(bool decode_records) {
+  return ReadMessageUntil(BackendIoDeadline(), decode_records);
+}
+
+BackendMessage BoltBackendSession::ReadMessageUntil(
+    boost::asio::steady_timer::clock_type::time_point deadline,
+    bool decode_records) {
   BackendMessage message;
-  ReadMessageWithTimeout(&message, "backend message read");
+  ReadMessageWithTimeoutUntil(&message, "backend message read", deadline);
 
   message.tag = DecodeTag(message.payload);
   if (message.tag == bolt::BoltMsg::Success) {
