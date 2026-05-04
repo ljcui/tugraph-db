@@ -36,6 +36,12 @@ DEFINE_uint64(proxy_max_connections, 10000,
 DEFINE_uint64(proxy_max_pending_messages_per_connection, 1024,
               "Maximum pending proxy Bolt messages per connection. 0 means "
               "unlimited.");
+DEFINE_uint64(proxy_backend_max_connections_per_backend, 32,
+              "Maximum active plus idle backend Bolt connections per "
+              "lgraph_server endpoint. 0 means unlimited.");
+DEFINE_uint64(proxy_backend_borrow_timeout_ms, 1000,
+              "Maximum milliseconds to wait for a backend connection when the "
+              "per-backend connection pool is full.");
 DEFINE_string(proxy_logical_graph, "default",
               "Logical graph name exposed by lgraph_proxy");
 DEFINE_string(proxy_physical_graph_prefix, "default_s",
@@ -104,6 +110,9 @@ int main(int argc, char* argv[]) {
          .max_connections = FLAGS_proxy_max_connections,
          .max_pending_messages_per_connection =
              FLAGS_proxy_max_pending_messages_per_connection,
+         .backend_max_connections_per_backend =
+             FLAGS_proxy_backend_max_connections_per_backend,
+         .backend_borrow_timeout_ms = FLAGS_proxy_backend_borrow_timeout_ms,
          .shard_map = std::move(shard_map)});
     if (!server.Start()) {
       throw std::runtime_error("failed to start lgraph_proxy");

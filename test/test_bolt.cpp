@@ -284,7 +284,8 @@ class BoltProxyBackendTestServer {
 
   ~BoltProxyBackendTestServer() { Stop(); }
 
-  bool Start() {
+  bool Start(uint64_t backend_max_connections_per_backend = 32,
+             uint64_t backend_borrow_timeout_ms = 1000) {
     Stop();
     fs::remove_all(data_path_);
 
@@ -322,6 +323,9 @@ class BoltProxyBackendTestServer {
     proxy_options.bolt_io_thread_num = 1;
     proxy_options.worker_thread_num = 1;
     proxy_options.max_pending_messages_per_connection = 8;
+    proxy_options.backend_max_connections_per_backend =
+        backend_max_connections_per_backend;
+    proxy_options.backend_borrow_timeout_ms = backend_borrow_timeout_ms;
     proxy_options.shard_map = proxy::ShardMap::FromConfig(
         "default", "default_s", 1, 2,
         "0-0=1@127.0.0.1:" + std::to_string(backend_bolt_port_) + ":" +
@@ -602,6 +606,63 @@ TEST(ProxyBoltProtocol, ResetInterruptsActiveBackendStream) {
   client.SendPull(-1);
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Record);
   EXPECT_EQ(client.ReadResponse().tag, bolt::BoltMsg::Success);
+}
+
+TEST(ProxyBoltProtocol, BackendPoolReusesReturnedConnectionAcrossClients) {
+  BoltProxyBackendTestServer server;
+  ASSERT_TRUE(server.Start(1, 500));
+
+  RawBoltClient first(server.proxy_bolt_port());
+  first.SendHello();
+  EXPECT_EQ(first.ReadResponse().tag, bolt::BoltMsg::Success);
+  first.SendRun("RETURN $value AS n",
+                {{"_shard_key_", std::string("user-1")}, {"value", int64_t{1}}},
+                {{"db", "default"}});
+  EXPECT_EQ(first.ReadResponse().tag, bolt::BoltMsg::Success);
+  first.SendPull(-1);
+  EXPECT_EQ(first.ReadResponse().tag, bolt::BoltMsg::Record);
+  EXPECT_EQ(first.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  RawBoltClient second(server.proxy_bolt_port());
+  second.SendHello();
+  EXPECT_EQ(second.ReadResponse().tag, bolt::BoltMsg::Success);
+  second.SendRun(
+      "RETURN $value AS n",
+      {{"_shard_key_", std::string("user-1")}, {"value", int64_t{2}}},
+      {{"db", "default"}});
+  EXPECT_EQ(second.ReadResponse().tag, bolt::BoltMsg::Success);
+  second.SendPull(-1);
+  EXPECT_EQ(second.ReadResponse().tag, bolt::BoltMsg::Record);
+  EXPECT_EQ(second.ReadResponse().tag, bolt::BoltMsg::Success);
+}
+
+TEST(ProxyBoltProtocol, BackendPoolExhaustionFailsRequest) {
+  BoltProxyBackendTestServer server;
+  ASSERT_TRUE(server.Start(1, 100));
+
+  RawBoltClient first(server.proxy_bolt_port());
+  first.SendHello();
+  EXPECT_EQ(first.ReadResponse().tag, bolt::BoltMsg::Success);
+  first.SendRun("UNWIND range(0, 10000) AS n RETURN n",
+                {{"_shard_key_", std::string("user-1")}}, {{"db", "default"}});
+  EXPECT_EQ(first.ReadResponse().tag, bolt::BoltMsg::Success);
+
+  RawBoltClient second(server.proxy_bolt_port());
+  second.SendHello();
+  EXPECT_EQ(second.ReadResponse().tag, bolt::BoltMsg::Success);
+  second.SendRun(
+      "RETURN $value AS n",
+      {{"_shard_key_", std::string("user-1")}, {"value", int64_t{2}}},
+      {{"db", "default"}});
+  auto failure = second.ReadResponse();
+  EXPECT_EQ(failure.tag, bolt::BoltMsg::Failure);
+  EXPECT_EQ(failure.failure_code,
+            "Neo.TransientError.Network.CommunicationError");
+  EXPECT_NE(failure.failure_message.find("backend connection pool exhausted"),
+            std::string::npos);
+
+  first.SendReset();
+  EXPECT_EQ(first.ReadResponse().tag, bolt::BoltMsg::Success);
 }
 
 TEST(BoltServerProtocol, GoodbyeClosesConnection) {

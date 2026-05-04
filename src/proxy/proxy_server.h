@@ -30,6 +30,8 @@ struct ProxyServerOptions {
   uint32_t worker_thread_num = 16;
   uint64_t max_connections = 10000;
   uint64_t max_pending_messages_per_connection = 1024;
+  uint64_t backend_max_connections_per_backend = 32;
+  uint64_t backend_borrow_timeout_ms = 1000;
   ShardMap shard_map;
 };
 
