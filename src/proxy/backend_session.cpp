@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 #include "bolt/connection.h"
 #include "bolt/pack_stream.h"
@@ -42,6 +43,10 @@ constexpr uint8_t kBoltHandshake[] = {
 boost::asio::steady_timer::clock_type::time_point BackendIoDeadline() {
   return boost::asio::steady_timer::clock_type::now() +
          std::chrono::seconds(kBackendIoTimeoutSeconds);
+}
+
+std::exception_ptr MakeRuntimeError(const std::string& message) {
+  return std::make_exception_ptr(std::runtime_error(message));
 }
 
 bool IsAcceptedBoltVersion(const uint8_t* version, int* minor) {
@@ -177,342 +182,628 @@ bool CastBoolField(const std::any& value, const char* field_name) {
 }  // namespace
 
 BoltBackendSession::BoltBackendSession(
-    BackendEndpoint endpoint,
+    boost::asio::io_service& io_service, BackendEndpoint endpoint,
     std::unordered_map<std::string, std::any> hello_meta)
     : endpoint_(std::move(endpoint)),
       hello_meta_(std::move(hello_meta)),
-      timeout_timer_(io_context_) {}
+      io_service_(io_service),
+      strand_(io_service_),
+      resolver_(io_service_),
+      timeout_timer_(io_service_) {}
 
-BoltBackendSession::~BoltBackendSession() { Close(); }
-
-std::vector<BackendMessage> BoltBackendSession::SendAndReadUntilTerminal(
-    const std::string& request, bool decode_records) {
-  try {
-    EnsureConnected();
-    const auto deadline = BackendIoDeadline();
-    WriteWithTimeoutUntil(request.data(), request.size(), "backend write",
-                          deadline);
-    std::vector<BackendMessage> messages;
-    while (true) {
-      auto message = ReadMessageUntil(deadline, decode_records);
-      auto terminal = IsTerminal(message.tag);
-      messages.emplace_back(std::move(message));
-      if (terminal) {
-        return messages;
-      }
-    }
-  } catch (...) {
-    Close();
-    throw;
+BoltBackendSession::~BoltBackendSession() {
+  boost::system::error_code ignored;
+  resolver_.cancel();
+  timeout_timer_.cancel(ignored);
+  if (socket_) {
+    socket_->close(ignored);
   }
 }
 
-BackendMessage BoltBackendSession::SendAndForwardUntilTerminal(
+void BoltBackendSession::AsyncSendAndReadUntilTerminal(
+    const std::string& request, bool decode_records,
+    MessagesCallback callback) {
+  auto self = shared_from_this();
+  io_service_.post(strand_.wrap([self, request, decode_records,
+                                 callback = std::move(callback)]() mutable {
+    self->StartSendAndRead(request, decode_records, std::move(callback));
+  }));
+}
+
+void BoltBackendSession::AsyncSendAndForwardUntilTerminal(
     const std::string& request,
     const std::function<bool(const BackendMessage&)>& forward,
-    bool decode_records) {
-  try {
-    EnsureConnected();
-    const auto deadline = BackendIoDeadline();
-    WriteWithTimeoutUntil(request.data(), request.size(), "backend write",
-                          deadline);
-    while (true) {
-      auto message = ReadMessageUntil(deadline, decode_records);
-      const bool terminal = IsTerminal(message.tag);
-      if (!forward(message)) {
-        throw BackendOperationCancelled("backend forwarding");
-      }
-      if (terminal) {
-        return message;
-      }
-    }
-  } catch (...) {
-    Close();
-    throw;
-  }
+    bool decode_records, MessageCallback callback) {
+  auto self = shared_from_this();
+  io_service_.post(strand_.wrap([self, request, forward, decode_records,
+                                 callback = std::move(callback)]() mutable {
+    self->StartSendAndForward(request, forward, decode_records,
+                              std::move(callback));
+  }));
 }
 
-std::vector<RaftNodeEndpoint> BoltBackendSession::FetchRaftNodeInfos(
-    const std::string& graph_name) {
+void BoltBackendSession::AsyncFetchRaftNodeInfos(
+    const std::string& graph_name, RaftNodeInfosCallback callback) {
+  auto self = shared_from_this();
+
   bolt::PackStream ps;
   ps.AppendRun(
       "CALL dbms.graph.getRaftNodeInfos($graph_name) "
       "YIELD node_id, ip, bolt_port, raft_port, is_leader "
       "RETURN node_id, ip, bolt_port, raft_port, is_leader",
       {{"graph_name", graph_name}}, {{"db", graph_name}});
-  auto run_messages = SendAndReadUntilTerminal(ps.ConstBuffer());
-  if (run_messages.empty() ||
-      run_messages.back().tag != bolt::BoltMsg::Success) {
-    throw std::runtime_error(run_messages.empty()
-                                 ? "raft node info query returned no response"
-                                 : run_messages.back().failure_message);
-  }
+  auto run_request = ps.ConstBuffer();
 
-  ps.Reset();
-  ps.AppendPullN(-1);
-  auto pull_messages = SendAndReadUntilTerminal(ps.ConstBuffer(), true);
-  std::vector<RaftNodeEndpoint> node_infos;
-  for (const auto& message : pull_messages) {
-    if (message.tag != bolt::BoltMsg::Record) {
-      continue;
-    }
-    if (!message.record.has_value()) {
-      throw std::runtime_error("raft node info record is missing");
-    }
-    const auto& values = message.record->values;
-    if (values.size() != 5) {
-      throw std::runtime_error(
-          fmt::format("raft node info record should contain 5 fields, got {}",
-                      values.size()));
-    }
-    auto node_id = CastInt64Field(values[0], "node_id");
-    auto bolt_port = CastInt64Field(values[2], "bolt_port");
-    auto raft_port = CastInt64Field(values[3], "raft_port");
-    if (node_id <= 0 || bolt_port <= 0 || raft_port <= 0) {
-      throw std::runtime_error("raft node info contains non-positive id/port");
-    }
-    node_infos.push_back({.node_id = static_cast<uint64_t>(node_id),
-                          .host = CastStringField(values[1], "ip"),
-                          .port = static_cast<uint32_t>(bolt_port),
-                          .raft_port = static_cast<uint32_t>(raft_port),
-                          .is_leader = CastBoolField(values[4], "is_leader")});
-  }
-  if (pull_messages.empty() ||
-      pull_messages.back().tag != bolt::BoltMsg::Success) {
-    throw std::runtime_error(pull_messages.empty()
-                                 ? "raft node info pull returned no response"
-                                 : pull_messages.back().failure_message);
-  }
-  return node_infos;
-}
+  AsyncSendAndReadUntilTerminal(
+      run_request, false,
+      [self, graph_name, callback = std::move(callback)](
+          std::exception_ptr error,
+          std::vector<BackendMessage> run_messages) mutable {
+        if (error) {
+          callback(error, {});
+          return;
+        }
+        if (run_messages.empty() ||
+            run_messages.back().tag != bolt::BoltMsg::Success) {
+          callback(
+              MakeRuntimeError(run_messages.empty()
+                                   ? "raft node info query returned no response"
+                                   : run_messages.back().failure_message),
+              {});
+          return;
+        }
 
-void BoltBackendSession::Close() {
-  if (socket_) {
-    boost::system::error_code ec;
-    socket_->close(ec);
-  }
-  connected_ = false;
-}
+        bolt::PackStream pull;
+        pull.AppendPullN(-1);
+        auto pull_request = pull.ConstBuffer();
+        self->AsyncSendAndReadUntilTerminal(
+            pull_request, true,
+            [callback = std::move(callback)](
+                std::exception_ptr error,
+                std::vector<BackendMessage> pull_messages) mutable {
+              if (error) {
+                callback(error, {});
+                return;
+              }
 
-void BoltBackendSession::EnsureConnected() {
-  if (!connected_) {
-    Connect();
-  }
-}
-
-void BoltBackendSession::Connect() {
-  Close();
-  socket_ = std::make_unique<tcp::socket>(io_context_);
-  tcp::resolver resolver(io_context_);
-  auto endpoints =
-      resolver.resolve(endpoint_.host, std::to_string(endpoint_.port));
-  ConnectWithTimeout(endpoints);
-  bolt::socket_set_options(*socket_);
-
-  WriteWithTimeout(kBoltHandshake, sizeof(kBoltHandshake),
-                   "backend Bolt handshake write");
-  uint8_t accepted_version[4] = {0};
-  ReadWithTimeout(accepted_version, sizeof(accepted_version),
-                  "backend Bolt handshake read");
-  int selected_minor = -1;
-  if (!IsAcceptedBoltVersion(accepted_version, &selected_minor)) {
-    throw std::runtime_error("backend does not accept Bolt v4.0-v4.4");
-  }
-
-  bolt::PackStream ps;
-  ps.AppendHello(hello_meta_);
-  WriteWithTimeout(ps.ConstBuffer().data(), ps.ConstBuffer().size(),
-                   "backend HELLO write");
-  auto hello_response = ReadMessage();
-  if (hello_response.tag == bolt::BoltMsg::Success) {
-    connected_ = true;
-    LOG_INFO("proxy connected backend {}:{} with Bolt v4.{}", endpoint_.host,
-             endpoint_.port, selected_minor);
-    return;
-  }
-  auto failure = DecodeFailure(hello_response, &hydrator_);
-  Close();
-  throw std::runtime_error("backend HELLO failed: " + failure.msg);
-}
-
-void BoltBackendSession::ConnectWithTimeout(
-    const tcp::resolver::results_type& endpoints) {
-  RunWithTimeout(
-      "backend connect", kBackendConnectTimeoutSeconds,
-      [this, &endpoints](
-          const std::function<void(const boost::system::error_code&)>& done) {
-        boost::asio::async_connect(*socket_, endpoints,
-                                   [done](const boost::system::error_code& ec,
-                                          const tcp::endpoint&) { done(ec); });
+              try {
+                std::vector<RaftNodeEndpoint> node_infos;
+                for (const auto& message : pull_messages) {
+                  if (message.tag != bolt::BoltMsg::Record) {
+                    continue;
+                  }
+                  if (!message.record.has_value()) {
+                    throw std::runtime_error(
+                        "raft node info record is missing");
+                  }
+                  const auto& values = message.record->values;
+                  if (values.size() != 5) {
+                    throw std::runtime_error(fmt::format(
+                        "raft node info record should contain 5 fields, got {}",
+                        values.size()));
+                  }
+                  auto node_id = CastInt64Field(values[0], "node_id");
+                  auto bolt_port = CastInt64Field(values[2], "bolt_port");
+                  auto raft_port = CastInt64Field(values[3], "raft_port");
+                  if (node_id <= 0 || bolt_port <= 0 || raft_port <= 0) {
+                    throw std::runtime_error(
+                        "raft node info contains non-positive id/port");
+                  }
+                  node_infos.push_back(
+                      {.node_id = static_cast<uint64_t>(node_id),
+                       .host = CastStringField(values[1], "ip"),
+                       .port = static_cast<uint32_t>(bolt_port),
+                       .raft_port = static_cast<uint32_t>(raft_port),
+                       .is_leader = CastBoolField(values[4], "is_leader")});
+                }
+                if (pull_messages.empty() ||
+                    pull_messages.back().tag != bolt::BoltMsg::Success) {
+                  throw std::runtime_error(
+                      pull_messages.empty()
+                          ? "raft node info pull returned no response"
+                          : pull_messages.back().failure_message);
+                }
+                callback(nullptr, std::move(node_infos));
+              } catch (...) {
+                callback(std::current_exception(), {});
+              }
+            });
       });
 }
 
-void BoltBackendSession::WriteWithTimeout(const void* data, size_t size,
-                                          const char* operation) {
-  WriteWithTimeoutUntil(data, size, operation, BackendIoDeadline());
+void BoltBackendSession::Close() {
+  auto self = shared_from_this();
+  io_service_.post(strand_.wrap([self]() { self->CloseOnStrand(); }));
 }
 
-void BoltBackendSession::WriteWithTimeoutUntil(
+void BoltBackendSession::Cancel() {
+  auto self = shared_from_this();
+  io_service_.post(strand_.wrap([self]() { self->CancelOnStrand(); }));
+}
+
+void BoltBackendSession::StartSendAndRead(std::string request,
+                                          bool decode_records,
+                                          MessagesCallback callback) {
+  if (operation_in_progress_) {
+    callback(
+        MakeRuntimeError("backend session already has an active operation"),
+        {});
+    return;
+  }
+
+  operation_in_progress_ = true;
+  operation_mode_ = OperationMode::COLLECT;
+  decode_records_ = decode_records;
+  request_ = std::move(request);
+  messages_.clear();
+  messages_callback_ = std::move(callback);
+
+  auto self = shared_from_this();
+  EnsureConnected([self](std::exception_ptr error) {
+    if (error) {
+      self->FinishCollect(error);
+      return;
+    }
+    self->StartRequestWrite();
+  });
+}
+
+void BoltBackendSession::StartSendAndForward(
+    std::string request, std::function<bool(const BackendMessage&)> forward,
+    bool decode_records, MessageCallback callback) {
+  if (operation_in_progress_) {
+    callback(
+        MakeRuntimeError("backend session already has an active operation"),
+        {});
+    return;
+  }
+
+  operation_in_progress_ = true;
+  operation_mode_ = OperationMode::FORWARD;
+  decode_records_ = decode_records;
+  request_ = std::move(request);
+  forward_ = std::move(forward);
+  message_callback_ = std::move(callback);
+
+  auto self = shared_from_this();
+  EnsureConnected([self](std::exception_ptr error) {
+    if (error) {
+      self->FinishForward(error, {});
+      return;
+    }
+    self->StartRequestWrite();
+  });
+}
+
+void BoltBackendSession::EnsureConnected(ErrorCallback callback) {
+  if (connected_) {
+    callback(nullptr);
+    return;
+  }
+  StartConnect(std::move(callback));
+}
+
+void BoltBackendSession::StartConnect(ErrorCallback callback) {
+  CloseOnStrand();
+  socket_ = std::make_unique<tcp::socket>(io_service_);
+  connect_callback_ = std::move(callback);
+  StartResolve();
+}
+
+void BoltBackendSession::StartResolve() {
+  auto self = shared_from_this();
+  auto deadline = boost::asio::steady_timer::clock_type::now() +
+                  std::chrono::seconds(kBackendConnectTimeoutSeconds);
+  StartTimedStep(
+      "backend resolve", deadline, kBackendConnectTimeoutSeconds,
+      [this](
+          const std::function<void(const boost::system::error_code&)>& done) {
+        resolver_.async_resolve(
+            endpoint_.host, std::to_string(endpoint_.port),
+            strand_.wrap(
+                [this, done](const boost::system::error_code& ec,
+                             tcp::resolver::results_type results) mutable {
+                  if (!ec) {
+                    resolved_endpoints_ = std::move(results);
+                  }
+                  done(ec);
+                }));
+      },
+      [self](std::exception_ptr error) {
+        if (error) {
+          self->CompleteConnect(error);
+          return;
+        }
+        self->StartTcpConnect();
+      });
+}
+
+void BoltBackendSession::StartTcpConnect() {
+  auto self = shared_from_this();
+  auto deadline = boost::asio::steady_timer::clock_type::now() +
+                  std::chrono::seconds(kBackendConnectTimeoutSeconds);
+  StartTimedStep(
+      "backend connect", deadline, kBackendConnectTimeoutSeconds,
+      [this](
+          const std::function<void(const boost::system::error_code&)>& done) {
+        boost::asio::async_connect(
+            *socket_, resolved_endpoints_,
+            strand_.wrap([done](const boost::system::error_code& ec,
+                                const tcp::endpoint&) { done(ec); }));
+      },
+      [self](std::exception_ptr error) {
+        if (error) {
+          self->CompleteConnect(error);
+          return;
+        }
+        try {
+          bolt::socket_set_options(*self->socket_);
+          self->StartBoltHandshakeWrite();
+        } catch (...) {
+          self->CompleteConnect(std::current_exception());
+        }
+      });
+}
+
+void BoltBackendSession::StartBoltHandshakeWrite() {
+  auto self = shared_from_this();
+  AsyncWrite(kBoltHandshake, sizeof(kBoltHandshake),
+             "backend Bolt handshake write", BackendIoDeadline(),
+             [self](std::exception_ptr error) {
+               if (error) {
+                 self->CompleteConnect(error);
+                 return;
+               }
+               self->StartBoltHandshakeRead();
+             });
+}
+
+void BoltBackendSession::StartBoltHandshakeRead() {
+  auto self = shared_from_this();
+  accepted_version_.fill(0);
+  AsyncRead(accepted_version_.data(), accepted_version_.size(),
+            "backend Bolt handshake read", BackendIoDeadline(),
+            [self](std::exception_ptr error) {
+              if (error) {
+                self->CompleteConnect(error);
+                return;
+              }
+              self->selected_minor_ = -1;
+              if (!IsAcceptedBoltVersion(self->accepted_version_.data(),
+                                         &self->selected_minor_)) {
+                self->CompleteConnect(
+                    MakeRuntimeError("backend does not accept Bolt v4.0-v4.4"));
+                return;
+              }
+              self->StartHelloWrite();
+            });
+}
+
+void BoltBackendSession::StartHelloWrite() {
+  bolt::PackStream ps;
+  ps.AppendHello(hello_meta_);
+  hello_request_ = ps.ConstBuffer();
+
+  auto self = shared_from_this();
+  AsyncWrite(hello_request_.data(), hello_request_.size(),
+             "backend HELLO write", BackendIoDeadline(),
+             [self](std::exception_ptr error) {
+               if (error) {
+                 self->CompleteConnect(error);
+                 return;
+               }
+               self->StartHelloRead();
+             });
+}
+
+void BoltBackendSession::StartHelloRead() {
+  auto self = shared_from_this();
+  AsyncReadMessage(BackendIoDeadline(),
+                   [self](std::exception_ptr error, BackendMessage message) {
+                     if (error) {
+                       self->CompleteConnect(error);
+                       return;
+                     }
+                     if (message.tag == bolt::BoltMsg::Success) {
+                       self->connected_ = true;
+                       LOG_INFO("proxy connected backend {}:{} with Bolt v4.{}",
+                                self->endpoint_.host, self->endpoint_.port,
+                                self->selected_minor_);
+                       self->CompleteConnect(nullptr);
+                       return;
+                     }
+                     auto failure = DecodeFailure(message, &self->hydrator_);
+                     self->CompleteConnect(MakeRuntimeError(
+                         "backend HELLO failed: " + failure.msg));
+                   });
+}
+
+void BoltBackendSession::CompleteConnect(std::exception_ptr error) {
+  if (error) {
+    CloseOnStrand();
+  }
+  auto callback = std::move(connect_callback_);
+  connect_callback_ = {};
+  if (callback) {
+    callback(error);
+  }
+}
+
+void BoltBackendSession::StartRequestWrite() {
+  request_deadline_ = BackendIoDeadline();
+  auto self = shared_from_this();
+  AsyncWrite(request_.data(), request_.size(), "backend write",
+             request_deadline_, [self](std::exception_ptr error) {
+               if (error) {
+                 self->FinishCurrentOperation(error);
+                 return;
+               }
+               self->StartReadNextResponse();
+             });
+}
+
+void BoltBackendSession::StartReadNextResponse() {
+  auto self = shared_from_this();
+  AsyncReadMessage(request_deadline_, [self](std::exception_ptr error,
+                                             BackendMessage message) mutable {
+    if (error) {
+      self->FinishCurrentOperation(error);
+      return;
+    }
+
+    const bool terminal = IsTerminal(message.tag);
+    if (self->operation_mode_ == OperationMode::COLLECT) {
+      self->messages_.emplace_back(std::move(message));
+      if (terminal) {
+        self->FinishCollect(nullptr);
+      } else {
+        self->StartReadNextResponse();
+      }
+      return;
+    }
+
+    try {
+      if (!self->forward_(message)) {
+        self->FinishForward(std::make_exception_ptr(BackendOperationCancelled(
+                                "backend forwarding")),
+                            {});
+        return;
+      }
+    } catch (...) {
+      self->FinishForward(std::current_exception(), {});
+      return;
+    }
+
+    if (terminal) {
+      self->FinishForward(nullptr, std::move(message));
+    } else {
+      self->StartReadNextResponse();
+    }
+  });
+}
+
+void BoltBackendSession::FinishCollect(std::exception_ptr error) {
+  if (error) {
+    CloseOnStrand();
+  }
+  operation_in_progress_ = false;
+  request_.clear();
+  decode_records_ = false;
+
+  auto callback = std::move(messages_callback_);
+  auto messages = std::move(messages_);
+  messages_callback_ = {};
+  messages_.clear();
+  if (callback) {
+    callback(error, std::move(messages));
+  }
+}
+
+void BoltBackendSession::FinishForward(std::exception_ptr error,
+                                       BackendMessage message) {
+  if (error) {
+    CloseOnStrand();
+  }
+  operation_in_progress_ = false;
+  request_.clear();
+  decode_records_ = false;
+
+  auto callback = std::move(message_callback_);
+  forward_ = {};
+  message_callback_ = {};
+  if (callback) {
+    callback(error, std::move(message));
+  }
+}
+
+void BoltBackendSession::FinishCurrentOperation(std::exception_ptr error) {
+  if (operation_mode_ == OperationMode::COLLECT) {
+    FinishCollect(error);
+  } else {
+    FinishForward(error, {});
+  }
+}
+
+void BoltBackendSession::StartTimedStep(
+    const char* operation,
+    boost::asio::steady_timer::clock_type::time_point deadline,
+    uint32_t timeout_seconds,
+    const std::function<void(
+        const std::function<void(const boost::system::error_code&)>&)>& start,
+    ErrorCallback callback) {
+  auto self = shared_from_this();
+  timed_out_ = false;
+  timeout_timer_.expires_at(deadline);
+  timeout_timer_.async_wait(
+      strand_.wrap([self](const boost::system::error_code& ec) {
+        if (ec) {
+          return;
+        }
+        self->timed_out_ = true;
+        self->CancelOnStrand();
+      }));
+
+  try {
+    start([self, operation = std::string(operation), timeout_seconds,
+           callback = std::move(callback)](
+              const boost::system::error_code& ec) mutable {
+      boost::system::error_code ignored;
+      self->timeout_timer_.cancel(ignored);
+      if (self->timed_out_ && ec == boost::asio::error::operation_aborted) {
+        callback(MakeRuntimeError(
+            fmt::format("{} timed out after {}s", operation, timeout_seconds)));
+        return;
+      }
+      if (ec) {
+        callback(std::make_exception_ptr(
+            boost::system::system_error(ec, operation)));
+        return;
+      }
+      callback(nullptr);
+    });
+  } catch (...) {
+    boost::system::error_code ignored;
+    timeout_timer_.cancel(ignored);
+    callback(std::current_exception());
+  }
+}
+
+void BoltBackendSession::AsyncWrite(
     const void* data, size_t size, const char* operation,
-    boost::asio::steady_timer::clock_type::time_point deadline) {
-  RunWithTimeoutUntil(
+    boost::asio::steady_timer::clock_type::time_point deadline,
+    ErrorCallback callback) {
+  StartTimedStep(
       operation, deadline, kBackendIoTimeoutSeconds,
       [this, data, size](
           const std::function<void(const boost::system::error_code&)>& done) {
         boost::asio::async_write(
             *socket_, boost::asio::buffer(data, size),
-            [done](const boost::system::error_code& ec, size_t) { done(ec); });
-      });
+            strand_.wrap([done](const boost::system::error_code& ec, size_t) {
+              done(ec);
+            }));
+      },
+      std::move(callback));
 }
 
-void BoltBackendSession::ReadWithTimeout(void* data, size_t size,
-                                         const char* operation) {
-  RunWithTimeout(
-      operation, kBackendIoTimeoutSeconds,
+void BoltBackendSession::AsyncRead(
+    void* data, size_t size, const char* operation,
+    boost::asio::steady_timer::clock_type::time_point deadline,
+    ErrorCallback callback) {
+  StartTimedStep(
+      operation, deadline, kBackendIoTimeoutSeconds,
       [this, data, size](
           const std::function<void(const boost::system::error_code&)>& done) {
         boost::asio::async_read(
             *socket_, boost::asio::buffer(data, size),
-            [done](const boost::system::error_code& ec, size_t) { done(ec); });
-      });
+            strand_.wrap([done](const boost::system::error_code& ec, size_t) {
+              done(ec);
+            }));
+      },
+      std::move(callback));
 }
 
-void BoltBackendSession::RunWithTimeout(
-    const char* operation, uint32_t timeout_seconds,
-    const std::function<void(
-        const std::function<void(const boost::system::error_code&)>&)>& start) {
-  RunWithTimeoutUntil(operation,
-                      boost::asio::steady_timer::clock_type::now() +
-                          std::chrono::seconds(timeout_seconds),
-                      timeout_seconds, start);
-}
-
-void BoltBackendSession::RunWithTimeoutUntil(
-    const char* operation,
+void BoltBackendSession::AsyncReadMessage(
     boost::asio::steady_timer::clock_type::time_point deadline,
-    uint32_t timeout_seconds,
-    const std::function<void(
-        const std::function<void(const boost::system::error_code&)>&)>& start) {
-  boost::system::error_code result;
-  bool completed = false;
-  bool timed_out = false;
-  timeout_timer_.expires_at(deadline);
-  timeout_timer_.async_wait(
-      [this, &timed_out](const boost::system::error_code& ec) {
-        if (ec) {
-          return;
-        }
-        timed_out = true;
-        if (socket_) {
-          boost::system::error_code ignored;
-          socket_->cancel(ignored);
-        }
-      });
-
-  start([&](const boost::system::error_code& ec) {
-    result = ec;
-    completed = true;
-    boost::system::error_code ignored;
-    timeout_timer_.cancel(ignored);
-  });
-
-  io_context_.restart();
-  while (!completed) {
-    io_context_.run_one();
-  }
-  io_context_.run();
-
-  if (timed_out && result == boost::asio::error::operation_aborted) {
-    throw std::runtime_error(
-        fmt::format("{} timed out after {}s", operation, timeout_seconds));
-  }
-  if (result) {
-    throw boost::system::system_error(result, operation);
-  }
-}
-
-void BoltBackendSession::ReadMessageWithTimeout(BackendMessage* message,
-                                                const char* operation) {
-  ReadMessageWithTimeoutUntil(message, operation, BackendIoDeadline());
-}
-
-void BoltBackendSession::ReadMessageWithTimeoutUntil(
-    BackendMessage* message, const char* operation,
-    boost::asio::steady_timer::clock_type::time_point deadline) {
-  RunWithTimeoutUntil(
-      operation, deadline, kBackendIoTimeoutSeconds,
-      [this, message](
-          const std::function<void(const boost::system::error_code&)>& done) {
-        AsyncReadMessageChunkHeader(message, done);
-      });
+    MessageReadCallback callback) {
+  auto state = std::make_shared<AsyncMessageReadState>();
+  AsyncReadMessageChunkHeader(std::move(state), deadline, std::move(callback));
 }
 
 void BoltBackendSession::AsyncReadMessageChunkHeader(
-    BackendMessage* message,
-    const std::function<void(const boost::system::error_code&)>& done) {
-  boost::asio::async_read(
-      *socket_, boost::asio::buffer(chunk_header_buffer_),
-      [this, message, done](const boost::system::error_code& ec, size_t) {
-        if (ec) {
-          done(ec);
-          return;
-        }
-        message->raw.append(chunk_header_buffer_.data(),
-                            chunk_header_buffer_.size());
+    std::shared_ptr<AsyncMessageReadState> state,
+    boost::asio::steady_timer::clock_type::time_point deadline,
+    MessageReadCallback callback) {
+  auto self = shared_from_this();
+  auto read_state = state;
+  AsyncRead(state->header.data(), state->header.size(), "backend message read",
+            deadline,
+            [self, state = std::move(read_state), deadline,
+             callback = std::move(callback)](std::exception_ptr error) mutable {
+              if (error) {
+                callback(error, {});
+                return;
+              }
+              state->message.raw.append(state->header.data(),
+                                        state->header.size());
 
-        uint16_t size = 0;
-        std::memcpy(&size, chunk_header_buffer_.data(), sizeof(size));
-        size = big_to_native(size);
-        if (size == 0) {
-          if (!message->payload.empty()) {
-            done(ec);
-            return;
-          }
-          AsyncReadMessageChunkHeader(message, done);
-          return;
-        }
-        AsyncReadMessageChunkBody(message, size, done);
-      });
+              uint16_t size = 0;
+              std::memcpy(&size, state->header.data(), sizeof(size));
+              size = big_to_native(size);
+              if (size == 0) {
+                if (!state->message.payload.empty()) {
+                  self->DecodeAndCompleteReadMessage(std::move(state),
+                                                     std::move(callback));
+                  return;
+                }
+                self->AsyncReadMessageChunkHeader(std::move(state), deadline,
+                                                  std::move(callback));
+                return;
+              }
+              self->AsyncReadMessageChunkBody(std::move(state), size, deadline,
+                                              std::move(callback));
+            });
 }
 
 void BoltBackendSession::AsyncReadMessageChunkBody(
-    BackendMessage* message, uint16_t size,
-    const std::function<void(const boost::system::error_code&)>& done) {
-  chunk_buffer_.assign(size, '\0');
-  boost::asio::async_read(
-      *socket_, boost::asio::buffer(chunk_buffer_),
-      [this, message, done](const boost::system::error_code& ec, size_t) {
-        if (ec) {
-          done(ec);
-          return;
-        }
-        message->raw.append(chunk_buffer_);
-        message->payload.append(chunk_buffer_);
-        AsyncReadMessageChunkHeader(message, done);
-      });
-}
-
-BackendMessage BoltBackendSession::ReadMessage(bool decode_records) {
-  return ReadMessageUntil(BackendIoDeadline(), decode_records);
-}
-
-BackendMessage BoltBackendSession::ReadMessageUntil(
+    std::shared_ptr<AsyncMessageReadState> state, uint16_t size,
     boost::asio::steady_timer::clock_type::time_point deadline,
-    bool decode_records) {
-  BackendMessage message;
-  ReadMessageWithTimeoutUntil(&message, "backend message read", deadline);
+    MessageReadCallback callback) {
+  state->chunk.assign(size, '\0');
+  auto self = shared_from_this();
+  auto read_state = state;
+  AsyncRead(state->chunk.data(), state->chunk.size(), "backend message read",
+            deadline,
+            [self, state = std::move(read_state), deadline,
+             callback = std::move(callback)](std::exception_ptr error) mutable {
+              if (error) {
+                callback(error, {});
+                return;
+              }
+              state->message.raw.append(state->chunk);
+              state->message.payload.append(state->chunk);
+              self->AsyncReadMessageChunkHeader(std::move(state), deadline,
+                                                std::move(callback));
+            });
+}
 
-  message.tag = DecodeTag(message.payload);
-  if (message.tag == bolt::BoltMsg::Success) {
-    message.success_has_more = DecodeSuccessHasMore(message.payload);
-  } else if (message.tag == bolt::BoltMsg::Failure) {
-    auto failure = DecodeFailure(message, &hydrator_);
-    message.failure_code = std::move(failure.code);
-    message.failure_message = std::move(failure.msg);
-  } else if (decode_records && message.tag == bolt::BoltMsg::Record) {
-    message.record = DecodeRecord(message, &hydrator_);
+void BoltBackendSession::DecodeAndCompleteReadMessage(
+    std::shared_ptr<AsyncMessageReadState> state,
+    MessageReadCallback callback) {
+  try {
+    auto& message = state->message;
+    message.tag = DecodeTag(message.payload);
+    if (message.tag == bolt::BoltMsg::Success) {
+      message.success_has_more = DecodeSuccessHasMore(message.payload);
+    } else if (message.tag == bolt::BoltMsg::Failure) {
+      auto failure = DecodeFailure(message, &hydrator_);
+      message.failure_code = std::move(failure.code);
+      message.failure_message = std::move(failure.msg);
+    } else if (decode_records_ && message.tag == bolt::BoltMsg::Record) {
+      message.record = DecodeRecord(message, &hydrator_);
+    }
+    callback(nullptr, std::move(message));
+  } catch (...) {
+    callback(std::current_exception(), {});
   }
-  return message;
+}
+
+void BoltBackendSession::CloseOnStrand() {
+  boost::system::error_code ignored;
+  resolver_.cancel();
+  timeout_timer_.cancel(ignored);
+  if (socket_) {
+    socket_->cancel(ignored);
+    socket_->close(ignored);
+  }
+  connected_ = false;
+}
+
+void BoltBackendSession::CancelOnStrand() {
+  boost::system::error_code ignored;
+  resolver_.cancel();
+  if (socket_) {
+    socket_->cancel(ignored);
+  }
 }
 
 bolt::BoltMsg BoltBackendSession::DecodeTag(std::string_view payload) {

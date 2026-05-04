@@ -17,6 +17,7 @@
 #include <any>
 #include <array>
 #include <boost/asio.hpp>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -56,70 +57,121 @@ class BackendOperationCancelled : public std::runtime_error {
       : std::runtime_error(operation + " cancelled") {}
 };
 
-class BoltBackendSession {
+class BoltBackendSession
+    : public std::enable_shared_from_this<BoltBackendSession> {
  public:
-  BoltBackendSession(BackendEndpoint endpoint,
+  using MessagesCallback =
+      std::function<void(std::exception_ptr, std::vector<BackendMessage>)>;
+  using MessageCallback =
+      std::function<void(std::exception_ptr, BackendMessage)>;
+  using RaftNodeInfosCallback =
+      std::function<void(std::exception_ptr, std::vector<RaftNodeEndpoint>)>;
+
+  BoltBackendSession(boost::asio::io_service& io_service,
+                     BackendEndpoint endpoint,
                      std::unordered_map<std::string, std::any> hello_meta);
   ~BoltBackendSession();
 
-  std::vector<BackendMessage> SendAndReadUntilTerminal(
-      const std::string& request, bool decode_records = false);
-  BackendMessage SendAndForwardUntilTerminal(
+  void AsyncSendAndReadUntilTerminal(const std::string& request,
+                                     bool decode_records,
+                                     MessagesCallback callback);
+  void AsyncSendAndForwardUntilTerminal(
       const std::string& request,
       const std::function<bool(const BackendMessage&)>& forward,
-      bool decode_records = false);
-  std::vector<RaftNodeEndpoint> FetchRaftNodeInfos(
-      const std::string& graph_name);
+      bool decode_records, MessageCallback callback);
+  void AsyncFetchRaftNodeInfos(const std::string& graph_name,
+                               RaftNodeInfosCallback callback);
   void Close();
+  void Cancel();
 
  private:
-  void EnsureConnected();
-  void Connect();
-  void ConnectWithTimeout(
-      const boost::asio::ip::tcp::resolver::results_type& endpoints);
-  void WriteWithTimeout(const void* data, size_t size, const char* operation);
-  void WriteWithTimeoutUntil(
-      const void* data, size_t size, const char* operation,
-      boost::asio::steady_timer::clock_type::time_point deadline);
-  void ReadWithTimeout(void* data, size_t size, const char* operation);
-  void RunWithTimeout(
-      const char* operation, uint32_t timeout_seconds,
-      const std::function<
-          void(const std::function<void(const boost::system::error_code&)>&)>&
-          start);
-  void RunWithTimeoutUntil(
+  enum class OperationMode { COLLECT = 0, FORWARD };
+
+  struct AsyncMessageReadState {
+    BackendMessage message;
+    std::array<char, 2> header{};
+    std::string chunk;
+  };
+
+  using ErrorCallback = std::function<void(std::exception_ptr)>;
+  using MessageReadCallback =
+      std::function<void(std::exception_ptr, BackendMessage)>;
+
+  void StartSendAndRead(std::string request, bool decode_records,
+                        MessagesCallback callback);
+  void StartSendAndForward(std::string request,
+                           std::function<bool(const BackendMessage&)> forward,
+                           bool decode_records, MessageCallback callback);
+  void EnsureConnected(ErrorCallback callback);
+  void StartConnect(ErrorCallback callback);
+  void StartResolve();
+  void StartTcpConnect();
+  void StartBoltHandshakeWrite();
+  void StartBoltHandshakeRead();
+  void StartHelloWrite();
+  void StartHelloRead();
+  void CompleteConnect(std::exception_ptr error);
+  void StartRequestWrite();
+  void StartReadNextResponse();
+  void FinishCollect(std::exception_ptr error);
+  void FinishForward(std::exception_ptr error, BackendMessage message);
+  void FinishCurrentOperation(std::exception_ptr error);
+  void StartTimedStep(
       const char* operation,
       boost::asio::steady_timer::clock_type::time_point deadline,
       uint32_t timeout_seconds,
-      const std::function<
-          void(const std::function<void(const boost::system::error_code&)>&)>&
-          start);
-  void ReadMessageWithTimeout(BackendMessage* message, const char* operation);
-  void ReadMessageWithTimeoutUntil(
-      BackendMessage* message, const char* operation,
-      boost::asio::steady_timer::clock_type::time_point deadline);
-  void AsyncReadMessageChunkHeader(
-      BackendMessage* message,
-      const std::function<void(const boost::system::error_code&)>& done);
-  void AsyncReadMessageChunkBody(
-      BackendMessage* message, uint16_t size,
-      const std::function<void(const boost::system::error_code&)>& done);
-  BackendMessage ReadMessage(bool decode_records = false);
-  BackendMessage ReadMessageUntil(
+      const std::function<void(
+          const std::function<void(const boost::system::error_code&)>&)>& start,
+      ErrorCallback callback);
+  void AsyncWrite(const void* data, size_t size, const char* operation,
+                  boost::asio::steady_timer::clock_type::time_point deadline,
+                  ErrorCallback callback);
+  void AsyncRead(void* data, size_t size, const char* operation,
+                 boost::asio::steady_timer::clock_type::time_point deadline,
+                 ErrorCallback callback);
+  void AsyncReadMessage(
       boost::asio::steady_timer::clock_type::time_point deadline,
-      bool decode_records = false);
+      MessageReadCallback callback);
+  void AsyncReadMessageChunkHeader(
+      std::shared_ptr<AsyncMessageReadState> state,
+      boost::asio::steady_timer::clock_type::time_point deadline,
+      MessageReadCallback callback);
+  void AsyncReadMessageChunkBody(
+      std::shared_ptr<AsyncMessageReadState> state, uint16_t size,
+      boost::asio::steady_timer::clock_type::time_point deadline,
+      MessageReadCallback callback);
+  void DecodeAndCompleteReadMessage(
+      std::shared_ptr<AsyncMessageReadState> state,
+      MessageReadCallback callback);
+  void CloseOnStrand();
+  void CancelOnStrand();
   static bolt::BoltMsg DecodeTag(std::string_view payload);
   static bool DecodeSuccessHasMore(std::string_view payload);
   static bool IsTerminal(bolt::BoltMsg tag);
 
   BackendEndpoint endpoint_;
   std::unordered_map<std::string, std::any> hello_meta_;
-  boost::asio::io_context io_context_;
+  boost::asio::io_service& io_service_;
+  boost::asio::io_service::strand strand_;
+  boost::asio::ip::tcp::resolver resolver_;
+  boost::asio::ip::tcp::resolver::results_type resolved_endpoints_;
   boost::asio::steady_timer timeout_timer_;
   std::unique_ptr<boost::asio::ip::tcp::socket> socket_;
   bolt::Hydrator hydrator_;
-  std::array<char, 2> chunk_header_buffer_{};
-  std::string chunk_buffer_;
+  std::array<uint8_t, 4> accepted_version_{};
+  int selected_minor_ = -1;
+  std::string hello_request_;
+  std::function<bool(const BackendMessage&)> forward_;
+  MessagesCallback messages_callback_;
+  MessageCallback message_callback_;
+  ErrorCallback connect_callback_;
+  OperationMode operation_mode_ = OperationMode::COLLECT;
+  std::string request_;
+  boost::asio::steady_timer::clock_type::time_point request_deadline_;
+  std::vector<BackendMessage> messages_;
+  bool operation_in_progress_ = false;
+  bool decode_records_ = false;
+  bool timed_out_ = false;
   bool connected_ = false;
 };
 
