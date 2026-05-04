@@ -281,20 +281,8 @@ void BoltBackendSession::Close() {
   if (socket_) {
     boost::system::error_code ec;
     socket_->close(ec);
-    socket_.reset();
   }
   connected_ = false;
-}
-
-void BoltBackendSession::Cancel() {
-  cancelled_.store(true);
-  io_context_.post([this]() {
-    if (socket_) {
-      boost::system::error_code ignored;
-      socket_->cancel(ignored);
-      socket_->close(ignored);
-    }
-  });
 }
 
 void BoltBackendSession::EnsureConnected() {
@@ -407,9 +395,6 @@ void BoltBackendSession::RunWithTimeout(
   }
   io_context_.run();
 
-  if (cancelled_.load()) {
-    throw BackendOperationCancelled(operation);
-  }
   if (timed_out && result == boost::asio::error::operation_aborted) {
     throw std::runtime_error(
         fmt::format("{} timed out after {}s", operation, timeout_seconds));

@@ -149,6 +149,9 @@ bool ConsumeSessionInterrupt(ProxySession* session) {
   return session->ConsumeInterrupt();
 }
 
+void DropActiveBackend(const std::shared_ptr<BackendSessionPool>& pool,
+                       ProxySession* session);
+
 class LeaderCache {
  public:
   std::optional<BackendEndpoint> Get(const std::string& graph_name) {
@@ -438,6 +441,7 @@ void CloseProtocolError(const std::shared_ptr<bolt::BoltConnection>& conn,
   LOG_ERROR("unexpected {} in {} proxy session state, close the connection",
             BoltMsgName(type), ProxySessionStateName(session->state));
   session->state = ProxySessionState::DEFUNCT;
+  DropActiveBackend(session->backend_pool, session);
   conn->Close();
 }
 
@@ -568,11 +572,7 @@ ProxySession::~ProxySession() {
   if (!active.has_value()) {
     return;
   }
-  if (backend_pool) {
-    backend_pool->Drop(active->endpoint, std::move(active->backend));
-  } else if (active->backend) {
-    active->backend->Close();
-  }
+  backend_pool->Drop(active->endpoint, std::move(active->backend));
 }
 
 void FailSession(const std::shared_ptr<BackendSessionPool>& pool,
@@ -584,12 +584,8 @@ void FailSession(const std::shared_ptr<BackendSessionPool>& pool,
   session->state = ProxySessionState::FAILED;
 }
 
-void RequestSessionInterrupt(const std::shared_ptr<ProxySession>& session) {
+void MarkSessionInterrupted(const std::shared_ptr<ProxySession>& session) {
   session->RequestInterrupt();
-  auto backend = ActiveBackendSession(session.get());
-  if (backend) {
-    backend->Cancel();
-  }
 }
 
 BackendEndpoint ResolveConfiguredEndpoint(const ShardReplicaGroup& group,
@@ -971,12 +967,8 @@ bool EnqueueSessionMessage(const std::shared_ptr<ProxyContext>& context,
                       ProcessProxyMessage(context, conn, session.get(),
                                           std::move(message));
                     }
-                    if (conn->has_closed()) {
-                      RequestSessionInterrupt(session);
-                      DropActiveBackend(context->backend_pool, session.get());
-                    }
                   })) {
-    RequestSessionInterrupt(session_context->session);
+    DropActiveBackend(context->backend_pool, session_context->session.get());
     conn.Close();
     return false;
   }
@@ -1036,7 +1028,7 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
       auto existing_session = GetSession(conn);
       if (existing_session) {
         LOG_WARN("receive duplicate proxy HELLO, close the connection");
-        RequestSessionInterrupt(existing_session);
+        DropActiveBackend(context->backend_pool, existing_session.get());
         conn.Close();
         return;
       }
@@ -1055,7 +1047,7 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
     if (msg == bolt::BoltMsg::Goodbye) {
       auto session = GetSession(conn);
       if (session) {
-        RequestSessionInterrupt(session);
+        DropActiveBackend(context->backend_pool, session.get());
       }
       conn.Close();
       return;
@@ -1075,7 +1067,7 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
         msg == bolt::BoltMsg::Begin || msg == bolt::BoltMsg::Commit ||
         msg == bolt::BoltMsg::Rollback || msg == bolt::BoltMsg::Route) {
       if (msg == bolt::BoltMsg::Reset) {
-        RequestSessionInterrupt(session);
+        MarkSessionInterrupted(session);
       }
       EnqueueSessionMessage(context, worker_pool, conn,
                             std::move(session_context),

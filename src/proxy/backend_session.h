@@ -16,7 +16,6 @@
 
 #include <any>
 #include <array>
-#include <atomic>
 #include <boost/asio.hpp>
 #include <functional>
 #include <memory>
@@ -71,7 +70,6 @@ class BoltBackendSession {
       bool decode_records = false);
   std::vector<RaftNodeEndpoint> FetchRaftNodeInfos(
       const std::string& graph_name);
-  void Cancel();
   void Close();
 
  private:
@@ -107,7 +105,6 @@ class BoltBackendSession {
   std::array<char, 2> chunk_header_buffer_{};
   std::string chunk_buffer_;
   bool connected_ = false;
-  std::atomic<bool> cancelled_{false};
 };
 
 }  // namespace proxy
