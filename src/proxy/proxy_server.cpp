@@ -14,8 +14,6 @@
 
 #include "proxy/proxy_server.h"
 
-#include <pthread.h>
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -25,12 +23,11 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
-#include <thread>
 #include <unordered_map>
 #include <utility>
 
-#include "bolt/blocking_queue.h"
 #include "bolt/pack_stream.h"
+#include "bolt/worker_pool.h"
 #include "common/exceptions.h"
 #include "common/logger.h"
 #include "proxy/backend_session.h"
@@ -83,80 +80,6 @@ const char* BoltMsgName(bolt::BoltMsg msg) {
   }
 }
 
-class ProxyWorkerPool {
- public:
-  explicit ProxyWorkerPool(uint32_t thread_num) {
-    if (thread_num == 0) {
-      thread_num = 1;
-    }
-    for (uint32_t i = 0; i < thread_num; ++i) {
-      threads_.emplace_back([this, i]() { Run(i); });
-    }
-  }
-
-  ~ProxyWorkerPool() { Stop(); }
-
-  bool Post(std::function<void()> task) {
-    {
-      std::unique_lock<std::mutex> lock(mutex_);
-      if (stopped_) {
-        return false;
-      }
-      tasks_.push_back(std::move(task));
-    }
-    condition_.notify_one();
-    return true;
-  }
-
-  void Stop() {
-    {
-      std::unique_lock<std::mutex> lock(mutex_);
-      if (stopped_) {
-        return;
-      }
-      stopped_ = true;
-      tasks_.clear();
-    }
-    condition_.notify_all();
-    for (auto& thread : threads_) {
-      if (thread.joinable()) {
-        thread.join();
-      }
-    }
-  }
-
- private:
-  void Run(uint32_t worker_id) {
-    std::string name = "proxy-worker-" + std::to_string(worker_id);
-    pthread_setname_np(pthread_self(), name.c_str());
-    while (true) {
-      std::function<void()> task;
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        condition_.wait(lock, [this]() { return stopped_ || !tasks_.empty(); });
-        if (stopped_ && tasks_.empty()) {
-          return;
-        }
-        task = std::move(tasks_.front());
-        tasks_.pop_front();
-      }
-      try {
-        task();
-      } catch (const std::exception& e) {
-        LOG_ERROR("proxy worker task failed: {}", e.what());
-      } catch (...) {
-        LOG_ERROR("proxy worker task failed with unknown exception");
-      }
-    }
-  }
-
-  std::mutex mutex_;
-  std::condition_variable condition_;
-  std::deque<std::function<void()>> tasks_;
-  std::vector<std::thread> threads_;
-  bool stopped_ = false;
-};
-
 struct ProxyMessage {
   bolt::BoltMsg type;
   std::vector<std::any> fields;
@@ -178,8 +101,6 @@ struct ActiveBackend {
 };
 
 struct ProxySession {
-  explicit ProxySession(size_t max_pending_messages)
-      : messages(max_pending_messages) {}
   ~ProxySession();
 
   void RequestInterrupt() { remaining_interrupts.fetch_add(1); }
@@ -201,10 +122,15 @@ struct ProxySession {
   ProxySessionState state = ProxySessionState::READY;
   std::optional<ActiveBackend> active_backend;
   std::mutex backend_mutex;
-  bolt::BlockingQueue<ProxyMessage> messages;
-  std::mutex schedule_mutex;
   std::atomic<size_t> remaining_interrupts = 0;
-  bool scheduled = false;
+};
+
+struct ProxySessionContext {
+  explicit ProxySessionContext(bolt::BoltWorkerPool::Strand strand)
+      : session(std::make_shared<ProxySession>()), strand(std::move(strand)) {}
+
+  std::shared_ptr<ProxySession> session;
+  bolt::BoltWorkerPool::Strand strand;
 };
 
 const char* ProxySessionStateName(ProxySessionState state) {
@@ -396,12 +322,21 @@ struct ProxyContext {
   std::shared_ptr<BackendSessionPool> backend_pool;
 };
 
-std::shared_ptr<ProxySession> GetSession(bolt::BoltConnection& conn) {
+std::shared_ptr<ProxySessionContext> GetSessionContext(
+    bolt::BoltConnection& conn) {
   auto ctx = conn.GetContextShared();
   if (!ctx) {
     return {};
   }
-  return std::static_pointer_cast<ProxySession>(ctx);
+  return std::static_pointer_cast<ProxySessionContext>(ctx);
+}
+
+std::shared_ptr<ProxySession> GetSession(bolt::BoltConnection& conn) {
+  auto ctx = GetSessionContext(conn);
+  if (!ctx) {
+    return {};
+  }
+  return ctx->session;
 }
 
 std::string AnyToShardKey(const std::any& value) {
@@ -1048,99 +983,34 @@ void ProcessProxyMessage(const std::shared_ptr<ProxyContext>& context,
   }
 }
 
-void ProcessSession(std::shared_ptr<ProxyContext> context,
-                    std::shared_ptr<bolt::BoltConnection> conn,
-                    std::shared_ptr<ProxySession> session,
-                    std::weak_ptr<ProxyWorkerPool> weak_pool);
-
-void ScheduleSession(const std::shared_ptr<ProxyContext>& context,
-                     const std::shared_ptr<ProxyWorkerPool>& pool,
-                     std::shared_ptr<bolt::BoltConnection> conn,
-                     std::shared_ptr<ProxySession> session) {
-  bool should_schedule = false;
-  {
-    std::unique_lock<std::mutex> lock(session->schedule_mutex);
-    if (!session->scheduled) {
-      session->scheduled = true;
-      should_schedule = true;
-    }
-  }
-  if (!should_schedule) {
-    return;
-  }
-
-  std::weak_ptr<ProxyWorkerPool> weak_pool = pool;
-  if (!pool->Post([context, conn, session, weak_pool]() mutable {
-        ProcessSession(context, conn, session, weak_pool);
-      })) {
-    RequestSessionInterrupt(session);
-    conn->Close();
-  }
-}
-
-void ProcessSession(std::shared_ptr<ProxyContext> context,
-                    std::shared_ptr<bolt::BoltConnection> conn,
-                    std::shared_ptr<ProxySession> session,
-                    std::weak_ptr<ProxyWorkerPool> weak_pool) {
-  while (!conn->has_closed()) {
-    auto message = session->messages.TryPop();
-    if (!message) {
-      break;
-    }
-    ProcessProxyMessage(context, conn, session.get(), std::move(*message));
-  }
-  if (conn->has_closed()) {
-    RequestSessionInterrupt(session);
-    DropActiveBackend(context->backend_pool, session.get());
-    return;
-  }
-
-  bool should_reschedule = false;
-  {
-    std::unique_lock<std::mutex> lock(session->schedule_mutex);
-    session->scheduled = false;
-    if (!conn->has_closed() && !session->messages.Empty()) {
-      session->scheduled = true;
-      should_reschedule = true;
-    }
-  }
-
-  if (!should_reschedule) {
-    return;
-  }
-  auto pool = weak_pool.lock();
-  if (!pool) {
-    RequestSessionInterrupt(session);
-    conn->Close();
-    return;
-  }
-  if (!pool->Post([context, conn, session, weak_pool]() mutable {
-        ProcessSession(context, conn, session, weak_pool);
-      })) {
-    RequestSessionInterrupt(session);
-    conn->Close();
-  }
-}
-
 bool EnqueueSessionMessage(const std::shared_ptr<ProxyContext>& context,
-                           const std::shared_ptr<ProxyWorkerPool>& pool,
+                           const std::shared_ptr<bolt::BoltWorkerPool>& pool,
                            bolt::BoltConnection& conn,
-                           std::shared_ptr<ProxySession> session,
+                           std::shared_ptr<ProxySessionContext> session_context,
                            ProxyMessage message) {
-  if (!session->messages.Push(std::move(message))) {
-    LOG_WARN("close proxy connection {}: pending message queue is full",
-             conn.conn_id());
-    RequestSessionInterrupt(session);
+  if (!pool->Post(session_context->strand,
+                  [context, conn = conn.shared_from_this(), session_context,
+                   message = std::move(message)]() mutable {
+                    auto session = session_context->session;
+                    if (!conn->has_closed()) {
+                      ProcessProxyMessage(context, conn, session.get(),
+                                          std::move(message));
+                    }
+                    if (conn->has_closed()) {
+                      RequestSessionInterrupt(session);
+                      DropActiveBackend(context->backend_pool, session.get());
+                    }
+                  })) {
+    RequestSessionInterrupt(session_context->session);
     conn.Close();
     return false;
   }
-  ScheduleSession(context, pool, conn.shared_from_this(), std::move(session));
   return true;
 }
 
 void HandleHello(const std::shared_ptr<BackendSessionPool>& backend_pool,
-                 bolt::BoltConnection& conn, std::vector<std::any> fields,
-                 size_t max_pending_messages) {
+                 const std::shared_ptr<bolt::BoltWorkerPool>& worker_pool,
+                 bolt::BoltConnection& conn, std::vector<std::any> fields) {
   if (fields.size() != 1) {
     bolt::PackStream ps;
     ps.AppendFailure({{"code", kRequestError},
@@ -1150,10 +1020,12 @@ void HandleHello(const std::shared_ptr<BackendSessionPool>& backend_pool,
     return;
   }
   auto hello_meta = CastMapField(fields[0], "HELLO metadata");
-  auto session = std::make_shared<ProxySession>(max_pending_messages);
+  auto session_context =
+      std::make_shared<ProxySessionContext>(worker_pool->MakeStrand());
+  auto session = session_context->session;
   session->hello_meta = hello_meta;
   session->backend_pool = backend_pool;
-  conn.SetContext(session);
+  conn.SetContext(session_context);
 
   std::unordered_map<std::string, std::any> meta;
   meta["connection_id"] = std::string("proxy") + std::to_string(conn.conn_id());
@@ -1177,15 +1049,14 @@ void HandleHello(const std::shared_ptr<BackendSessionPool>& backend_pool,
 
 std::function<void(bolt::BoltConnection&, bolt::BoltMsg, std::vector<std::any>)>
 NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
-                size_t max_pending_messages,
                 size_t backend_max_connections_per_backend,
                 std::chrono::milliseconds backend_borrow_timeout) {
-  auto worker_pool = std::make_shared<ProxyWorkerPool>(worker_thread_num);
+  auto worker_pool = std::make_shared<bolt::BoltWorkerPool>(
+      worker_thread_num, "proxy-worker-", "proxy");
   auto context = std::make_shared<ProxyContext>(
       shard_map, backend_max_connections_per_backend, backend_borrow_timeout);
-  return [context, worker_pool, max_pending_messages](
-             bolt::BoltConnection& conn, bolt::BoltMsg msg,
-             std::vector<std::any> fields) mutable {
+  return [context, worker_pool](bolt::BoltConnection& conn, bolt::BoltMsg msg,
+                                std::vector<std::any> fields) mutable {
     if (msg == bolt::BoltMsg::Hello) {
       auto existing_session = GetSession(conn);
       if (existing_session) {
@@ -1195,8 +1066,8 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
         return;
       }
       try {
-        HandleHello(context->backend_pool, conn, std::move(fields),
-                    max_pending_messages);
+        HandleHello(context->backend_pool, worker_pool, conn,
+                    std::move(fields));
       } catch (const std::exception& e) {
         bolt::PackStream ps;
         ps.AppendFailure({{"code", kRequestError}, {"message", e.what()}});
@@ -1215,13 +1086,14 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
       return;
     }
 
-    auto session = GetSession(conn);
-    if (!session) {
+    auto session_context = GetSessionContext(conn);
+    if (!session_context) {
       LOG_WARN("receive {} before proxy HELLO, close the connection",
                BoltMsgName(msg));
       conn.Close();
       return;
     }
+    auto session = session_context->session;
 
     if (msg == bolt::BoltMsg::Run || msg == bolt::BoltMsg::PullN ||
         msg == bolt::BoltMsg::DiscardN || msg == bolt::BoltMsg::Reset ||
@@ -1230,7 +1102,8 @@ NewProxyHandler(const ShardMap& shard_map, uint32_t worker_thread_num,
       if (msg == bolt::BoltMsg::Reset) {
         RequestSessionInterrupt(session);
       }
-      EnqueueSessionMessage(context, worker_pool, conn, std::move(session),
+      EnqueueSessionMessage(context, worker_pool, conn,
+                            std::move(session_context),
                             {.type = msg, .fields = std::move(fields)});
       return;
     }
@@ -1255,7 +1128,6 @@ bool ProxyServer::Start() {
   }
   auto handler = NewProxyHandler(
       options_.shard_map, options_.worker_thread_num,
-      options_.max_pending_messages_per_connection,
       options_.backend_max_connections_per_backend,
       std::chrono::milliseconds(options_.backend_borrow_timeout_ms));
   if (!bolt_server_.Start(options_.listen_port, options_.bolt_io_thread_num,

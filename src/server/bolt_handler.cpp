@@ -18,14 +18,9 @@
 
 #include "server/bolt_handler.h"
 
-#include <pthread.h>
 #include <spdlog/fmt/chrono.h>
 
-#include <atomic>
 #include <boost/algorithm/string.hpp>
-#include <boost/asio/post.hpp>
-#include <boost/asio/strand.hpp>
-#include <boost/asio/thread_pool.hpp>
 #include <cctype>
 #include <cstddef>
 #include <functional>
@@ -34,6 +29,7 @@
 #include <utility>
 
 #include "bolt/connection.h"
+#include "bolt/worker_pool.h"
 #include "common/exceptions.h"
 #include "common/logger.h"
 #include "cypher/execution_plan/result_iterator.h"
@@ -146,69 +142,12 @@ namespace server {
 
 namespace {
 
-class BoltWorkerPool {
- public:
-  using Executor = boost::asio::thread_pool::executor_type;
-  using Strand = boost::asio::strand<Executor>;
-
-  explicit BoltWorkerPool(uint32_t thread_num)
-      : pool_(thread_num == 0 ? 1 : thread_num) {}
-
-  ~BoltWorkerPool() { Stop(); }
-
-  Strand MakeStrand() { return Strand(pool_.get_executor()); }
-
-  bool Post(const Strand& strand, std::function<void()> task) {
-    if (stopped_.load(std::memory_order_acquire)) {
-      return false;
-    }
-    boost::asio::post(strand, [this, task = std::move(task)]() mutable {
-      InitWorkerThread();
-      try {
-        task();
-      } catch (const std::exception& e) {
-        LOG_ERROR("bolt worker task failed: {}", e.what());
-      } catch (...) {
-        LOG_ERROR("bolt worker task failed with unknown exception");
-      }
-    });
-    return true;
-  }
-
-  void Stop() {
-    bool expected = false;
-    if (!stopped_.compare_exchange_strong(expected, true,
-                                          std::memory_order_acq_rel)) {
-      return;
-    }
-    pool_.stop();
-    pool_.join();
-  }
-
- private:
-  void InitWorkerThread() {
-    static thread_local bool initialized = false;
-    if (initialized) {
-      return;
-    }
-    initialized = true;
-
-    auto worker_id = next_worker_id_.fetch_add(1, std::memory_order_relaxed);
-    std::string name = "bolt-worker-" + std::to_string(worker_id);
-    pthread_setname_np(pthread_self(), name.c_str());
-  }
-
-  boost::asio::thread_pool pool_;
-  std::atomic<bool> stopped_{false};
-  std::atomic<uint32_t> next_worker_id_{0};
-};
-
 struct BoltSessionContext {
-  explicit BoltSessionContext(BoltWorkerPool::Strand strand)
+  explicit BoltSessionContext(bolt::BoltWorkerPool::Strand strand)
       : session(std::make_shared<BoltSession>()), strand(std::move(strand)) {}
 
   std::shared_ptr<BoltSession> session;
-  BoltWorkerPool::Strand strand;
+  bolt::BoltWorkerPool::Strand strand;
 };
 
 }  // namespace
@@ -621,11 +560,10 @@ static std::shared_ptr<BoltSessionContext> GetSessionContext(
   return std::static_pointer_cast<BoltSessionContext>(ctx);
 }
 
-static bool EnqueueSessionMessage(Galaxy* galaxy,
-                                  const std::shared_ptr<BoltWorkerPool>& pool,
-                                  BoltConnection& conn,
-                                  std::shared_ptr<BoltSessionContext> context,
-                                  BoltMsgDetail msg) {
+static bool EnqueueSessionMessage(
+    Galaxy* galaxy, const std::shared_ptr<bolt::BoltWorkerPool>& pool,
+    BoltConnection& conn, std::shared_ptr<BoltSessionContext> context,
+    BoltMsgDetail msg) {
   if (!pool->Post(context->strand, [galaxy, conn = conn.shared_from_this(),
                                     context, msg = std::move(msg)]() mutable {
         if (!conn->has_closed()) {
@@ -646,8 +584,8 @@ static bool EnqueueSessionMessage(Galaxy* galaxy,
 }  // namespace
 
 BoltHandler NewBoltHandler(Galaxy* galaxy, BoltHandlerOptions options) {
-  auto worker_pool =
-      std::make_shared<BoltWorkerPool>(options.worker_thread_num);
+  auto worker_pool = std::make_shared<bolt::BoltWorkerPool>(
+      options.worker_thread_num, "bolt-worker-", "bolt");
   return [galaxy, options, worker_pool](BoltConnection& conn, BoltMsg msg,
                                         std::vector<std::any> fields) {
     if (msg == BoltMsg::Hello) {

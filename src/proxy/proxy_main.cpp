@@ -33,9 +33,6 @@ DEFINE_uint32(proxy_worker_thread_num, 16,
 DEFINE_uint64(proxy_max_connections, 10000,
               "Maximum number of open proxy Bolt connections. 0 means "
               "unlimited.");
-DEFINE_uint64(proxy_max_pending_messages_per_connection, 1024,
-              "Maximum pending proxy Bolt messages per connection. 0 means "
-              "unlimited.");
 DEFINE_uint64(proxy_backend_max_connections_per_backend, 32,
               "Maximum active plus idle backend Bolt connections per "
               "lgraph_server endpoint. 0 means unlimited.");
@@ -108,8 +105,6 @@ int main(int argc, char* argv[]) {
          .bolt_io_thread_num = FLAGS_proxy_bolt_io_thread_num,
          .worker_thread_num = FLAGS_proxy_worker_thread_num,
          .max_connections = FLAGS_proxy_max_connections,
-         .max_pending_messages_per_connection =
-             FLAGS_proxy_max_pending_messages_per_connection,
          .backend_max_connections_per_backend =
              FLAGS_proxy_backend_max_connections_per_backend,
          .backend_borrow_timeout_ms = FLAGS_proxy_backend_borrow_timeout_ms,
