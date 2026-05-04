@@ -354,6 +354,7 @@ set(TEST_CASE_SOURCES
     test/test_plan.cpp
     test/test_temporal.cpp
     test/test_benchmark.cpp
+    test/test_proxy_raft_perf.cpp
     ${LGRAPH_PROXY_CORE_SOURCES}
 )
 
