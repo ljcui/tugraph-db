@@ -85,13 +85,7 @@ struct ProxyMessage {
   std::vector<std::any> fields;
 };
 
-enum class ProxySessionState {
-  READY = 0,
-  STREAMING,
-  FAILED,
-  INTERRUPTED,
-  DEFUNCT
-};
+enum class ProxySessionState { READY = 0, STREAMING, FAILED, DEFUNCT };
 
 class BackendSessionPool;
 
@@ -141,8 +135,6 @@ const char* ProxySessionStateName(ProxySessionState state) {
       return "STREAMING";
     case ProxySessionState::FAILED:
       return "FAILED";
-    case ProxySessionState::INTERRUPTED:
-      return "INTERRUPTED";
     case ProxySessionState::DEFUNCT:
       return "DEFUNCT";
   }
@@ -420,6 +412,8 @@ bool IsSessionRequest(bolt::BoltMsg type) {
          IsExplicitTransactionRequest(type);
 }
 
+bool IsResetMessage(bolt::BoltMsg type) { return type == bolt::BoltMsg::Reset; }
+
 void SendFailure(const std::shared_ptr<bolt::BoltConnection>& conn,
                  const std::string& code, const std::string& message) {
   bolt::PackStream ps;
@@ -684,19 +678,6 @@ bool IsNotLeaderFailure(const std::vector<BackendMessage>& messages) {
   return failure.failure_message.find("not leader") != std::string::npos;
 }
 
-void ProcessReset(const std::shared_ptr<BackendSessionPool>& pool,
-                  const std::shared_ptr<bolt::BoltConnection>& conn,
-                  ProxySession* session) {
-  DropActiveBackend(pool, session);
-  if (ConsumeSessionInterrupt(session)) {
-    session->state = ProxySessionState::READY;
-    SendSuccess(conn);
-  } else {
-    session->state = ProxySessionState::INTERRUPTED;
-    SendIgnored(conn);
-  }
-}
-
 void ProcessRun(const std::shared_ptr<ProxyContext>& context,
                 const std::shared_ptr<bolt::BoltConnection>& conn,
                 ProxySession* session, const std::vector<std::any>& fields) {
@@ -869,26 +850,27 @@ bool HandleInterruptedSessionMessage(
     const std::shared_ptr<BackendSessionPool>& pool,
     const std::shared_ptr<bolt::BoltConnection>& conn, ProxySession* session,
     bolt::BoltMsg type) {
-  if (!IsSessionInterrupted(session) || type == bolt::BoltMsg::Reset) {
+  if (!IsSessionInterrupted(session)) {
     return false;
   }
   DropActiveBackend(pool, session);
-  session->state = ProxySessionState::INTERRUPTED;
-  if (IsSessionRequest(type)) {
-    SendIgnored(conn);
+  if (IsResetMessage(type)) {
+    if (ConsumeSessionInterrupt(session)) {
+      session->state = ProxySessionState::READY;
+      SendSuccess(conn);
+    } else {
+      SendIgnored(conn);
+    }
   } else {
-    CloseProtocolError(conn, session, type);
+    SendIgnored(conn);
   }
   return true;
 }
 
-void ProcessRecoverableState(const std::shared_ptr<BackendSessionPool>& pool,
-                             const std::shared_ptr<bolt::BoltConnection>& conn,
+void ProcessRecoverableState(const std::shared_ptr<bolt::BoltConnection>& conn,
                              ProxySession* session, bolt::BoltMsg type) {
   if (IsSessionRequest(type)) {
     SendIgnored(conn);
-  } else if (type == bolt::BoltMsg::Reset) {
-    ProcessReset(pool, conn, session);
   } else {
     CloseProtocolError(conn, session, type);
   }
@@ -904,8 +886,6 @@ void ProcessReadyState(const std::shared_ptr<ProxyContext>& context,
   } else if (type == bolt::BoltMsg::Route) {
     FailSession(context->backend_pool, conn, session, kRequestError,
                 "routing is not supported by lgraph_proxy");
-  } else if (type == bolt::BoltMsg::Reset) {
-    ProcessReset(context->backend_pool, conn, session);
   } else if (type == bolt::BoltMsg::Run) {
     ProcessRun(context, conn, session, fields);
   } else {
@@ -919,8 +899,6 @@ void ProcessStreamingState(const std::shared_ptr<ProxyContext>& context,
                            const std::vector<std::any>& fields) {
   if (type == bolt::BoltMsg::PullN || type == bolt::BoltMsg::DiscardN) {
     ProcessPullOrDiscard(context->backend_pool, conn, session, type, fields);
-  } else if (type == bolt::BoltMsg::Reset) {
-    ProcessReset(context->backend_pool, conn, session);
   } else {
     CloseProtocolError(conn, session, type);
   }
@@ -937,9 +915,7 @@ void ProcessProxyMessage(const std::shared_ptr<ProxyContext>& context,
 
     switch (session->state) {
       case ProxySessionState::FAILED:
-      case ProxySessionState::INTERRUPTED:
-        ProcessRecoverableState(context->backend_pool, conn, session,
-                                message.type);
+        ProcessRecoverableState(conn, session, message.type);
         break;
       case ProxySessionState::READY:
         ProcessReadyState(context, conn, session, message.type, message.fields);
@@ -959,7 +935,6 @@ void ProcessProxyMessage(const std::shared_ptr<ProxyContext>& context,
       return;
     }
     if (IsSessionInterrupted(session)) {
-      session->state = ProxySessionState::INTERRUPTED;
       return;
     }
     FailSession(context->backend_pool, conn, session, kNetworkError, e.what());
