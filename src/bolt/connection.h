@@ -21,14 +21,12 @@
 #include <atomic>
 #include <boost/asio.hpp>
 #include <boost/beast/websocket.hpp>
-#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
-#include <mutex>
 #include <regex>
 #include <unordered_map>
 #include <utility>
@@ -123,9 +121,6 @@ class BoltConnection : public Connection,
   std::vector<uint8_t> chunk_;
   Unpacker unpacker_;
   std::deque<std::string> msg_queue_;
-  std::atomic<int> msg_queue_size_ = 0;
-  std::mutex msg_queue_size_mutex_;
-  std::condition_variable msg_queue_drained_;
   std::vector<boost::asio::const_buffer> send_buffers_;
   // only shared_ptr can store void pointer
   std::shared_ptr<void> context_;

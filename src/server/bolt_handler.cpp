@@ -324,8 +324,6 @@ static std::string_view SessionStateName(SessionState state) {
       return "TX_STREAMING";
     case SessionState::FAILED:
       return "FAILED";
-    case SessionState::INTERRUPTED:
-      return "INTERRUPTED";
     case SessionState::DEFUNCT:
       return "DEFUNCT";
   }
@@ -351,18 +349,6 @@ static void PostFailure(const std::shared_ptr<BoltConnection>& conn,
   conn->PostResponse(std::move(ps.MutableBuffer()));
 }
 
-static void CompleteReset(const std::shared_ptr<BoltConnection>& conn,
-                          BoltSession* session) {
-  AbortActiveQuery(session);
-  if (ConsumeSessionInterrupt(session)) {
-    session->state = SessionState::READY;
-    PostSuccess(conn);
-  } else {
-    session->state = SessionState::INTERRUPTED;
-    PostIgnored(conn);
-  }
-}
-
 static bool InterruptedOrClosed(const std::shared_ptr<BoltConnection>& conn,
                                 BoltSession* session) {
   if (conn->has_closed()) {
@@ -370,7 +356,6 @@ static bool InterruptedOrClosed(const std::shared_ptr<BoltConnection>& conn,
     return true;
   }
   if (IsSessionInterrupted(session)) {
-    session->state = SessionState::INTERRUPTED;
     LOG_INFO("The bolt session is interrupted, cancel the op execution.");
     return true;
   }
@@ -385,46 +370,19 @@ static void FailSession(const std::shared_ptr<BoltConnection>& conn,
   session->state = SessionState::FAILED;
 }
 
-static void FailSessionUnlessInterruptedOrClosed(
-    const std::shared_ptr<BoltConnection>& conn, BoltSession* session,
-    ErrorCode code, std::string msg) {
-  if (InterruptedOrClosed(conn, session)) {
-    return;
-  }
-  LOG_ERROR("{}", msg);
-  FailSession(conn, session, code, msg);
-}
-
 static void CloseProtocolError(const std::shared_ptr<BoltConnection>& conn,
                                BoltSession* session, BoltMsg type) {
   LOG_ERROR("Unexpected msg:{} in {} state, close the connection",
             ToString(type), SessionStateName(session->state));
+  AbortActiveQuery(session);
   session->state = SessionState::DEFUNCT;
   conn->Close();
-}
-
-static bool HandleInterruptedSessionMessage(
-    const std::shared_ptr<BoltConnection>& conn, BoltSession* session,
-    BoltMsg type) {
-  if (!IsSessionInterrupted(session) || IsResetMessage(type)) {
-    return false;
-  }
-  AbortActiveQuery(session);
-  session->state = SessionState::INTERRUPTED;
-  if (IsSessionRequest(type)) {
-    PostIgnored(conn);
-  } else {
-    CloseProtocolError(conn, session, type);
-  }
-  return true;
 }
 
 static void ProcessRecoverableState(const std::shared_ptr<BoltConnection>& conn,
                                     BoltSession* session, BoltMsg type) {
   if (IsSessionRequest(type)) {
     PostIgnored(conn);
-  } else if (type == bolt::BoltMsg::Reset) {
-    CompleteReset(conn, session);
   } else {
     CloseProtocolError(conn, session, type);
   }
@@ -469,60 +427,63 @@ static int64_t ExtractPullOrDiscardN(BoltMsg type,
 static void ProcessPullOrDiscard(const std::shared_ptr<BoltConnection>& conn,
                                  BoltSession* session, BoltMsg type,
                                  const std::vector<std::any>& fields) {
-  if (!session->active_query || !session->active_query->result) {
-    THROW_CODE(InputError, "{} requires an active result stream",
-               bolt::ToString(type));
-  }
+  try {
+    if (!session->active_query || !session->active_query->result) {
+      THROW_CODE(InputError, "{} requires an active result stream",
+                 bolt::ToString(type));
+    }
 
-  const int64_t n = ExtractPullOrDiscardN(type, fields);
-  const bool unlimited = n < 0;
-  int64_t remaining = n;
-  auto* result = session->active_query->result.get();
+    const int64_t n = ExtractPullOrDiscardN(type, fields);
+    const bool unlimited = n < 0;
+    int64_t remaining = n;
+    auto* result = session->active_query->result.get();
 
-  while (result->Valid() && (unlimited || remaining > 0)) {
-    if (InterruptedOrClosed(conn, session)) {
-      AbortActiveQuery(session);
+    while (result->Valid() && (unlimited || remaining > 0)) {
+      if (InterruptedOrClosed(conn, session)) {
+        AbortActiveQuery(session);
+        return;
+      }
+
+      if (type == BoltMsg::PullN) {
+        session->ps.AppendRecord(result->GetBoltRecord());
+        if (session->ps.ConstBuffer().size() > 1024) {
+          FlushSessionBuffer(conn, session);
+        }
+      }
+      result->Next();
+      if (!unlimited) {
+        --remaining;
+      }
+    }
+
+    if (result->Valid()) {
+      std::unordered_map<std::string, std::any> meta;
+      meta["has_more"] = true;
+      session->ps.AppendSuccess(meta);
+      session->state = SessionState::STREAMING;
+      FlushSessionBuffer(conn, session);
       return;
     }
 
-    if (type == BoltMsg::PullN) {
-      session->ps.AppendRecord(result->GetBoltRecord());
-      if (session->ps.ConstBuffer().size() > 1024) {
-        FlushSessionBuffer(conn, session);
-      }
-    }
-    result->Next();
-    if (!unlimited) {
-      --remaining;
-    }
-  }
-
-  if (InterruptedOrClosed(conn, session)) {
-    AbortActiveQuery(session);
-    return;
-  }
-
-  if (result->Valid()) {
-    std::unordered_map<std::string, std::any> meta;
-    meta["has_more"] = true;
-    session->ps.AppendSuccess(meta);
-    session->state = SessionState::STREAMING;
+    auto* active_query = session->active_query.get();
+    auto elapsed = duration_cast<milliseconds>(steady_clock::now() -
+                                               active_query->start_time);
+    auto graph_name = active_query->graph_name;
+    auto cypher = active_query->cypher;
+    active_query->Commit();
+    session->active_query.reset();
+    session->state = SessionState::READY;
+    session->ps.AppendSuccess();
     FlushSessionBuffer(conn, session);
-    return;
+    LOG_DEBUG("Cypher execution completed");
+    QUERY_LOG("{} {} {}", graph_name, elapsed, cypher.substr(0, 256));
+  } catch (const LgraphException& e) {
+    LOG_ERROR("{}", e.msg());
+    FailSession(conn, session, e.code(), e.msg());
+  } catch (std::exception& e) {
+    LOG_ERROR("{}", e.what());
+    FailSession(conn, session, ErrorCode::UnknownError, e.what());
   }
-
-  auto* active_query = session->active_query.get();
-  auto elapsed = duration_cast<milliseconds>(steady_clock::now() -
-                                             active_query->start_time);
-  auto graph_name = active_query->graph_name;
-  auto cypher = active_query->cypher;
-  active_query->Commit();
-  session->active_query.reset();
-  session->state = SessionState::READY;
-  session->ps.AppendSuccess();
-  FlushSessionBuffer(conn, session);
-  LOG_DEBUG("Cypher execution completed");
-  QUERY_LOG("{} {} {}", graph_name, elapsed, cypher.substr(0, 256));
 }
 
 static void ProcessRun(Galaxy* galaxy,
@@ -578,16 +539,10 @@ static void ProcessRun(Galaxy* galaxy,
       active_query->txn = active_query->graph_db->BeginTransaction();
       active_query->txn->SetConn(conn);
     }
-    if (InterruptedOrClosed(conn, session)) {
-      return;
-    }
     LOG_DEBUG("Execute {}", active_query->cypher.substr(0, 256));
     active_query->result = std::make_unique<ResultIterator>(
         active_query->ctx.get(), active_query->txn.get(), active_query->cypher);
     auto header = active_query->result->GetHeader();
-    if (InterruptedOrClosed(conn, session)) {
-      return;
-    }
 
     std::unordered_map<std::string, std::any> meta;
     meta["fields"] = header;
@@ -597,10 +552,11 @@ static void ProcessRun(Galaxy* galaxy,
     session->active_query = std::move(active_query);
     session->state = bolt::SessionState::STREAMING;
   } catch (const LgraphException& e) {
-    FailSessionUnlessInterruptedOrClosed(conn, session, e.code(), e.msg());
+    LOG_ERROR("{}", e.msg());
+    FailSession(conn, session, e.code(), e.msg());
   } catch (std::exception& e) {
-    FailSessionUnlessInterruptedOrClosed(conn, session, ErrorCode::UnknownError,
-                                         e.what());
+    LOG_ERROR("{}", e.what());
+    FailSession(conn, session, ErrorCode::UnknownError, e.what());
   }
 }
 
@@ -612,8 +568,6 @@ static void ProcessReadyState(Galaxy* galaxy,
     FailUnsupportedRequest(conn, session, type, "explicit transactions");
   } else if (type == bolt::BoltMsg::Route) {
     FailUnsupportedRequest(conn, session, type, "routing");
-  } else if (type == bolt::BoltMsg::Reset) {
-    CompleteReset(conn, session);
   } else if (type == bolt::BoltMsg::Run) {
     ProcessRun(galaxy, conn, session, fields);
   } else {
@@ -624,19 +578,10 @@ static void ProcessReadyState(Galaxy* galaxy,
 static void ProcessStreamingState(const std::shared_ptr<BoltConnection>& conn,
                                   BoltSession* session, BoltMsg type,
                                   const std::vector<std::any>& fields) {
-  try {
-    if (type == bolt::BoltMsg::PullN || type == bolt::BoltMsg::DiscardN) {
-      ProcessPullOrDiscard(conn, session, type, fields);
-    } else if (type == bolt::BoltMsg::Reset) {
-      CompleteReset(conn, session);
-    } else {
-      CloseProtocolError(conn, session, type);
-    }
-  } catch (const LgraphException& e) {
-    FailSessionUnlessInterruptedOrClosed(conn, session, e.code(), e.msg());
-  } catch (std::exception& e) {
-    FailSessionUnlessInterruptedOrClosed(conn, session, ErrorCode::UnknownError,
-                                         e.what());
+  if (type == bolt::BoltMsg::PullN || type == bolt::BoltMsg::DiscardN) {
+    ProcessPullOrDiscard(conn, session, type, fields);
+  } else {
+    CloseProtocolError(conn, session, type);
   }
 }
 
@@ -645,13 +590,24 @@ static void ProcessBoltMessage(Galaxy* galaxy,
                                BoltSession* session, BoltMsgDetail msg) {
   auto& fields = msg.fields;
   auto type = msg.type;
-  if (HandleInterruptedSessionMessage(conn, session, type)) {
+
+  if (IsSessionInterrupted(session)) {
+    AbortActiveQuery(session);
+    if (IsResetMessage(type)) {
+      if (ConsumeSessionInterrupt(session)) {
+        session->state = SessionState::READY;
+        PostSuccess(conn);
+      } else {
+        PostIgnored(conn);
+      }
+    } else {
+      PostIgnored(conn);
+    }
     return;
   }
 
   switch (session->state) {
     case SessionState::FAILED:
-    case SessionState::INTERRUPTED:
       ProcessRecoverableState(conn, session, type);
       break;
     case SessionState::READY:

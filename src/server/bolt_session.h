@@ -50,7 +50,6 @@ enum class SessionState {
   TX_READY,
   TX_STREAMING,
   FAILED,
-  INTERRUPTED,
   DEFUNCT
 };
 
