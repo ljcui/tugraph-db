@@ -7,9 +7,8 @@ import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from neo4j import GraphDatabase, basic_auth
@@ -21,6 +20,8 @@ LOGICAL_GRAPH = "default"
 PHYSICAL_GRAPH_PREFIX = "default_s"
 PHYSICAL_GRAPH_WIDTH = 2
 PERF_LABEL = "ProxyRaftPerfNode"
+DEFAULT_CLIENT_NUM = 4
+DEFAULT_PROXY_NUM = 1
 
 
 class ManagedProcess:
@@ -199,32 +200,22 @@ def find_shard_keys(shard_count):
     return keys
 
 
-def time_parallel(total_ops, thread_count, worker):
+def time_multiprocess(total_ops, client_num, worker, worker_args):
     if total_ops <= 0:
         return 0.0
     start = time.perf_counter()
-    errors = []
-    lock = threading.Lock()
-
-    def run_slice(thread_id, begin, end):
-        try:
-            worker(thread_id, begin, end)
-        except Exception as exc:
-            with lock:
-                errors.append(exc)
-
     futures = []
-    with ThreadPoolExecutor(max_workers=thread_count) as executor:
-        for thread_id in range(thread_count):
-            begin = (total_ops * thread_id) // thread_count
-            end = (total_ops * (thread_id + 1)) // thread_count
+    with ProcessPoolExecutor(max_workers=client_num) as executor:
+        for client_id in range(client_num):
+            begin = (total_ops * client_id) // client_num
+            end = (total_ops * (client_id + 1)) // client_num
             if begin == end:
                 continue
-            futures.append(executor.submit(run_slice, thread_id, begin, end))
+            futures.append(
+                executor.submit(worker, *(worker_args + (client_id, begin, end)))
+            )
         for future in as_completed(futures):
             future.result()
-    if errors:
-        raise errors[0]
     return time.perf_counter() - start
 
 
@@ -242,13 +233,14 @@ def run_warmup(driver, shard_keys, warmup_ops):
             raise AssertionError("unexpected warmup value: {}".format(value))
 
 
-def run_write_perf(driver, shard_keys, write_ops, thread_count):
+def write_worker(proxy_ports, shard_keys, client_id, begin, end):
     query = (
         "CREATE (n:{} "
         "{{id: $id, shard: $shard, worker: $worker, payload: $payload}})"
     ).format(PERF_LABEL)
-
-    def worker(thread_id, begin, end):
+    proxy_port = proxy_ports[client_id % len(proxy_ports)]
+    driver = open_driver(proxy_port)
+    try:
         with driver.session(database=LOGICAL_GRAPH) as session:
             for op in range(begin, end):
                 shard = op % len(shard_keys)
@@ -257,19 +249,25 @@ def run_write_perf(driver, shard_keys, write_ops, thread_count):
                     _shard_key_=shard_keys[shard],
                     id=op,
                     shard=shard,
-                    worker=thread_id,
+                    worker=client_id,
                     payload="payload-{}".format(op % 97),
                 ).consume()
+    finally:
+        driver.close()
 
-    seconds = time_parallel(write_ops, thread_count, worker)
+
+def run_write_perf(proxy_ports, shard_keys, write_ops, client_num):
+    seconds = time_multiprocess(
+        write_ops, client_num, write_worker, (proxy_ports, shard_keys)
+    )
     return write_ops / seconds if seconds > 0 else 0.0
 
 
-def run_read_perf(driver, shard_keys, read_ops, thread_count):
+def read_worker(proxy_ports, shard_keys, client_id, begin, end):
     query = "MATCH (n:{}) RETURN count(n) AS count".format(PERF_LABEL)
-
-    def worker(thread_id, begin, end):
-        del thread_id
+    proxy_port = proxy_ports[client_id % len(proxy_ports)]
+    driver = open_driver(proxy_port)
+    try:
         with driver.session(database=LOGICAL_GRAPH) as session:
             for op in range(begin, end):
                 shard = op % len(shard_keys)
@@ -279,8 +277,14 @@ def run_read_perf(driver, shard_keys, read_ops, thread_count):
                 ).single()["count"]
                 if count < 0:
                     raise AssertionError("negative count from shard {}".format(shard))
+    finally:
+        driver.close()
 
-    seconds = time_parallel(read_ops, thread_count, worker)
+
+def run_read_perf(proxy_ports, shard_keys, read_ops, client_num):
+    seconds = time_multiprocess(
+        read_ops, client_num, read_worker, (proxy_ports, shard_keys)
+    )
     return read_ops / seconds if seconds > 0 else 0.0
 
 
@@ -315,7 +319,7 @@ def build_proxy_backend_spec(servers, shard_count):
 
 def start_cluster(args, work_dir, ports):
     server_ports = ports[:6]
-    proxy_port = ports[6]
+    proxy_ports = ports[6 : 6 + args.proxy_num]
     servers = []
     processes = []
     server_drivers = []
@@ -380,40 +384,44 @@ def start_cluster(args, work_dir, ports):
                 server_drivers, graph, args.leader_timeout
             )
 
-        proxy_dir = work_dir / "proxy"
-        proxy_dir.mkdir(parents=True, exist_ok=True)
-        proxy_command = [
-            str(args.build_dir / "lgraph_proxy"),
-            "--proxy_bolt_port={}".format(proxy_port),
-            "--proxy_bolt_io_thread_num={}".format(args.proxy_io_threads),
-            "--proxy_worker_thread_num={}".format(args.proxy_worker_threads),
-            "--proxy_backend_max_connections_per_backend={}".format(
-                args.backend_max_connections_per_backend
-            ),
-            "--proxy_backend_borrow_timeout_ms={}".format(
-                args.backend_borrow_timeout_ms
-            ),
-            "--proxy_logical_graph={}".format(LOGICAL_GRAPH),
-            "--proxy_physical_graph_prefix={}".format(PHYSICAL_GRAPH_PREFIX),
-            "--proxy_shard_count={}".format(args.shards),
-            "--proxy_shard_id_width={}".format(PHYSICAL_GRAPH_WIDTH),
-            "--proxy_raft_backends={}".format(
-                build_proxy_backend_spec(servers, args.shards)
-            ),
-            "--log_path={}".format(proxy_dir / "log"),
-            "--log_level={}".format(args.log_level),
-        ]
-        proxy_process = ManagedProcess(
-            "lgraph_proxy", proxy_command, args.build_dir, proxy_dir / "stdout.log"
-        )
-        proxy_process.start()
-        processes.append(proxy_process)
-        wait_for_port(proxy_port, proxy_process, args.startup_timeout)
+        for index, proxy_port in enumerate(proxy_ports):
+            proxy_dir = work_dir / "proxy{}".format(index + 1)
+            proxy_dir.mkdir(parents=True, exist_ok=True)
+            proxy_command = [
+                str(args.build_dir / "lgraph_proxy"),
+                "--proxy_bolt_port={}".format(proxy_port),
+                "--proxy_bolt_io_thread_num={}".format(args.proxy_io_threads),
+                "--proxy_worker_thread_num={}".format(args.proxy_worker_threads),
+                "--proxy_backend_max_connections_per_backend={}".format(
+                    args.backend_max_connections_per_backend
+                ),
+                "--proxy_backend_borrow_timeout_ms={}".format(
+                    args.backend_borrow_timeout_ms
+                ),
+                "--proxy_logical_graph={}".format(LOGICAL_GRAPH),
+                "--proxy_physical_graph_prefix={}".format(PHYSICAL_GRAPH_PREFIX),
+                "--proxy_shard_count={}".format(args.shards),
+                "--proxy_shard_id_width={}".format(PHYSICAL_GRAPH_WIDTH),
+                "--proxy_raft_backends={}".format(
+                    build_proxy_backend_spec(servers, args.shards)
+                ),
+                "--log_path={}".format(proxy_dir / "log"),
+                "--log_level={}".format(args.log_level),
+            ]
+            proxy_process = ManagedProcess(
+                "lgraph_proxy_{}".format(index + 1),
+                proxy_command,
+                args.build_dir,
+                proxy_dir / "stdout.log",
+            )
+            proxy_process.start()
+            processes.append(proxy_process)
+            wait_for_port(proxy_port, proxy_process, args.startup_timeout)
 
         return {
             "servers": servers,
             "server_drivers": server_drivers,
-            "proxy_port": proxy_port,
+            "proxy_ports": proxy_ports,
             "processes": processes,
             "leaders": leaders,
         }
@@ -428,8 +436,10 @@ def start_cluster(args, work_dir, ports):
 def validate_args(args):
     if args.shards < 2:
         raise ValueError("--shards must be at least 2")
-    if args.threads < 1:
-        raise ValueError("--threads must be at least 1")
+    if args.client_num < 1:
+        raise ValueError("--client-num must be at least 1")
+    if args.proxy_num < 1:
+        raise ValueError("--proxy-num must be at least 1")
     if args.write_ops < 0 or args.read_ops < 0 or args.warmup_ops < 0:
         raise ValueError("operation counts must be non-negative")
     if not (args.build_dir / "lgraph_server").exists():
@@ -441,8 +451,9 @@ def validate_args(args):
 def parse_args(argv):
     parser = argparse.ArgumentParser(
         description=(
-            "Start a 3-node raft cluster plus lgraph_proxy and run a neo4j "
-            "Python driver performance smoke test through the proxy."
+            "Start a 3-node raft cluster plus one or more lgraph_proxy processes "
+            "and run a neo4j Python driver multiprocess performance smoke test "
+            "through the proxy."
         )
     )
     parser.add_argument("--build-dir", type=Path, default=Path("build"))
@@ -452,7 +463,8 @@ def parse_args(argv):
     parser.add_argument("--warmup-ops", type=int, default=16)
     parser.add_argument("--write-ops", type=int, default=200)
     parser.add_argument("--read-ops", type=int, default=80)
-    parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--client-num", type=int, default=DEFAULT_CLIENT_NUM)
+    parser.add_argument("--proxy-num", type=int, default=DEFAULT_PROXY_NUM)
     parser.add_argument("--min-write-qps", type=float, default=0.0)
     parser.add_argument("--min-read-qps", type=float, default=0.0)
     parser.add_argument("--startup-timeout", type=float, default=30.0)
@@ -492,7 +504,7 @@ def main(argv):
         root_work_dir.mkdir(parents=True)
         remove_work_dir = not args.keep_data
 
-    ports = allocate_ports(7)
+    ports = allocate_ports(6 + args.proxy_num)
     cluster = None
     proxy_driver = None
     try:
@@ -501,14 +513,21 @@ def main(argv):
         setup_seconds = time.perf_counter() - setup_start
 
         shard_keys = find_shard_keys(args.shards)
-        proxy_driver = open_driver(cluster["proxy_port"])
+        proxy_driver = open_driver(cluster["proxy_ports"][0])
         run_warmup(proxy_driver, shard_keys, args.warmup_ops)
+        proxy_driver.close()
+        proxy_driver = None
 
         write_qps = run_write_perf(
-            proxy_driver, shard_keys, args.write_ops, args.threads
+            cluster["proxy_ports"], shard_keys, args.write_ops, args.client_num
         )
+        proxy_driver = open_driver(cluster["proxy_ports"][0])
         counts = verify_counts(proxy_driver, shard_keys, args.write_ops)
-        read_qps = run_read_perf(proxy_driver, shard_keys, args.read_ops, args.threads)
+        proxy_driver.close()
+        proxy_driver = None
+        read_qps = run_read_perf(
+            cluster["proxy_ports"], shard_keys, args.read_ops, args.client_num
+        )
 
         if args.min_write_qps > 0 and write_qps < args.min_write_qps:
             raise AssertionError(
@@ -524,7 +543,7 @@ def main(argv):
             )
 
         summary = {
-            "proxy_port": cluster["proxy_port"],
+            "proxy_ports": cluster["proxy_ports"],
             "servers": [
                 {
                     "node_id": index + 1,
@@ -537,7 +556,8 @@ def main(argv):
             "leaders": cluster["leaders"],
             "write_ops": args.write_ops,
             "read_ops": args.read_ops,
-            "threads": args.threads,
+            "client_num": args.client_num,
+            "proxy_num": args.proxy_num,
             "setup_seconds": round(setup_seconds, 3),
             "write_qps": round(write_qps, 2),
             "read_qps": round(read_qps, 2),
