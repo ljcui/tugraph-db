@@ -21,15 +21,16 @@
 #include <pthread.h>
 #include <spdlog/fmt/chrono.h>
 
+#include <atomic>
 #include <boost/algorithm/string.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/strand.hpp>
+#include <boost/asio/thread_pool.hpp>
 #include <cctype>
-#include <condition_variable>
-#include <deque>
+#include <cstddef>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <string_view>
-#include <thread>
 #include <utility>
 
 #include "bolt/connection.h"
@@ -147,61 +148,22 @@ namespace {
 
 class BoltWorkerPool {
  public:
-  explicit BoltWorkerPool(uint32_t thread_num) {
-    if (thread_num == 0) {
-      thread_num = 1;
-    }
-    for (uint32_t i = 0; i < thread_num; ++i) {
-      threads_.emplace_back([this, i]() { Run(i); });
-    }
-  }
+  using Executor = boost::asio::thread_pool::executor_type;
+  using Strand = boost::asio::strand<Executor>;
+
+  explicit BoltWorkerPool(uint32_t thread_num)
+      : pool_(thread_num == 0 ? 1 : thread_num) {}
 
   ~BoltWorkerPool() { Stop(); }
 
-  bool Post(std::function<void()> task) {
-    {
-      std::unique_lock<std::mutex> lock(mutex_);
-      if (stopped_) {
-        return false;
-      }
-      tasks_.push_back(std::move(task));
-    }
-    condition_.notify_one();
-    return true;
-  }
+  Strand MakeStrand() { return Strand(pool_.get_executor()); }
 
-  void Stop() {
-    {
-      std::unique_lock<std::mutex> lock(mutex_);
-      if (stopped_) {
-        return;
-      }
-      stopped_ = true;
-      tasks_.clear();
+  bool Post(const Strand& strand, std::function<void()> task) {
+    if (stopped_.load(std::memory_order_acquire)) {
+      return false;
     }
-    condition_.notify_all();
-    for (auto& thread : threads_) {
-      if (thread.joinable()) {
-        thread.join();
-      }
-    }
-  }
-
- private:
-  void Run(uint32_t worker_id) {
-    std::string name = "bolt-worker-" + std::to_string(worker_id);
-    pthread_setname_np(pthread_self(), name.c_str());
-    while (true) {
-      std::function<void()> task;
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        condition_.wait(lock, [this]() { return stopped_ || !tasks_.empty(); });
-        if (stopped_ && tasks_.empty()) {
-          return;
-        }
-        task = std::move(tasks_.front());
-        tasks_.pop_front();
-      }
+    boost::asio::post(strand, [this, task = std::move(task)]() mutable {
+      InitWorkerThread();
       try {
         task();
       } catch (const std::exception& e) {
@@ -209,19 +171,45 @@ class BoltWorkerPool {
       } catch (...) {
         LOG_ERROR("bolt worker task failed with unknown exception");
       }
-    }
+    });
+    return true;
   }
 
-  std::mutex mutex_;
-  std::condition_variable condition_;
-  std::deque<std::function<void()>> tasks_;
-  std::vector<std::thread> threads_;
-  bool stopped_ = false;
+  void Stop() {
+    bool expected = false;
+    if (!stopped_.compare_exchange_strong(expected, true,
+                                          std::memory_order_acq_rel)) {
+      return;
+    }
+    pool_.stop();
+    pool_.join();
+  }
+
+ private:
+  void InitWorkerThread() {
+    static thread_local bool initialized = false;
+    if (initialized) {
+      return;
+    }
+    initialized = true;
+
+    auto worker_id = next_worker_id_.fetch_add(1, std::memory_order_relaxed);
+    std::string name = "bolt-worker-" + std::to_string(worker_id);
+    pthread_setname_np(pthread_self(), name.c_str());
+  }
+
+  boost::asio::thread_pool pool_;
+  std::atomic<bool> stopped_{false};
+  std::atomic<uint32_t> next_worker_id_{0};
 };
 
-void ProcessSession(Galaxy* galaxy, std::shared_ptr<BoltConnection> conn,
-                    std::shared_ptr<BoltSession> session,
-                    std::weak_ptr<BoltWorkerPool> weak_pool);
+struct BoltSessionContext {
+  explicit BoltSessionContext(BoltWorkerPool::Strand strand)
+      : session(std::make_shared<BoltSession>()), strand(std::move(strand)) {}
+
+  std::shared_ptr<BoltSession> session;
+  BoltWorkerPool::Strand strand;
+};
 
 }  // namespace
 
@@ -624,92 +612,34 @@ static void ProcessBoltMessage(Galaxy* galaxy,
   }
 }
 
-static void ScheduleSession(Galaxy* galaxy,
-                            const std::shared_ptr<BoltWorkerPool>& pool,
-                            std::shared_ptr<BoltConnection> conn,
-                            std::shared_ptr<BoltSession> session) {
-  bool should_schedule = false;
-  {
-    std::unique_lock<std::mutex> lock(session->schedule_mutex);
-    if (!session->scheduled) {
-      session->scheduled = true;
-      should_schedule = true;
-    }
-  }
-  if (!should_schedule) {
-    return;
-  }
-
-  std::weak_ptr<BoltWorkerPool> weak_pool = pool;
-  if (!pool->Post([galaxy, conn, session, weak_pool]() mutable {
-        ProcessSession(galaxy, conn, session, weak_pool);
-      })) {
-    LOG_WARN("failed to schedule bolt session: worker pool is stopped");
-    conn->Close();
-  }
-}
-
-void ProcessSession(Galaxy* galaxy, std::shared_ptr<BoltConnection> conn,
-                    std::shared_ptr<BoltSession> session,
-                    std::weak_ptr<BoltWorkerPool> weak_pool) {
-  while (!conn->has_closed()) {
-    auto msg = session->msgs.TryPop();
-    if (!msg) {
-      break;
-    }
-    ProcessBoltMessage(galaxy, conn, session.get(), std::move(msg.value()));
-  }
-  if (conn->has_closed()) {
-    AbortActiveQuery(session.get());
-    return;
-  }
-
-  bool should_reschedule = false;
-  {
-    std::unique_lock<std::mutex> lock(session->schedule_mutex);
-    session->scheduled = false;
-    if (!conn->has_closed() && !session->msgs.Empty()) {
-      session->scheduled = true;
-      should_reschedule = true;
-    }
-  }
-
-  if (!should_reschedule) {
-    return;
-  }
-  auto pool = weak_pool.lock();
-  if (!pool) {
-    conn->Close();
-    return;
-  }
-  if (!pool->Post([galaxy, conn, session, weak_pool]() mutable {
-        ProcessSession(galaxy, conn, session, weak_pool);
-      })) {
-    LOG_WARN("failed to reschedule bolt session: worker pool is stopped");
-    conn->Close();
-  }
-}
-
-static std::shared_ptr<BoltSession> GetSession(BoltConnection& conn) {
+static std::shared_ptr<BoltSessionContext> GetSessionContext(
+    BoltConnection& conn) {
   auto ctx = conn.GetContextShared();
   if (!ctx) {
     return {};
   }
-  return std::static_pointer_cast<BoltSession>(ctx);
+  return std::static_pointer_cast<BoltSessionContext>(ctx);
 }
 
 static bool EnqueueSessionMessage(Galaxy* galaxy,
                                   const std::shared_ptr<BoltWorkerPool>& pool,
                                   BoltConnection& conn,
-                                  std::shared_ptr<BoltSession> session,
+                                  std::shared_ptr<BoltSessionContext> context,
                                   BoltMsgDetail msg) {
-  if (!session->msgs.Push(std::move(msg))) {
-    LOG_WARN("close bolt connection {}: pending message queue is full",
-             conn.conn_id());
+  if (!pool->Post(context->strand, [galaxy, conn = conn.shared_from_this(),
+                                    context, msg = std::move(msg)]() mutable {
+        if (!conn->has_closed()) {
+          ProcessBoltMessage(galaxy, conn, context->session.get(),
+                             std::move(msg));
+        }
+        if (conn->has_closed()) {
+          AbortActiveQuery(context->session.get());
+        }
+      })) {
+    LOG_WARN("failed to schedule bolt session: worker pool is stopped");
     conn.Close();
     return false;
   }
-  ScheduleSession(galaxy, pool, conn.shared_from_this(), std::move(session));
   return true;
 }
 
@@ -721,8 +651,8 @@ BoltHandler NewBoltHandler(Galaxy* galaxy, BoltHandlerOptions options) {
   return [galaxy, options, worker_pool](BoltConnection& conn, BoltMsg msg,
                                         std::vector<std::any> fields) {
     if (msg == BoltMsg::Hello) {
-      auto existing_session = GetSession(conn);
-      if (existing_session) {
+      auto existing_context = GetSessionContext(conn);
+      if (existing_context) {
         LOG_WARN("receive duplicate Bolt HELLO, close the connection");
         conn.Close();
         return;
@@ -779,8 +709,9 @@ BoltHandler NewBoltHandler(Galaxy* galaxy, BoltHandlerOptions options) {
       // Neo4j python client check that the returned server info must start
       // with 'Neo4j/'
       meta["server"] = "Neo4j/tugraph-db";
-      auto session = std::make_shared<BoltSession>(
-          options.max_pending_messages_per_connection);
+      auto context =
+          std::make_shared<BoltSessionContext>(worker_pool->MakeStrand());
+      auto session = context->session;
       auto user_agent_iter = val->find("user_agent");
       if (user_agent_iter != val->end()) {
         auto* user_agent = std::any_cast<std::string>(&user_agent_iter->second);
@@ -802,7 +733,7 @@ BoltHandler NewBoltHandler(Galaxy* galaxy, BoltHandlerOptions options) {
       }
       session->state = SessionState::READY;
       session->user = *principal;
-      conn.SetContext(session);
+      conn.SetContext(context);
       bolt::PackStream ps;
       ps.AppendSuccess(meta);
       conn.Respond(std::move(ps.MutableBuffer()));
@@ -813,17 +744,17 @@ BoltHandler NewBoltHandler(Galaxy* galaxy, BoltHandlerOptions options) {
                msg == BoltMsg::DiscardN || msg == BoltMsg::Begin ||
                msg == BoltMsg::Commit || msg == BoltMsg::Rollback ||
                msg == BoltMsg::Route || msg == BoltMsg::Reset) {
-      auto session = GetSession(conn);
-      if (!session) {
+      auto context = GetSessionContext(conn);
+      if (!context) {
         LOG_WARN("receive {} before Bolt HELLO, close the connection",
                  ToString(msg));
         conn.Close();
         return;
       }
       if (msg == BoltMsg::Reset) {
-        RequestSessionInterrupt(session.get());
+        RequestSessionInterrupt(context->session.get());
       }
-      EnqueueSessionMessage(galaxy, worker_pool, conn, std::move(session),
+      EnqueueSessionMessage(galaxy, worker_pool, conn, std::move(context),
                             {msg, std::move(fields)});
     } else {
       LOG_WARN("receive unknown bolt message: {}", ToString(msg));

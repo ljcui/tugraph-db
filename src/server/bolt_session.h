@@ -19,15 +19,12 @@
 #pragma once
 #include <any>
 #include <atomic>
-#include <boost/asio.hpp>
 #include <chrono>
 #include <cstddef>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <vector>
 
-#include "bolt/blocking_queue.h"
 #include "bolt/messages.h"
 #include "bolt/pack_stream.h"
 
@@ -74,9 +71,6 @@ struct ActiveBoltQuery {
 };
 
 struct BoltSession {
-  explicit BoltSession(size_t max_pending_messages = 0)
-      : msgs(max_pending_messages) {}
-
   void RequestInterrupt() { remaining_interrupts.fetch_add(1); }
 
   bool HasInterrupt() const { return remaining_interrupts.load() != 0; }
@@ -95,9 +89,6 @@ struct BoltSession {
   PackStream ps;
   std::string user;
   SessionState state;
-  BlockingQueue<BoltMsgDetail> msgs;
-  std::mutex schedule_mutex;
-  bool scheduled = false;
   std::atomic<size_t> remaining_interrupts = 0;
   bool utc_patch = false;
   bool python_driver = false;

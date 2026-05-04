@@ -137,7 +137,6 @@ void BoltConnection::Start() {
 
 void BoltConnection::Close() {
   Connection::Close();
-  context_.reset();
 }
 
 void BoltConnection::DoSend() {

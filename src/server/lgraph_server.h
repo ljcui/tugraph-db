@@ -33,7 +33,6 @@ struct LGraphServerOptions {
   uint32_t bolt_io_thread_num = 1;
   uint32_t bolt_worker_thread_num = 4;
   uint64_t max_bolt_connections = 10000;
-  uint64_t max_pending_bolt_messages_per_connection = 1024;
   GalaxyOptions galaxy_options;
 };
 

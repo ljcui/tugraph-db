@@ -49,9 +49,7 @@ bool LGraphServer::Start() {
           options_.max_bolt_connections,
           NewBoltHandler(
               galaxy_.get(),
-              {.worker_thread_num = options_.bolt_worker_thread_num,
-               .max_pending_messages_per_connection =
-                   options_.max_pending_bolt_messages_per_connection}))) {
+              {.worker_thread_num = options_.bolt_worker_thread_num}))) {
     raft_server_.Stop();
     galaxy_.reset();
     return false;

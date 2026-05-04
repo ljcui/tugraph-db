@@ -194,8 +194,6 @@ class LGraphDaemon : public Service {
          .bolt_io_thread_num = FLAGS_bolt_io_thread_num,
          .bolt_worker_thread_num = FLAGS_bolt_worker_thread_num,
          .max_bolt_connections = FLAGS_max_bolt_connections,
-         .max_pending_bolt_messages_per_connection =
-             FLAGS_max_pending_bolt_messages_per_connection,
          .galaxy_options = {
              .block_cache_size = FLAGS_graph_block_cache,
              .row_cache_size = FLAGS_graph_row_cache,

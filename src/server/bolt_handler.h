@@ -15,7 +15,6 @@
 #pragma once
 
 #include <any>
-#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -33,7 +32,6 @@ using BoltHandler =
 
 struct BoltHandlerOptions {
   uint32_t worker_thread_num = 4;
-  size_t max_pending_messages_per_connection = 1024;
 };
 
 BoltHandler NewBoltHandler(Galaxy* galaxy, BoltHandlerOptions options = {});
