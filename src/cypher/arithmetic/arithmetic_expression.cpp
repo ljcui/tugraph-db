@@ -1454,41 +1454,48 @@ Value BuiltinFunction::Coalesce(RTContext *ctx, const Record &record,
   return {};
 }
 
+namespace {
+
+double NumericVectorElement(const Value &value, const char *function_name) {
+  if (value.IsInteger()) {
+    return static_cast<double>(value.AsInteger());
+  }
+  if (value.IsFloat()) {
+    return static_cast<double>(value.AsFloat());
+  }
+  if (value.IsDouble()) {
+    return value.AsDouble();
+  }
+  THROW_CODE(CypherException, "Invalid argument of " +
+                                  std::string(function_name) +
+                                  ": vector element must be numeric");
+}
+
+Entry EvaluateNumericArrayEntry(RTContext *ctx, const Record &record,
+                                const ArithExprNode &node,
+                                const char *function_name) {
+  auto entry = node.Evaluate(ctx, record);
+  CHECK_CONSTANT(entry);
+  if (!entry.constant.IsArray()) {
+    THROW_CODE(CypherException, "Invalid argument of " +
+                                    std::string(function_name) +
+                                    ": expected List of numeric values");
+  }
+  return entry;
+}
+
+}  // namespace
+
 Value BuiltinFunction::VectorSimilarityCosine(
     RTContext *ctx, const Record &record,
     const std::vector<ArithExprNode> &args) {
   (void)ctx;
   if (args.size() != 3) CYPHER_ARGUMENT_ERROR();
 
-  auto eval_vec = [&](const ArithExprNode &node) -> std::vector<double> {
-    auto entry = node.Evaluate(ctx, record);
-    CHECK_CONSTANT(entry);
-    if (!entry.constant.IsArray()) {
-      THROW_CODE(CypherException, "Invalid argument of " +
-                                      std::string(__func__) +
-                                      ": expected List of numeric values");
-    }
-    const auto &arr = entry.constant.AsArray();
-    std::vector<double> v;
-    v.reserve(arr.size());
-    for (const auto &item : arr) {
-      if (item.IsInteger()) {
-        v.emplace_back(static_cast<double>(item.AsInteger()));
-      } else if (item.IsFloat()) {
-        v.emplace_back(static_cast<double>(item.AsFloat()));
-      } else if (item.IsDouble()) {
-        v.emplace_back(item.AsDouble());
-      } else {
-        THROW_CODE(CypherException, "Invalid argument of " +
-                                        std::string(__func__) +
-                                        ": vector element must be numeric");
-      }
-    }
-    return v;
-  };
-
-  auto v1 = eval_vec(args[1]);
-  auto v2 = eval_vec(args[2]);
+  auto e1 = EvaluateNumericArrayEntry(ctx, record, args[1], __func__);
+  auto e2 = EvaluateNumericArrayEntry(ctx, record, args[2], __func__);
+  const auto &v1 = e1.constant.AsArray();
+  const auto &v2 = e2.constant.AsArray();
   if (v1.size() != v2.size()) {
     THROW_CODE(CypherException, "Invalid argument of " + std::string(__func__) +
                                     ": vectors must have the same dimension");
@@ -1501,9 +1508,11 @@ Value BuiltinFunction::VectorSimilarityCosine(
   double n1 = 0.0;
   double n2 = 0.0;
   for (size_t i = 0; i < v1.size(); ++i) {
-    dot += v1[i] * v2[i];
-    n1 += v1[i] * v1[i];
-    n2 += v2[i] * v2[i];
+    double x = NumericVectorElement(v1[i], __func__);
+    double y = NumericVectorElement(v2[i], __func__);
+    dot += x * y;
+    n1 += x * x;
+    n2 += y * y;
   }
   if (n1 == 0.0 || n2 == 0.0) {
     return {};  // null if any vector is zero
@@ -1518,35 +1527,10 @@ Value BuiltinFunction::VectorDistanceL2(
   (void)ctx;
   if (args.size() != 3) CYPHER_ARGUMENT_ERROR();
 
-  auto eval_vec = [&](const ArithExprNode &node) -> std::vector<double> {
-    auto entry = node.Evaluate(ctx, record);
-    CHECK_CONSTANT(entry);
-    if (!entry.constant.IsArray()) {
-      THROW_CODE(CypherException, "Invalid argument of " +
-                                      std::string(__func__) +
-                                      ": expected List of numeric values");
-    }
-    const auto &arr = entry.constant.AsArray();
-    std::vector<double> v;
-    v.reserve(arr.size());
-    for (const auto &item : arr) {
-      if (item.IsInteger()) {
-        v.emplace_back(static_cast<double>(item.AsInteger()));
-      } else if (item.IsFloat()) {
-        v.emplace_back(static_cast<double>(item.AsFloat()));
-      } else if (item.IsDouble()) {
-        v.emplace_back(item.AsDouble());
-      } else {
-        THROW_CODE(CypherException, "Invalid argument of " +
-                                        std::string(__func__) +
-                                        ": vector element must be numeric");
-      }
-    }
-    return v;
-  };
-
-  auto v1 = eval_vec(args[1]);
-  auto v2 = eval_vec(args[2]);
+  auto e1 = EvaluateNumericArrayEntry(ctx, record, args[1], __func__);
+  auto e2 = EvaluateNumericArrayEntry(ctx, record, args[2], __func__);
+  const auto &v1 = e1.constant.AsArray();
+  const auto &v2 = e2.constant.AsArray();
   if (v1.size() != v2.size()) {
     THROW_CODE(CypherException, "Invalid argument of " + std::string(__func__) +
                                     ": vectors must have the same dimension");
@@ -1557,7 +1541,8 @@ Value BuiltinFunction::VectorDistanceL2(
 
   double sum_sq = 0.0;
   for (size_t i = 0; i < v1.size(); ++i) {
-    double d = v1[i] - v2[i];
+    double d = NumericVectorElement(v1[i], __func__) -
+               NumericVectorElement(v2[i], __func__);
     sum_sq += d * d;
   }
   double dist = std::sqrt(sum_sq);
@@ -1570,35 +1555,10 @@ Value BuiltinFunction::VectorSimilarityInnerProduct(
   (void)ctx;
   if (args.size() != 3) CYPHER_ARGUMENT_ERROR();
 
-  auto eval_vec = [&](const ArithExprNode &node) -> std::vector<double> {
-    auto entry = node.Evaluate(ctx, record);
-    CHECK_CONSTANT(entry);
-    if (!entry.constant.IsArray()) {
-      THROW_CODE(CypherException, "Invalid argument of " +
-                                      std::string(__func__) +
-                                      ": expected List of numeric values");
-    }
-    const auto &arr = entry.constant.AsArray();
-    std::vector<double> v;
-    v.reserve(arr.size());
-    for (const auto &item : arr) {
-      if (item.IsInteger()) {
-        v.emplace_back(static_cast<double>(item.AsInteger()));
-      } else if (item.IsFloat()) {
-        v.emplace_back(static_cast<double>(item.AsFloat()));
-      } else if (item.IsDouble()) {
-        v.emplace_back(item.AsDouble());
-      } else {
-        THROW_CODE(CypherException, "Invalid argument of " +
-                                        std::string(__func__) +
-                                        ": vector element must be numeric");
-      }
-    }
-    return v;
-  };
-
-  auto v1 = eval_vec(args[1]);
-  auto v2 = eval_vec(args[2]);
+  auto e1 = EvaluateNumericArrayEntry(ctx, record, args[1], __func__);
+  auto e2 = EvaluateNumericArrayEntry(ctx, record, args[2], __func__);
+  const auto &v1 = e1.constant.AsArray();
+  const auto &v2 = e2.constant.AsArray();
   if (v1.size() != v2.size()) {
     THROW_CODE(CypherException, "Invalid argument of " + std::string(__func__) +
                                     ": vectors must have the same dimension");
@@ -1609,7 +1569,8 @@ Value BuiltinFunction::VectorSimilarityInnerProduct(
 
   double dot = 0.0;
   for (size_t i = 0; i < v1.size(); ++i) {
-    dot += v1[i] * v2[i];
+    dot += NumericVectorElement(v1[i], __func__) *
+           NumericVectorElement(v2[i], __func__);
   }
   return Value(dot);
 }

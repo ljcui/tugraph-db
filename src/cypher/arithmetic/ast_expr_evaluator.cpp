@@ -16,8 +16,10 @@
 #include "cypher/arithmetic/ast_expr_evaluator.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
 
+#include "common/byte_utils.h"
 #include "common/exceptions.h"
 #include "cypher/arithmetic/arithmetic_expression.h"
 #include "cypher/cypher_types.h"
@@ -79,6 +81,26 @@ Entry EvalConstantExpr(RTContext* ctx, geax::frontend::Expr* expr) {
   Record empty_record(0, &empty_sym_tab);
   AstExprEvaluator evaluator(expr, &empty_sym_tab);
   return evaluator.Evaluate(ctx, &empty_record);
+}
+
+double NumericValueAsDouble(const Value& value, const char* function_name) {
+  if (value.IsInteger()) {
+    return static_cast<double>(value.AsInteger());
+  }
+  if (value.IsFloat()) {
+    return static_cast<double>(value.AsFloat());
+  }
+  if (value.IsDouble()) {
+    return value.AsDouble();
+  }
+  THROW_CODE(CypherException, "Invalid argument of " +
+                                  std::string(function_name) +
+                                  ": vector element must be numeric");
+}
+
+double RawFloatAt(const rocksdb::Slice& values, size_t i) {
+  return static_cast<double>(
+      common::ReadValue<float>(values.data() + i * sizeof(float)));
 }
 
 }  // namespace
@@ -347,12 +369,199 @@ std::any cypher::AstExprEvaluator::visit(geax::frontend::If* node) {
   NOT_SUPPORT_AND_THROW();
 }
 
+bool cypher::AstExprEvaluator::TryLoadCachedNumericVector(
+    geax::frontend::Expr* expr, NumericVectorView* view) {
+  auto param = dynamic_cast<geax::frontend::Param*>(expr);
+  if (param == nullptr) {
+    return false;
+  }
+  const auto& variable = param->name();
+  auto param_iter = ctx_->bolt_parameters_.find(variable);
+  if (param_iter == ctx_->bolt_parameters_.end()) {
+    THROW_CODE(CypherException, "Parameter {} missing value", variable);
+  }
+
+  auto iter = numeric_vector_cache_.find(param_iter->second);
+  if (iter == numeric_vector_cache_.end()) {
+    auto entry = EvalConstantExpr(ctx_, param_iter->second);
+    if (!entry.IsConstant() || !entry.constant.IsArray()) {
+      THROW_CODE(CypherException,
+                 "Invalid argument of vector function: expected List of "
+                 "numeric values");
+    }
+    CachedNumericVector cached;
+    const auto& values = entry.constant.AsArray();
+    cached.values.reserve(values.size());
+    for (const auto& item : values) {
+      double value = NumericValueAsDouble(item, "vector function");
+      cached.values.emplace_back(value);
+      cached.norm_sq += value * value;
+    }
+    iter = numeric_vector_cache_.emplace(param_iter->second, std::move(cached))
+               .first;
+  }
+  view->storage = NumericVectorStorage::DOUBLE;
+  view->doubles = &iter->second.values;
+  view->raw_floats = nullptr;
+  view->norm_sq = iter->second.norm_sq;
+  return true;
+}
+
+bool cypher::AstExprEvaluator::TryLoadNodeVectorField(
+    geax::frontend::Expr* expr, NumericVectorScratch* scratch,
+    NumericVectorView* view) {
+  auto field = dynamic_cast<geax::frontend::GetField*>(expr);
+  if (field == nullptr) {
+    return false;
+  }
+  const std::string& field_name = field->fieldName();
+  auto pid_iter = property_pid_cache_.find(field_name);
+  if (pid_iter == property_pid_cache_.end()) {
+    auto pid = ctx_->txn_->db()->id_generator().GetPid(field_name);
+    if (!pid.has_value()) {
+      return false;
+    }
+    pid_iter = property_pid_cache_.emplace(field_name, pid.value()).first;
+  }
+
+  auto ref = dynamic_cast<geax::frontend::Ref*>(field->expr());
+  Entry entry;
+  if (ref != nullptr) {
+    auto symbol = sym_tab_->symbols.find(ref->name());
+    if (symbol == sym_tab_->symbols.end() ||
+        record_->values.size() <= static_cast<size_t>(symbol->second.id)) {
+      return false;
+    }
+    entry = record_->values[symbol->second.id];
+  } else {
+    entry = std::any_cast<Entry>(field->expr()->accept(*this));
+  }
+  if (!entry.IsNode() || !entry.node->vertex_) {
+    return false;
+  }
+  if (!entry.node->vertex_->TryGetVectorPropertyRaw(
+          pid_iter->second, &scratch->raw_floats, &scratch->raw_dimensions)) {
+    return false;
+  }
+  view->storage = NumericVectorStorage::RAW_FLOAT;
+  view->doubles = nullptr;
+  view->raw_floats = &scratch->raw_floats;
+  view->raw_dimensions = scratch->raw_dimensions;
+  view->norm_sq = -1.0;
+  return true;
+}
+
+void cypher::AstExprEvaluator::LoadNumericVector(geax::frontend::Expr* expr,
+                                                 NumericVectorScratch* scratch,
+                                                 NumericVectorView* view) {
+  if (TryLoadCachedNumericVector(expr, view)) {
+    return;
+  }
+  if (TryLoadNodeVectorField(expr, scratch, view)) {
+    return;
+  }
+
+  auto entry = std::any_cast<Entry>(expr->accept(*this));
+  if (!entry.IsConstant() || !entry.constant.IsArray()) {
+    THROW_CODE(CypherException,
+               "Invalid argument of vector function: expected List of numeric "
+               "values");
+  }
+  const auto& values = entry.constant.AsArray();
+  scratch->doubles.clear();
+  scratch->doubles.reserve(values.size());
+  double norm_sq = 0.0;
+  for (const auto& item : values) {
+    double value = NumericValueAsDouble(item, "vector function");
+    scratch->doubles.emplace_back(value);
+    norm_sq += value * value;
+  }
+  view->storage = NumericVectorStorage::DOUBLE;
+  view->doubles = &scratch->doubles;
+  view->raw_floats = nullptr;
+  view->norm_sq = norm_sq;
+}
+
+bool cypher::AstExprEvaluator::TryEvaluateVectorSimilarityFunction(
+    geax::frontend::Function* node, const std::string& func_name,
+    Entry* result) {
+  bool is_cosine = func_name == "vector.similarity.cosine";
+  bool is_l2 = func_name == "vector.distance.l2";
+  bool is_inner_product = func_name == "vector.similarity.inner_product";
+  if (!is_cosine && !is_l2 && !is_inner_product) {
+    return false;
+  }
+  if (node->args().size() != 2) CYPHER_ARGUMENT_ERROR();
+
+  NumericVectorScratch lhs_scratch;
+  NumericVectorScratch rhs_scratch;
+  NumericVectorView lhs;
+  NumericVectorView rhs;
+  LoadNumericVector(node->args()[0], &lhs_scratch, &lhs);
+  LoadNumericVector(node->args()[1], &rhs_scratch, &rhs);
+  if (lhs.Size() != rhs.Size()) {
+    THROW_CODE(CypherException, "Invalid argument of " + func_name +
+                                    ": vectors must have the same dimension");
+  }
+  if (lhs.Size() == 0) {
+    *result = Entry(Value());
+    return true;
+  }
+
+  auto get = [](const NumericVectorView& vector, size_t i) -> double {
+    if (vector.storage == NumericVectorStorage::RAW_FLOAT) {
+      return RawFloatAt(*vector.raw_floats, i);
+    }
+    return (*vector.doubles)[i];
+  };
+
+  double lhs_norm_sq = lhs.norm_sq;
+  double rhs_norm_sq = rhs.norm_sq;
+  bool compute_lhs_norm = is_cosine && lhs_norm_sq < 0.0;
+  bool compute_rhs_norm = is_cosine && rhs_norm_sq < 0.0;
+  if (compute_lhs_norm) lhs_norm_sq = 0.0;
+  if (compute_rhs_norm) rhs_norm_sq = 0.0;
+
+  double dot = 0.0;
+  double l2_sum = 0.0;
+  for (size_t i = 0; i < lhs.Size(); ++i) {
+    double x = get(lhs, i);
+    double y = get(rhs, i);
+    if (is_l2) {
+      double diff = x - y;
+      l2_sum += diff * diff;
+    } else {
+      dot += x * y;
+      if (compute_lhs_norm) lhs_norm_sq += x * x;
+      if (compute_rhs_norm) rhs_norm_sq += y * y;
+    }
+  }
+
+  if (is_l2) {
+    *result = Entry(Value(std::sqrt(l2_sum)));
+  } else if (is_inner_product) {
+    *result = Entry(Value(dot));
+  } else {
+    if (lhs_norm_sq == 0.0 || rhs_norm_sq == 0.0) {
+      *result = Entry(Value());
+    } else {
+      *result =
+          Entry(Value(dot / (std::sqrt(lhs_norm_sq) * std::sqrt(rhs_norm_sq))));
+    }
+  }
+  return true;
+}
+
 std::any cypher::AstExprEvaluator::visit(geax::frontend::Function* node) {
   static std::unordered_map<std::string, BuiltinFunction::FUNC>
       ae_registered_funcs = ArithOpNode::RegisterFuncs();
   std::string func_name = node->name();
   std::transform(func_name.begin(), func_name.end(), func_name.begin(),
                  ::tolower);
+  Entry vector_result;
+  if (TryEvaluateVectorSimilarityFunction(node, func_name, &vector_result)) {
+    return vector_result;
+  }
   auto it = ae_registered_funcs.find(func_name);
   if (it != ae_registered_funcs.end()) {
     std::vector<ArithExprNode> args;

@@ -14,10 +14,15 @@
 
 #pragma once
 
+#include <rocksdb/slice.h>
+
 #include <any>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "cypher/arithmetic/agg_ctx.h"
 #include "cypher/arithmetic/ast_agg_expr_detector.h"
@@ -146,12 +151,56 @@ class AstExprEvaluator : public geax::frontend::AstExprNodeVisitorImpl {
   std::any reportError() override;
 
  private:
+  enum class NumericVectorStorage {
+    DOUBLE,
+    RAW_FLOAT,
+  };
+
+  struct NumericVectorScratch {
+    std::vector<double> doubles;
+    rocksdb::PinnableSlice raw_floats;
+    size_t raw_dimensions = 0;
+  };
+
+  struct NumericVectorView {
+    NumericVectorStorage storage = NumericVectorStorage::DOUBLE;
+    const std::vector<double>* doubles = nullptr;
+    const rocksdb::Slice* raw_floats = nullptr;
+    size_t raw_dimensions = 0;
+    double norm_sq = 0.0;
+
+    size_t Size() const {
+      if (storage == NumericVectorStorage::RAW_FLOAT) return raw_dimensions;
+      return doubles->size();
+    }
+  };
+
+  struct CachedNumericVector {
+    std::vector<double> values;
+    double norm_sq = 0.0;
+  };
+
+  bool TryEvaluateVectorSimilarityFunction(geax::frontend::Function* node,
+                                           const std::string& func_name,
+                                           Entry* result);
+  void LoadNumericVector(geax::frontend::Expr* expr,
+                         NumericVectorScratch* scratch,
+                         NumericVectorView* view);
+  bool TryLoadCachedNumericVector(geax::frontend::Expr* expr,
+                                  NumericVectorView* view);
+  bool TryLoadNodeVectorField(geax::frontend::Expr* expr,
+                              NumericVectorScratch* scratch,
+                              NumericVectorView* view);
+
   std::string error_msg_;
   geax::frontend::Expr* expr_;
   RTContext* ctx_;
   const SymbolTable* sym_tab_;
   const Record* record_;
   std::shared_ptr<AggCtx> agg_func_;
+  std::unordered_map<geax::frontend::Expr*, CachedNumericVector>
+      numeric_vector_cache_;
+  std::unordered_map<std::string, uint32_t> property_pid_cache_;
 };
 
 }  // namespace cypher

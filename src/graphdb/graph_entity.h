@@ -18,12 +18,16 @@
 
 #pragma once
 #include <boost/endian/conversion.hpp>
+#include <cstddef>
 #include <unordered_set>
 
 #include "common/byte_utils.h"
 #include "common/value.h"
 #include "edge_direction.h"
 
+namespace rocksdb {
+class PinnableSlice;
+}
 namespace txn {
 class Transaction;
 }
@@ -78,6 +82,8 @@ class Vertex : Property {
 
   Value GetProperty(const std::string&) override;
   Value GetProperty(uint32_t) override;
+  bool TryGetVectorPropertyRaw(uint32_t pid, rocksdb::PinnableSlice* out,
+                               size_t* dimensions);
   std::unordered_map<std::string, Value> GetAllProperty() override;
   int GetDegree(EdgeDirection direction);
   void SetProperties(
