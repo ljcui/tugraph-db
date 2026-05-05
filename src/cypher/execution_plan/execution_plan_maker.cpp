@@ -1360,7 +1360,9 @@ std::any ExecutionPlanMaker::visit(geax::frontend::Intersect*) {
   NOT_SUPPORT();
 }
 
-std::any ExecutionPlanMaker::visit(geax::frontend::Param*) { NOT_SUPPORT(); }
+std::any ExecutionPlanMaker::visit(geax::frontend::Param*) {
+  return geax::frontend::GEAXErrorCode::GEAX_SUCCEED;
+}
 
 std::any ExecutionPlanMaker::visit(geax::frontend::ShowProcessListStatement*) {
   NOT_SUPPORT();

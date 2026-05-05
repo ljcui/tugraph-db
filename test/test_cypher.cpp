@@ -19,6 +19,7 @@
 
 #include "common/value.h"
 #include "cypher/execution_plan/result_iterator.h"
+#include "geax-front-end/ast/Ast.h"
 #include "graphdb/graph_db.h"
 #include "test_util.h"
 
@@ -78,5 +79,57 @@ TEST(Cypher, fulltext_query_rejects_non_positive_top_n) {
                    "CALL db.index.fulltext.queryNodes('ft_index', 'alice', -1) "
                    "YIELD node RETURN node"),
       ReminderException, "top_n should be greater than 0");
+  txn->Rollback();
+}
+
+TEST(Cypher, ast_cache_keeps_bolt_parameters_runtime_bound) {
+  fs::remove_all(testdb);
+  auto graphDB = GraphDB::Open(testdb, testutil::NewGraphDBOptions());
+  cypher::RTContext rtx;
+
+  auto write_txn = graphDB->BeginTransaction();
+  write_txn->CreateVertex({"AstCacheParam"}, {{"id", Value::Integer(1)},
+                                              {"score", Value::Integer(10)}});
+  write_txn->CreateVertex({"AstCacheParam"}, {{"id", Value::Integer(2)},
+                                              {"score", Value::Integer(20)}});
+  write_txn->Commit();
+
+  auto txn = graphDB->BeginTransaction();
+  auto set_params = [&](int64_t id, int64_t offset) {
+    rtx.bolt_parameters_.clear();
+    auto id_expr = rtx.obj_alloc_.allocate<geax::frontend::VInt>();
+    id_expr->setVal(id);
+    rtx.bolt_parameters_.emplace("$id", id_expr);
+    auto offset_expr = rtx.obj_alloc_.allocate<geax::frontend::VInt>();
+    offset_expr->setVal(offset);
+    rtx.bolt_parameters_.emplace("$offset", offset_expr);
+  };
+
+  const std::string query =
+      "MATCH (n:AstCacheParam) WHERE n.id = $id "
+      "WITH n, $offset AS o "
+      "RETURN n.id AS id, n.score AS score, "
+      "(n.score + o) AS total, (n.id + o) AS mixed";
+
+  set_params(1, 10);
+  auto iter = txn->Execute(&rtx, query);
+  ASSERT_TRUE(iter->Valid());
+  ASSERT_EQ(iter->GetRecord().size(), 4);
+  EXPECT_EQ(iter->GetRecord()[0].ToString(), "1");
+  EXPECT_EQ(iter->GetRecord()[1].ToString(), "10");
+  EXPECT_EQ(iter->GetRecord()[2].ToString(), "20");
+  EXPECT_EQ(iter->GetRecord()[3].ToString(), "11");
+  iter->Consume();
+
+  set_params(2, 20);
+  iter = txn->Execute(&rtx, query);
+  ASSERT_TRUE(iter->Valid());
+  ASSERT_EQ(iter->GetRecord().size(), 4);
+  EXPECT_EQ(iter->GetRecord()[0].ToString(), "2");
+  EXPECT_EQ(iter->GetRecord()[1].ToString(), "20");
+  EXPECT_EQ(iter->GetRecord()[2].ToString(), "40");
+  EXPECT_EQ(iter->GetRecord()[3].ToString(), "22");
+  iter->Consume();
+
   txn->Rollback();
 }

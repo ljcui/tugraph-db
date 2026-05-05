@@ -14,41 +14,24 @@
 
 #include "result_iterator.h"
 
-#include <antlr4-runtime/antlr4-runtime.h>
-
 #include "common/logger.h"
-#include "cypher/parser/cypher_base_visitor_v2.h"
-#include "cypher/parser/cypher_error_listener.h"
-#include "cypher/parser/generated/LcypherLexer.h"
-#include "cypher/parser/generated/LcypherParser.h"
-#include "cypher/rewriter/GenAnonymousAliasRewriter.h"
-#include "cypher/rewriter/MultiPathPatternRewriter.h"
-#include "cypher/rewriter/StandaloneCallYieldRewriter.h"
 
 ResultIterator::ResultIterator(void* ctx, txn::Transaction* txn,
                                std::string cypher)
     : Iterator(txn), ctx_((cypher::RTContext*)ctx), cypher_(std::move(cypher)) {
-  antlr4::ANTLRInputStream input(cypher_);
-  parser::LcypherLexer lexer(&input);
-  antlr4::CommonTokenStream tokens(&lexer);
-  parser::LcypherParser parser(&tokens);
-  parser.addErrorListener(&parser::CypherErrorListener::INSTANCE);
-  parser::CypherBaseVisitorV2 visitor(objAlloc_, parser.oC_Cypher(), ctx_);
-  geax::frontend::AstNode* node = visitor.result();
-  cypher::StandaloneCallYieldRewriter standalone_call_yield_rewriter(objAlloc_);
-  node->accept(standalone_call_yield_rewriter);
-  cypher::GenAnonymousAliasRewriter gen_anonymous_alias_rewriter;
-  node->accept(gen_anonymous_alias_rewriter);
-  cypher::MultiPathPatternRewriter multi_path_pattern_rewriter(objAlloc_);
-  node->accept(multi_path_pattern_rewriter);
+  cached_ast_ = cypher::AstCache::Instance().Get(cypher_);
+  if (!cached_ast_) {
+    cached_ast_ = cypher::ParseAndRewriteAst(cypher_);
+    cypher::AstCache::Instance().Put(cypher_, cached_ast_);
+  }
   ctx_->txn_ = txn;
-  auto ret = execution_plan_v2_.Build(node, ctx_);
+  auto ret = execution_plan_v2_.Build(cached_ast_->ast, ctx_);
   if (ret != geax::frontend::GEAXErrorCode::GEAX_SUCCEED) {
     LOG_ERROR("Failed to build execution plan, ret:{}, msg:{}",
               geax::frontend::ToString(ret), execution_plan_v2_.ErrorMsg());
     THROW_CODE(CypherException, "Failed to build execution plan");
   }
-  if (visitor.CommandType() != parser::CmdType::QUERY) {
+  if (cached_ast_->command_type != parser::CmdType::QUERY) {
     header_.emplace_back("@plan");
     common::Result res;
     res.type = common::ResultType::Value;

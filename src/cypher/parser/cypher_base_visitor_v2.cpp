@@ -115,13 +115,13 @@ std::string CypherBaseVisitorV2::GetFullText(
 CypherBaseVisitorV2::CypherBaseVisitorV2(
     geax::common::ObjectArenaAllocator &objAlloc, antlr4::tree::ParseTree *tree,
     cypher::RTContext *cypher_ctx)
-    : cypher_ctx_(cypher_ctx),
-      objAlloc_(objAlloc),
+    : objAlloc_(objAlloc),
       node_(ALLOC_GEAOBJECT(geax::frontend::NormalTransaction)),
       anonymous_idx_(0),
       visit_types_(),
       path_chain_(nullptr),
       filter_in_with_clause_(nullptr) {
+  (void)cypher_ctx;
   tree->accept(this);
 }
 
@@ -2110,12 +2110,9 @@ std::any CypherBaseVisitorV2::visitOC_MapLiteral(
 
 std::any CypherBaseVisitorV2::visitOC_Parameter(
     LcypherParser::OC_ParameterContext *ctx) {
-  std::string parameter = ctx->getText();
-  auto iter = cypher_ctx_->bolt_parameters_.find(parameter);
-  if (iter == cypher_ctx_->bolt_parameters_.end()) {
-    THROW_CODE(CypherException, "Parameter {} missing value", parameter);
-  }
-  return iter->second;
+  auto param = ALLOC_GEAOBJECT(geax::frontend::Param);
+  param->setName(ctx->getText());
+  return static_cast<geax::frontend::Expr *>(param);
 }
 
 std::any CypherBaseVisitorV2::visitOC_PropertyExpression(

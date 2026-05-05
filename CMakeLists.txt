@@ -314,6 +314,7 @@ set(CYPHER_SOURCES
     src/cypher/execution_plan/ops/op_var_len_expand.cpp
     src/cypher/execution_plan/ops/op_sort.cpp
     src/cypher/execution_plan/ops/op_union.cpp
+    src/cypher/execution_plan/ast_cache.cpp
     src/cypher/execution_plan/result_iterator.cpp
     src/cypher/arithmetic/arithmetic_expression.cpp
     src/cypher/arithmetic/ast_expr_evaluator.cpp

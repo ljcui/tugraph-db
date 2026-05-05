@@ -16,6 +16,7 @@
 #include <string>
 
 #include "common/result.h"
+#include "cypher/execution_plan/ast_cache.h"
 #include "cypher/execution_plan/execution_plan.h"
 #include "geax-front-end/ast/AstNode.h"
 #include "geax-front-end/common/ObjectAllocator.h"
@@ -49,7 +50,7 @@ class ResultIterator : public graphdb::Iterator {
   void ReFillRecord();
   cypher::RTContext* ctx_ = nullptr;
   std::string cypher_;
-  geax::common::ObjectArenaAllocator objAlloc_;
+  std::shared_ptr<cypher::CachedAst> cached_ast_;
   cypher::ExecutionPlan execution_plan_v2_;
   cypher::OpBase* root_ = nullptr;
   cypher::OpBase::OpResult res_ = cypher::OpBase::OpResult::OP_ERR;

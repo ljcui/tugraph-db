@@ -82,7 +82,6 @@ class VisitGuard {
  */
 class CypherBaseVisitorV2 : public LcypherVisitor {
   std::string error_msg_;
-  cypher::RTContext *cypher_ctx_;
   geax::common::ObjectArenaAllocator &objAlloc_;
   geax::frontend::AstNode *node_;
   size_t anonymous_idx_;

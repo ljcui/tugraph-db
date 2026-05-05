@@ -72,6 +72,17 @@ const std::string& getNodeOrEdgeName(geax::frontend::AstNode* ast_node) {
 
 namespace cypher {
 
+namespace {
+
+Entry EvalConstantExpr(RTContext* ctx, geax::frontend::Expr* expr) {
+  SymbolTable empty_sym_tab;
+  Record empty_record(0, &empty_sym_tab);
+  AstExprEvaluator evaluator(expr, &empty_sym_tab);
+  return evaluator.Evaluate(ctx, &empty_record);
+}
+
+}  // namespace
+
 static Value And(const Value& x, const Value& y) {
   Value ret;
   if (x.IsBool() && y.IsBool()) {
@@ -635,15 +646,16 @@ std::any cypher::AstExprEvaluator::visit(geax::frontend::Ref* node) {
 }
 
 std::any cypher::AstExprEvaluator::visit(geax::frontend::Param* node) {
-  auto& variabel = node->name();
-  auto it = sym_tab_->symbols.find(variabel);
-  if (it == sym_tab_->symbols.end()) {
-    THROW_CODE(CypherException, "Parameter not defined: " + variabel);
+  const auto& variable = node->name();
+  auto it = ctx_->bolt_parameters_.find(variable);
+  if (it == ctx_->bolt_parameters_.end()) {
+    THROW_CODE(CypherException, "Parameter {} missing value", variable);
   }
-  if (record_->values[it->second.id].type == Entry::UNKNOWN) {
-    THROW_CODE(CypherException, "Undefined parameter: " + variabel);
+  auto entry = EvalConstantExpr(ctx_, it->second);
+  if (!entry.IsConstant()) {
+    THROW_CODE(CypherException, "Parameter {} is not a scalar value", variable);
   }
-  return record_->values[it->second.id];
+  return entry;
 }
 
 std::any cypher::AstExprEvaluator::visit(geax::frontend::SingleLabel* node) {
