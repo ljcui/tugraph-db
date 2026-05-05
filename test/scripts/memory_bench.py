@@ -375,9 +375,11 @@ def _do_search_vector(bench: TuGraphBench) -> Optional[float]:
         return None
 
 
-def _do_get(bench: TuGraphBench, node_id: str) -> Optional[float]:
+def _do_get(bench: TuGraphBench, node_id: str, user_id: str) -> Optional[float]:
     try:
-        record, ms = _timed(lambda: bench.single(bench.get_query, id=node_id))
+        record, ms = _timed(
+            lambda: bench.single(bench.get_query, id=node_id, user_id=user_id)
+        )
         if record is not None:
             return ms
         print("[get] empty result: {}".format(node_id))
@@ -402,7 +404,11 @@ def _write_process(args: argparse.Namespace, begin: int, end: int):
             else:
                 latencies.append(ms)
                 if node_id:
-                    ids.append(node_id)
+                    ids.append(
+                        "{}\t{}".format(
+                            node_id, _bench_user_id(DEFAULT_USER_PREFIX, user_idx)
+                        )
+                    )
     finally:
         bench.close()
     return latencies, errors, ids
@@ -425,7 +431,10 @@ def _read_process(args: argparse.Namespace, begin: int, end: int):
 
 
 def _get_process(
-    args: argparse.Namespace, begin: int, end: int, existing_ids: List[str]
+    args: argparse.Namespace,
+    begin: int,
+    end: int,
+    existing_ids: List[Tuple[str, str]],
 ):
     bench = TuGraphBench(args)
     rng = random.Random(_random_seed())
@@ -433,7 +442,8 @@ def _get_process(
     errors = 0
     try:
         for _ in range(begin, end):
-            ms = _do_get(bench, rng.choice(existing_ids))
+            node_id, user_id = rng.choice(existing_ids)
+            ms = _do_get(bench, node_id, user_id)
             if ms is None:
                 errors += 1
             else:
@@ -464,7 +474,11 @@ def bench_write(args: argparse.Namespace) -> None:
 
     with open(args.ids_file, "w", encoding="utf-8") as fp:
         fp.write("\n".join(written_ids))
-    print("[write] saved {} ids to {}".format(len(written_ids), args.ids_file))
+    print(
+        "[write] saved {} id/user_id pairs to {}".format(
+            len(written_ids), args.ids_file
+        )
+    )
 
 
 def bench_read(args: argparse.Namespace) -> None:
@@ -494,11 +508,26 @@ def bench_get(args: argparse.Namespace) -> None:
         raise FileNotFoundError(
             "{} does not exist; run write first".format(args.ids_file)
         )
+    existing_ids: List[Tuple[str, str]] = []
     with open(args.ids_file, "r", encoding="utf-8") as fp:
-        existing_ids = [line.strip() for line in fp if line.strip()]
+        for line in fp:
+            if not line.strip():
+                continue
+            parts = line.rstrip("\n").split("\t", 1)
+            if len(parts) != 2:
+                raise RuntimeError(
+                    "{} must contain '<id>\\t<user_id>' lines; run write again".format(
+                        args.ids_file
+                    )
+                )
+            existing_ids.append((parts[0], parts[1]))
     if not existing_ids:
         raise RuntimeError("{} is empty; run write first".format(args.ids_file))
-    print("[GET] loaded {} ids from {}".format(len(existing_ids), args.ids_file))
+    print(
+        "[GET] loaded {} id/user_id pairs from {}".format(
+            len(existing_ids), args.ids_file
+        )
+    )
 
     start = time.perf_counter()
     worker_results = _run_process_pool(args, args.total, _get_process, existing_ids)

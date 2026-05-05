@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -527,6 +527,36 @@ def remove_pid_file(pid_file: Path) -> None:
         pass
 
 
+def wait_for_process_exit(pid: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not process_running(pid):
+            return True
+        time.sleep(0.1)
+    return not process_running(pid)
+
+
+def terminate_process(pid: int, name: str) -> None:
+    if not process_running(pid):
+        return
+
+    print("stopping {} pid={}".format(name, pid), flush=True)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    if wait_for_process_exit(pid, 10.0):
+        return
+
+    print("force stopping {} pid={}".format(name, pid), flush=True)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    wait_for_process_exit(pid, 2.0)
+
+
 def stop_one(pid_file: Path, name: str) -> None:
     pid = read_pid(pid_file)
     if pid is None:
@@ -536,26 +566,51 @@ def stop_one(pid_file: Path, name: str) -> None:
         remove_pid_file(pid_file)
         return
 
-    print("stopping {} pid={}".format(name, pid), flush=True)
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        remove_pid_file(pid_file)
-        return
-
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline:
-        if not process_running(pid):
-            remove_pid_file(pid_file)
-            return
-        time.sleep(0.1)
-
-    print("force stopping {} pid={}".format(name, pid), flush=True)
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    terminate_process(pid, name)
     remove_pid_file(pid_file)
+
+
+def read_process_cmdline(pid: int) -> List[str]:
+    try:
+        raw = Path("/proc").joinpath(str(pid), "cmdline").read_bytes()
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+        return []
+    return [
+        part.decode("utf-8", errors="replace")
+        for part in raw.split(b"\0")
+        if part
+    ]
+
+
+def is_lgraph_process(cmdline: List[str]) -> bool:
+    if not cmdline:
+        return False
+    executable = Path(cmdline[0]).name
+    return executable in {"lgraph_server", "lgraph_proxy"}
+
+
+def find_lgraph_processes() -> List[Tuple[int, str]]:
+    proc = Path("/proc")
+    processes: List[Tuple[int, str]] = []
+    for child in proc.iterdir():
+        if not child.name.isdigit():
+            continue
+        pid = int(child.name)
+        if pid == os.getpid():
+            continue
+        cmdline = read_process_cmdline(pid)
+        if is_lgraph_process(cmdline):
+            processes.append((pid, Path(cmdline[0]).name))
+    return processes
+
+
+def stop_remaining_lgraph_processes() -> None:
+    processes = find_lgraph_processes()
+    if not processes:
+        return
+    processes.sort(key=lambda item: 0 if item[1] == "lgraph_proxy" else 1)
+    for pid, executable in processes:
+        terminate_process(pid, "{} remaining".format(executable))
 
 
 def stop_cluster() -> None:
@@ -563,6 +618,7 @@ def stop_cluster() -> None:
     stop_one(pid_file_for_server(3), "lgraph_server 3")
     stop_one(pid_file_for_server(2), "lgraph_server 2")
     stop_one(pid_file_for_server(1), "lgraph_server 1")
+    stop_remaining_lgraph_processes()
 
 
 def status_one(pid_file: Path, name: str, detail: str) -> None:
