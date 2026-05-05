@@ -33,7 +33,7 @@ AUTH_PASSWORD = "73@TuGraph"
 LOGICAL_GRAPH = "default"
 PHYSICAL_GRAPH_PREFIX = "default_s"
 PHYSICAL_GRAPH_WIDTH = 2
-SHARD_COUNT = 16
+SHARD_COUNT = 8
 
 PROXY_PORT = 7687
 SERVER_BOLT_PORTS = [17687, 17688, 17689]
@@ -47,8 +47,8 @@ SERVER_RAFT_LOG_BLOCK_CACHE = 1024 * 1024 * 1024
 SERVER_RAFT_SCHEDULER_SHARDS = 8
 SERVER_ASSISTANT_THREADS = 4
 
-PROXY_BOLT_IO_THREADS = 4
-PROXY_WORKER_THREADS = 16
+PROXY_BOLT_IO_THREADS = 2
+PROXY_WORKER_THREADS = 8
 PROXY_MAX_CONNECTIONS = 20000
 PROXY_BACKEND_MAX_CONNECTIONS_PER_BACKEND = 256
 PROXY_BACKEND_BORROW_TIMEOUT_MS = 5000
@@ -272,6 +272,18 @@ def graph_name(shard_id: int) -> str:
     return "{}{:0{}d}".format(PHYSICAL_GRAPH_PREFIX, shard_id, PHYSICAL_GRAPH_WIDTH)
 
 
+def open_bolt_driver(port: int, connection_timeout: float = 5.0):
+    from neo4j import GraphDatabase, basic_auth
+
+    return GraphDatabase.driver(
+        "bolt://{}:{}".format(HOST, port),
+        auth=basic_auth(AUTH_USER, AUTH_PASSWORD),
+        encrypted=False,
+        connection_timeout=connection_timeout,
+        max_connection_lifetime=60,
+    )
+
+
 def ignore_exists(exc: BaseException) -> bool:
     message = str(exc).lower()
     return (
@@ -282,17 +294,6 @@ def ignore_exists(exc: BaseException) -> bool:
 
 
 def create_raft_graphs_and_indexes() -> None:
-    from neo4j import GraphDatabase, basic_auth
-
-    def open_driver(port: int):
-        return GraphDatabase.driver(
-            "bolt://{}:{}".format(HOST, port),
-            auth=basic_auth(AUTH_USER, AUTH_PASSWORD),
-            encrypted=False,
-            connection_timeout=5,
-            max_connection_lifetime=60,
-        )
-
     def consume(driver, database: str, query: str, **params: Any) -> None:
         with driver.session(database=database) as session:
             session.run(query, **params).consume()
@@ -438,7 +439,7 @@ def create_raft_graphs_and_indexes() -> None:
             [name for name, _, _ in NODE_INDEXES] + [FULLTEXT_INDEX[0]],
         )
 
-    drivers = [open_driver(port) for port in SERVER_BOLT_PORTS]
+    drivers = [open_bolt_driver(port) for port in SERVER_BOLT_PORTS]
     try:
         for driver in drivers:
             ok = single(driver, LOGICAL_GRAPH, "RETURN 1 AS ok", "ok")
@@ -629,6 +630,97 @@ def status_one(pid_file: Path, name: str, detail: str) -> None:
         print("{}: stopped {}".format(name, detail))
 
 
+def running_server_ports() -> List[int]:
+    ports = []
+    for index, port in enumerate(SERVER_BOLT_PORTS, 1):
+        pid = read_pid(pid_file_for_server(index))
+        if pid is not None and process_running(pid) and port_open(port):
+            ports.append(port)
+    return ports
+
+
+def query_raft_leader(drivers, graph: str) -> int:
+    query = (
+        "CALL dbms.graph.getRaftNodeInfos($graph_name) "
+        "YIELD node_id, is_leader "
+        "RETURN node_id, is_leader"
+    )
+    last_error: Optional[BaseException] = None
+    last_leaders: Optional[List[int]] = None
+    for driver in drivers:
+        try:
+            with driver.session(database=LOGICAL_GRAPH) as session:
+                rows = list(session.run(query, graph_name=graph))
+            leaders = [int(row["node_id"]) for row in rows if row["is_leader"]]
+            if len(leaders) == 1:
+                return leaders[0]
+            last_leaders = leaders
+        except Exception as exc:
+            last_error = exc
+
+    if last_leaders is None:
+        raise RuntimeError("query failed: {}".format(last_error))
+    if not last_leaders:
+        raise RuntimeError("no leader reported")
+    raise RuntimeError("multiple leaders reported: {}".format(last_leaders))
+
+
+def get_leader_distribution() -> Tuple[Dict[int, List[str]], Dict[str, str]]:
+    ports = running_server_ports()
+    if not ports:
+        raise RuntimeError("no reachable lgraph_server bolt ports")
+
+    distribution: Dict[int, List[str]] = {
+        index: [] for index in range(1, len(SERVER_BOLT_PORTS) + 1)
+    }
+    unavailable: Dict[str, str] = {}
+    drivers = [open_bolt_driver(port, connection_timeout=2.0) for port in ports]
+    try:
+        for shard_id in range(SHARD_COUNT):
+            graph = graph_name(shard_id)
+            try:
+                leader = query_raft_leader(drivers, graph)
+            except Exception as exc:
+                unavailable[graph] = str(exc)
+                continue
+            if leader in distribution:
+                distribution[leader].append(graph)
+            else:
+                unavailable[graph] = "leader node {} is outside configured servers".format(
+                    leader
+                )
+    finally:
+        for driver in drivers:
+            driver.close()
+
+    return distribution, unavailable
+
+
+def print_leader_distribution() -> None:
+    try:
+        distribution, unavailable = get_leader_distribution()
+    except Exception as exc:
+        print("raft leader distribution: unavailable: {}".format(exc))
+        return
+
+    print("raft leader distribution:")
+    for index in range(1, len(SERVER_BOLT_PORTS) + 1):
+        graphs = distribution[index]
+        print(
+            "  node {} bolt={} raft={} leaders={}: {}".format(
+                index,
+                SERVER_BOLT_PORTS[index - 1],
+                SERVER_RAFT_PORTS[index - 1],
+                len(graphs),
+                ", ".join(graphs) if graphs else "-",
+            )
+        )
+    if unavailable:
+        print("  unavailable={}:".format(len(unavailable)))
+        for graph in sorted(unavailable):
+            print("    {}: {}".format(graph, unavailable[graph]))
+
+
 def status_cluster() -> None:
     status_one(
         pid_file_for_server(1),
@@ -646,6 +738,7 @@ def status_cluster() -> None:
         "bolt={} raft={}".format(SERVER_BOLT_PORTS[2], SERVER_RAFT_PORTS[2]),
     )
     status_one(pid_file_for_proxy(), "lgraph_proxy", "bolt={}".format(PROXY_PORT))
+    print_leader_distribution()
     print("work dir: {}".format(WORK_DIR))
 
 
