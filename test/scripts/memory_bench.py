@@ -328,7 +328,7 @@ class TuGraphBench:
         return (
             "CALL db.index.queryNodes($index_name, $user_id) YIELD node\n"
             "        WITH node AS n, vector.similarity.cosine("
-            "n.{vector_property}, ${vector_property}) AS score\n"
+            "node.{vector_property}, ${vector_property}) AS score\n"
             "        RETURN n, score\n"
             "        ORDER BY score DESC\n"
             "        LIMIT 10"

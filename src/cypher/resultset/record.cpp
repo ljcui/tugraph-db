@@ -57,8 +57,6 @@ Value Entry::GetEntityField(RTContext* ctx, const std::string& fd) {
                      "Only support for map & time-related type");
       }
     }
-    case NODE_SNAPSHOT:
-    case RELP_SNAPSHOT:
     default:
       CYPHER_TODO();
   }

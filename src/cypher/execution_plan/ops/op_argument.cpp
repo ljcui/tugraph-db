@@ -69,7 +69,6 @@ OpBase::OpResult Argument::RealConsume(RTContext *ctx) {
   if (state == StreamDepleted) return OP_DEPLETED;
   for (auto &a : args_) {
     auto &input = (*input_record_)->values[a.rec_idx];
-    int64_t vid = -1;
     switch (input.type) {
       case Entry::CONSTANT:
         record->values[a.rec_idx].constant = input.constant;
@@ -80,18 +79,6 @@ OpBase::OpResult Argument::RealConsume(RTContext *ctx) {
         if (!input.node->vertex_) CYPHER_TODO();
         record->values[a.rec_idx].node->vertex_ = input.node->vertex_;
         // record->values[a.rec_idx].node->PushVid(input.node->PullVid());
-        break;
-      case Entry::NODE_SNAPSHOT:
-        CYPHER_TODO();
-        /*if (vid < 0) {
-            // TODO(anyone) use integer directly
-            // extract vid from snapshot, "V[2020]"
-            CYPHER_THROW_ASSERT(input.constant.IsString());
-            const auto &str = input.constant.scalar.string();
-            vid = std::stoi(str.substr(2, str.size() - 3));
-        }
-        if (vid < 0) CYPHER_TODO();
-        record->values[a.rec_idx].node->PushVid(vid);*/
         break;
       case Entry::RELATIONSHIP:
         if (!input.relationship->edge_) CYPHER_TODO();

@@ -446,13 +446,9 @@ struct ArithOperandNode {
       switch (entry.type) {
         case Entry::NODE:
         case Entry::RELATIONSHIP:
-        case Entry::NODE_SNAPSHOT:
-        case Entry::RELP_SNAPSHOT:
-          CYPHER_TODO();
           /*if (!variadic.entity_prop.empty()) {
-              return Entry(
-                  cypher::FieldData(entry.GetEntityField(ctx,
-          variadic.entity_prop)));
+            return Entry(cypher::FieldData(entry.GetEntityField(
+                ctx, variadic.entity_prop)));
           }*/
           return entry;
         case Entry::VAR_LEN_RELP:

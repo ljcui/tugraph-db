@@ -49,8 +49,6 @@ struct Entry {
     RELATIONSHIP,
     VAR_LEN_RELP,
     HEADER,  // TODO(anyone) useless?
-    NODE_SNAPSHOT,
-    RELP_SNAPSHOT,
     PATH,
   } type;
 
@@ -79,9 +77,6 @@ struct Entry {
         return !relationship || !relationship->edge_;
       case VAR_LEN_RELP:
         return !relationship || relationship->path_.Empty();
-      case NODE_SNAPSHOT:
-      case RELP_SNAPSHOT:
-        CYPHER_TODO();
       default:
         return false;
     }
@@ -151,8 +146,6 @@ struct Entry {
                (type == rhs.type && relationship && rhs.relationship &&
                 relationship->edge_ == rhs.relationship->edge_);
       case VAR_LEN_RELP:
-      case NODE_SNAPSHOT:
-      case RELP_SNAPSHOT:
         CYPHER_TODO();
       default:
         return false;
@@ -170,11 +163,6 @@ struct Entry {
     switch (type) {
       case CONSTANT:
         return constant.ToString();
-      case NODE_SNAPSHOT:
-      case RELP_SNAPSHOT:
-        CYPHER_TODO();
-        // TODO(anyone) use integers
-        // return constant.scalar.string();
       case NODE: {
         CYPHER_THROW_ASSERT(node);
         if (!node->vertex_) {
@@ -223,10 +211,6 @@ struct Entry {
         return "VAR_LEN_RELP";
       case HEADER:
         return "HEADER";
-      case NODE_SNAPSHOT:
-        return "NODE_SNAPSHOT";
-      case RELP_SNAPSHOT:
-        return "RELP_SNAPSHOT";
       default:
         THROW_CODE(CypherException, "unknown RecordEntryType");
     }
