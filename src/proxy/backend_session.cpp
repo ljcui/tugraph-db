@@ -334,6 +334,7 @@ void BoltBackendSession::StartSendAndRead(std::string request,
   operation_in_progress_ = true;
   operation_mode_ = OperationMode::COLLECT;
   decode_records_ = decode_records;
+  decode_success_has_more_ = false;
   request_ = std::move(request);
   messages_.clear();
   messages_callback_ = std::move(callback);
@@ -361,6 +362,7 @@ void BoltBackendSession::StartSendAndForward(
   operation_in_progress_ = true;
   operation_mode_ = OperationMode::FORWARD;
   decode_records_ = decode_records;
+  decode_success_has_more_ = true;
   request_ = std::move(request);
   forward_ = std::move(forward);
   message_callback_ = std::move(callback);
@@ -532,19 +534,21 @@ void BoltBackendSession::CompleteConnect(std::exception_ptr error) {
 void BoltBackendSession::StartRequestWrite() {
   request_deadline_ = BackendIoDeadline();
   auto self = shared_from_this();
-  AsyncWrite(request_.data(), request_.size(), "backend write",
-             request_deadline_, [self](std::exception_ptr error) {
-               if (error) {
-                 self->FinishCurrentOperation(error);
-                 return;
-               }
-               self->StartReadNextResponse();
-             });
+  StartCurrentOperationTimer();
+  AsyncWriteForCurrentOperation(request_.data(), request_.size(),
+                                "backend write",
+                                [self](std::exception_ptr error) {
+                                  if (error) {
+                                    self->FinishCurrentOperation(error);
+                                    return;
+                                  }
+                                  self->StartReadNextResponse();
+                                });
 }
 
 void BoltBackendSession::StartReadNextResponse() {
   auto self = shared_from_this();
-  AsyncReadMessage(request_deadline_, [self](std::exception_ptr error,
+  AsyncReadMessageForCurrentOperation([self](std::exception_ptr error,
                                              BackendMessage message) mutable {
     if (error) {
       self->FinishCurrentOperation(error);
@@ -583,12 +587,14 @@ void BoltBackendSession::StartReadNextResponse() {
 }
 
 void BoltBackendSession::FinishCollect(std::exception_ptr error) {
+  CancelCurrentOperationTimer();
   if (error) {
     CloseOnStrand();
   }
   operation_in_progress_ = false;
   request_.clear();
   decode_records_ = false;
+  decode_success_has_more_ = false;
 
   auto callback = std::move(messages_callback_);
   auto messages = std::move(messages_);
@@ -601,12 +607,14 @@ void BoltBackendSession::FinishCollect(std::exception_ptr error) {
 
 void BoltBackendSession::FinishForward(std::exception_ptr error,
                                        BackendMessage message) {
+  CancelCurrentOperationTimer();
   if (error) {
     CloseOnStrand();
   }
   operation_in_progress_ = false;
   request_.clear();
   decode_records_ = false;
+  decode_success_has_more_ = false;
 
   auto callback = std::move(message_callback_);
   forward_ = {};
@@ -709,6 +717,13 @@ void BoltBackendSession::AsyncReadMessage(
   AsyncReadMessageChunkHeader(std::move(state), deadline, std::move(callback));
 }
 
+void BoltBackendSession::AsyncReadMessageForCurrentOperation(
+    MessageReadCallback callback) {
+  auto state = std::make_shared<AsyncMessageReadState>();
+  AsyncReadMessageChunkHeaderForCurrentOperation(std::move(state),
+                                                 std::move(callback));
+}
+
 void BoltBackendSession::AsyncReadMessageChunkHeader(
     std::shared_ptr<AsyncMessageReadState> state,
     boost::asio::steady_timer::clock_type::time_point deadline,
@@ -744,6 +759,39 @@ void BoltBackendSession::AsyncReadMessageChunkHeader(
             });
 }
 
+void BoltBackendSession::AsyncReadMessageChunkHeaderForCurrentOperation(
+    std::shared_ptr<AsyncMessageReadState> state,
+    MessageReadCallback callback) {
+  auto self = shared_from_this();
+  auto read_state = state;
+  AsyncReadForCurrentOperation(
+      state->header.data(), state->header.size(), "backend message read",
+      [self, state = std::move(read_state),
+       callback = std::move(callback)](std::exception_ptr error) mutable {
+        if (error) {
+          callback(error, {});
+          return;
+        }
+        state->message.raw.append(state->header.data(), state->header.size());
+
+        uint16_t size = 0;
+        std::memcpy(&size, state->header.data(), sizeof(size));
+        size = big_to_native(size);
+        if (size == 0) {
+          if (!state->message.payload.empty()) {
+            self->DecodeAndCompleteReadMessage(std::move(state),
+                                               std::move(callback));
+            return;
+          }
+          self->AsyncReadMessageChunkHeaderForCurrentOperation(
+              std::move(state), std::move(callback));
+          return;
+        }
+        self->AsyncReadMessageChunkBodyForCurrentOperation(
+            std::move(state), size, std::move(callback));
+      });
+}
+
 void BoltBackendSession::AsyncReadMessageChunkBody(
     std::shared_ptr<AsyncMessageReadState> state, uint16_t size,
     boost::asio::steady_timer::clock_type::time_point deadline,
@@ -766,13 +814,34 @@ void BoltBackendSession::AsyncReadMessageChunkBody(
             });
 }
 
+void BoltBackendSession::AsyncReadMessageChunkBodyForCurrentOperation(
+    std::shared_ptr<AsyncMessageReadState> state, uint16_t size,
+    MessageReadCallback callback) {
+  state->chunk.assign(size, '\0');
+  auto self = shared_from_this();
+  auto read_state = state;
+  AsyncReadForCurrentOperation(
+      state->chunk.data(), state->chunk.size(), "backend message read",
+      [self, state = std::move(read_state),
+       callback = std::move(callback)](std::exception_ptr error) mutable {
+        if (error) {
+          callback(error, {});
+          return;
+        }
+        state->message.raw.append(state->chunk);
+        state->message.payload.append(state->chunk);
+        self->AsyncReadMessageChunkHeaderForCurrentOperation(
+            std::move(state), std::move(callback));
+      });
+}
+
 void BoltBackendSession::DecodeAndCompleteReadMessage(
     std::shared_ptr<AsyncMessageReadState> state,
     MessageReadCallback callback) {
   try {
     auto& message = state->message;
     message.tag = DecodeTag(message.payload);
-    if (message.tag == bolt::BoltMsg::Success) {
+    if (decode_success_has_more_ && message.tag == bolt::BoltMsg::Success) {
       message.success_has_more = DecodeSuccessHasMore(message.payload);
     } else if (message.tag == bolt::BoltMsg::Failure) {
       auto failure = DecodeFailure(message, &hydrator_);
@@ -785,6 +854,67 @@ void BoltBackendSession::DecodeAndCompleteReadMessage(
   } catch (...) {
     callback(std::current_exception(), {});
   }
+}
+
+void BoltBackendSession::StartCurrentOperationTimer() {
+  timed_out_ = false;
+  timeout_timer_.expires_at(request_deadline_);
+  auto self = shared_from_this();
+  timeout_timer_.async_wait(
+      strand_.wrap([self](const boost::system::error_code& ec) {
+        if (ec) {
+          return;
+        }
+        self->timed_out_ = true;
+        self->CancelOnStrand();
+      }));
+}
+
+void BoltBackendSession::CancelCurrentOperationTimer() {
+  boost::system::error_code ignored;
+  timeout_timer_.cancel(ignored);
+}
+
+std::exception_ptr BoltBackendSession::CurrentOperationIoError(
+    const boost::system::error_code& ec, const char* operation) const {
+  if (timed_out_ && ec == boost::asio::error::operation_aborted) {
+    return MakeRuntimeError(fmt::format("{} timed out after {}s", operation,
+                                        kBackendIoTimeoutSeconds));
+  }
+  return std::make_exception_ptr(boost::system::system_error(ec, operation));
+}
+
+void BoltBackendSession::AsyncWriteForCurrentOperation(const void* data,
+                                                       size_t size,
+                                                       const char* operation,
+                                                       ErrorCallback callback) {
+  auto self = shared_from_this();
+  boost::asio::async_write(
+      *socket_, boost::asio::buffer(data, size),
+      strand_.wrap([self, operation, callback = std::move(callback)](
+                       const boost::system::error_code& ec, size_t) mutable {
+        if (ec) {
+          callback(self->CurrentOperationIoError(ec, operation));
+          return;
+        }
+        callback(nullptr);
+      }));
+}
+
+void BoltBackendSession::AsyncReadForCurrentOperation(void* data, size_t size,
+                                                      const char* operation,
+                                                      ErrorCallback callback) {
+  auto self = shared_from_this();
+  boost::asio::async_read(
+      *socket_, boost::asio::buffer(data, size),
+      strand_.wrap([self, operation, callback = std::move(callback)](
+                       const boost::system::error_code& ec, size_t) mutable {
+        if (ec) {
+          callback(self->CurrentOperationIoError(ec, operation));
+          return;
+        }
+        callback(nullptr);
+      }));
 }
 
 void BoltBackendSession::CloseOnStrand() {

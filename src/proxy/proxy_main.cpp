@@ -28,7 +28,7 @@
 DEFINE_uint32(proxy_bolt_port, 17687, "Bolt port listened by lgraph_proxy");
 DEFINE_uint32(proxy_bolt_io_thread_num, 2,
               "Number of lgraph_proxy Bolt io threads");
-DEFINE_uint32(proxy_worker_thread_num, 16,
+DEFINE_uint32(proxy_worker_thread_num, 8,
               "Number of lgraph_proxy worker threads");
 DEFINE_uint64(proxy_max_connections, 10000,
               "Maximum number of open proxy Bolt connections. 0 means "

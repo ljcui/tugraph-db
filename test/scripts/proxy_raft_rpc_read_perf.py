@@ -289,7 +289,7 @@ def parse_args(argv):
     parser.add_argument("--server-io-threads", type=int, default=1)
     parser.add_argument("--server-worker-threads", type=int, default=16)
     parser.add_argument("--proxy-io-threads", type=int, default=2)
-    parser.add_argument("--proxy-worker-threads", type=int, default=16)
+    parser.add_argument("--proxy-worker-threads", type=int, default=8)
     parser.add_argument("--backend-max-connections-per-backend", type=int, default=128)
     parser.add_argument("--backend-borrow-timeout-ms", type=int, default=5000)
     parser.add_argument("--max-bolt-connections", type=int, default=2000)

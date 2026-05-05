@@ -228,13 +228,8 @@ class ProxyIoPool {
   ~ProxyIoPool() { Stop(); }
 
   boost::asio::io_service& Get() {
-    std::lock_guard<std::mutex> guard(mutex_);
-    auto& service = *services_[next_service_];
-    ++next_service_;
-    if (next_service_ == services_.size()) {
-      next_service_ = 0;
-    }
-    return service;
+    auto index = next_service_.fetch_add(1, std::memory_order_relaxed);
+    return *services_[index % services_.size()];
   }
 
   ProxyStrandHandle MakeStrand() {
@@ -260,12 +255,11 @@ class ProxyIoPool {
   }
 
  private:
-  std::mutex mutex_;
   std::string thread_name_prefix_;
   std::vector<std::unique_ptr<boost::asio::io_service>> services_;
   std::vector<std::unique_ptr<boost::asio::io_service::work>> works_;
   std::vector<std::thread> threads_;
-  size_t next_service_ = 0;
+  std::atomic<size_t> next_service_{0};
   std::atomic<bool> stopped_{false};
 };
 
@@ -1153,11 +1147,13 @@ class RunRequestState : public std::enable_shared_from_this<RunRequestState> {
 
     const int attempt = attempt_++;
     selected_endpoint_ = {};
+    selected_endpoint_from_cache_ = false;
     auto cached_leader = attempt == 0
                              ? context_->leader_cache->Get(route_.graph_name)
                              : std::nullopt;
     if (cached_leader.has_value()) {
       selected_endpoint_ = *cached_leader;
+      selected_endpoint_from_cache_ = true;
       SendToSelectedEndpoint();
       return;
     }
@@ -1199,7 +1195,13 @@ class RunRequestState : public std::enable_shared_from_this<RunRequestState> {
     }
 
     auto self = shared_from_this();
-    auto& io_service = context_->proxy_io_pool->Get();
+    if (session_context_->io_service == nullptr) {
+      DropActiveBackend(context_->backend_pool, session());
+      conn_->Close();
+      Complete();
+      return;
+    }
+    auto& io_service = *session_context_->io_service;
     context_->backend_pool->AsyncBorrow(
         selected_endpoint_, io_service, session()->hello_meta,
         [self](std::exception_ptr error,
@@ -1242,7 +1244,10 @@ class RunRequestState : public std::enable_shared_from_this<RunRequestState> {
     }
 
     SetActiveBackend(session(), selected_endpoint_, backend);
+    SendToBackend(std::move(backend));
+  }
 
+  void SendToBackend(std::shared_ptr<BoltBackendSession> backend) {
     auto self = shared_from_this();
     backend->AsyncSendAndReadUntilTerminal(
         request_, false,
@@ -1308,7 +1313,9 @@ class RunRequestState : public std::enable_shared_from_this<RunRequestState> {
     ForwardMessages(conn_, messages);
 
     if (last.tag == bolt::BoltMsg::Success) {
-      context_->leader_cache->Put(route_.graph_name, selected_endpoint_);
+      if (!selected_endpoint_from_cache_) {
+        context_->leader_cache->Put(route_.graph_name, selected_endpoint_);
+      }
       session()->state = ProxySessionState::STREAMING;
     } else {
       DropActiveBackendIf(context_->backend_pool, session(),
@@ -1346,6 +1353,7 @@ class RunRequestState : public std::enable_shared_from_this<RunRequestState> {
   BackendEndpoint selected_endpoint_;
   std::string last_error_;
   int attempt_ = 0;
+  bool selected_endpoint_from_cache_ = false;
 };
 
 void ProcessRun(const std::shared_ptr<ProxyContext>& context,

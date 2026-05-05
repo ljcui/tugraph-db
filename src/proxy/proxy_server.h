@@ -27,7 +27,7 @@ namespace proxy {
 struct ProxyServerOptions {
   uint32_t listen_port = 7687;
   uint32_t bolt_io_thread_num = 2;
-  uint32_t worker_thread_num = 16;
+  uint32_t worker_thread_num = 8;
   uint64_t max_connections = 10000;
   uint64_t backend_max_connections_per_backend = 32;
   uint64_t backend_borrow_timeout_ms = 1000;

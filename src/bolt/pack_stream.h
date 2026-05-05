@@ -248,7 +248,12 @@ class PackStream {
     AppendStructMessage(BoltMsg::Success, meta);
   }
 
-  void AppendSuccess() { AppendStructMessage(BoltMsg::Success, {}); }
+  void AppendSuccess() {
+    Begin();
+    packer_.StructHeader(BoltMsg::Success, 1);
+    packer_.MapHeader(0);
+    End();
+  }
 
   void AppendIgnored() { AppendStructMessage(BoltMsg::Ignored); }
 
@@ -270,11 +275,21 @@ class PackStream {
   }
 
   void AppendPullN(int64_t n) {
-    AppendStructMessage(BoltMsg::PullN, {{"n", n}});
+    Begin();
+    packer_.StructHeader(BoltMsg::PullN, 1);
+    packer_.MapHeader(1);
+    packer_.String("n");
+    packer_.Int64(n);
+    End();
   }
 
   void AppendDiscardN(int64_t n) {
-    AppendStructMessage(BoltMsg::DiscardN, {{"n", n}});
+    Begin();
+    packer_.StructHeader(BoltMsg::DiscardN, 1);
+    packer_.MapHeader(1);
+    packer_.String("n");
+    packer_.Int64(n);
+    End();
   }
 
   void AppendRecord(const std::vector<std::any>& fields) {

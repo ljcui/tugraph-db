@@ -132,6 +132,7 @@ class BoltBackendSession
   void AsyncReadMessage(
       boost::asio::steady_timer::clock_type::time_point deadline,
       MessageReadCallback callback);
+  void AsyncReadMessageForCurrentOperation(MessageReadCallback callback);
   void AsyncReadMessageChunkHeader(
       std::shared_ptr<AsyncMessageReadState> state,
       boost::asio::steady_timer::clock_type::time_point deadline,
@@ -140,9 +141,25 @@ class BoltBackendSession
       std::shared_ptr<AsyncMessageReadState> state, uint16_t size,
       boost::asio::steady_timer::clock_type::time_point deadline,
       MessageReadCallback callback);
+  void AsyncReadMessageChunkHeaderForCurrentOperation(
+      std::shared_ptr<AsyncMessageReadState> state,
+      MessageReadCallback callback);
+  void AsyncReadMessageChunkBodyForCurrentOperation(
+      std::shared_ptr<AsyncMessageReadState> state, uint16_t size,
+      MessageReadCallback callback);
   void DecodeAndCompleteReadMessage(
       std::shared_ptr<AsyncMessageReadState> state,
       MessageReadCallback callback);
+  void StartCurrentOperationTimer();
+  void CancelCurrentOperationTimer();
+  std::exception_ptr CurrentOperationIoError(
+      const boost::system::error_code& ec, const char* operation) const;
+  void AsyncWriteForCurrentOperation(const void* data, size_t size,
+                                     const char* operation,
+                                     ErrorCallback callback);
+  void AsyncReadForCurrentOperation(void* data, size_t size,
+                                    const char* operation,
+                                    ErrorCallback callback);
   void CloseOnStrand();
   void CancelOnStrand();
   static bolt::BoltMsg DecodeTag(std::string_view payload);
@@ -171,6 +188,7 @@ class BoltBackendSession
   std::vector<BackendMessage> messages_;
   bool operation_in_progress_ = false;
   bool decode_records_ = false;
+  bool decode_success_has_more_ = false;
   bool timed_out_ = false;
   bool connected_ = false;
 };
