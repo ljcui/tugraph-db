@@ -44,7 +44,6 @@ namespace graphdb {
 
 struct GraphDBOptions {
   std::shared_ptr<rocksdb::Cache> block_cache;
-  std::shared_ptr<rocksdb::RowCache> row_cache;
   std::shared_ptr<AssistantPool> assistant_pool;
   size_t ft_apply_interval_ = 1;
   size_t ft_writer_threads_ = 1;

@@ -43,7 +43,6 @@ DECLARE_uint32(bolt_worker_thread_num);
 DECLARE_uint64(max_bolt_connections);
 
 DECLARE_uint64(graph_block_cache);
-DECLARE_uint64(graph_row_cache);
 DECLARE_uint64(raft_log_block_cache);
 DECLARE_uint64(raft_scheduler_shards);
 DECLARE_uint64(assistant_thread_num);

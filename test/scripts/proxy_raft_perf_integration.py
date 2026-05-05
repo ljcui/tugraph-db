@@ -353,7 +353,6 @@ def start_cluster(args, work_dir, ports):
                 "--bolt_worker_thread_num={}".format(args.server_worker_threads),
                 "--max_bolt_connections={}".format(args.max_bolt_connections),
                 "--graph_block_cache={}".format(args.graph_block_cache),
-                "--graph_row_cache={}".format(args.graph_row_cache),
                 "--raft_log_block_cache={}".format(args.raft_log_block_cache),
                 "--raft_scheduler_shards={}".format(args.raft_scheduler_shards),
                 "--assistant_thread_num={}".format(args.assistant_threads),
@@ -478,7 +477,6 @@ def parse_args(argv):
     parser.add_argument("--backend-borrow-timeout-ms", type=int, default=5000)
     parser.add_argument("--max-bolt-connections", type=int, default=1000)
     parser.add_argument("--graph-block-cache", type=int, default=64 * 1024 * 1024)
-    parser.add_argument("--graph-row-cache", type=int, default=16 * 1024 * 1024)
     parser.add_argument("--raft-log-block-cache", type=int, default=32 * 1024 * 1024)
     parser.add_argument("--raft-scheduler-shards", type=int, default=4)
     parser.add_argument("--assistant-threads", type=int, default=2)

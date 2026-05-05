@@ -55,8 +55,6 @@ DEFINE_uint64(max_bolt_connections, 10000,
 
 DEFINE_uint64(graph_block_cache, (uint64_t)8 * 1024 * 1024 * 1024,
               "Graph data block cache size, in bytes.");
-DEFINE_uint64(graph_row_cache, (uint64_t)8 * 1024 * 1024 * 1024,
-              "Graph data row cache size, in bytes.");
 DEFINE_uint64(raft_log_block_cache, (uint64_t)256 * 1024 * 1024,
               "Total shared Raft log block cache size, in bytes.");
 DEFINE_uint64(raft_scheduler_shards, 4,

@@ -294,7 +294,6 @@ def parse_args(argv):
     parser.add_argument("--backend-borrow-timeout-ms", type=int, default=5000)
     parser.add_argument("--max-bolt-connections", type=int, default=2000)
     parser.add_argument("--graph-block-cache", type=int, default=64 * 1024 * 1024)
-    parser.add_argument("--graph-row-cache", type=int, default=16 * 1024 * 1024)
     parser.add_argument("--raft-log-block-cache", type=int, default=32 * 1024 * 1024)
     parser.add_argument("--raft-scheduler-shards", type=int, default=4)
     parser.add_argument("--assistant-threads", type=int, default=2)

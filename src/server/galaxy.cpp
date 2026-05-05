@@ -169,7 +169,6 @@ std::unique_ptr<Galaxy> Galaxy::Open(const std::string &path,
   galaxy->path_ = path;
   raft::RaftManager::Configure(galaxy_options.raft_scheduler_shards);
   galaxy->block_cache_ = rocksdb::NewLRUCache(galaxy_options.block_cache_size);
-  galaxy->row_cache_ = rocksdb::NewLRUCache(galaxy_options.row_cache_size);
   galaxy->options_ = galaxy_options;
   galaxy->local_node_options_ = std::move(local_node_options);
   galaxy->meta_db_ = db;
@@ -207,7 +206,6 @@ std::unique_ptr<Galaxy> Galaxy::Open(const std::string &path,
     auto graph_db = GraphDB::Open(
         graph_path,
         {.block_cache = galaxy->block_cache_,
-         .row_cache = galaxy->row_cache_,
          .assistant_pool = galaxy->assistant_pool_,
          .ft_apply_interval_ = galaxy->options_.ft_apply_interval,
          .ft_writer_threads_ = galaxy->options_.ft_writer_threads,
@@ -276,7 +274,6 @@ GraphDB *Galaxy::CreateGraphWithId(const meta::GraphDBMetaInfo &meta,
   std::string graph_path = path_ + "/graph" + std::to_string(meta.graph_id());
   auto graph_db = GraphDB::Open(
       graph_path, {.block_cache = block_cache_,
-                   .row_cache = row_cache_,
                    .assistant_pool = assistant_pool_,
                    .ft_apply_interval_ = options_.ft_apply_interval,
                    .ft_writer_threads_ = options_.ft_writer_threads,

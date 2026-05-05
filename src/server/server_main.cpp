@@ -196,7 +196,6 @@ class LGraphDaemon : public Service {
          .max_bolt_connections = FLAGS_max_bolt_connections,
          .galaxy_options = {
              .block_cache_size = FLAGS_graph_block_cache,
-             .row_cache_size = FLAGS_graph_row_cache,
              .raft_log_block_cache_size = FLAGS_raft_log_block_cache,
              .raft_scheduler_shards = FLAGS_raft_scheduler_shards,
              .assistant_thread_num = FLAGS_assistant_thread_num,

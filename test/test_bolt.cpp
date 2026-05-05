@@ -296,7 +296,6 @@ class BoltProxyBackendTestServer {
     backend_options.bolt_io_thread_num = 1;
     backend_options.bolt_worker_thread_num = 2;
     backend_options.galaxy_options.block_cache_size = 8 * 1024 * 1024;
-    backend_options.galaxy_options.row_cache_size = 4 * 1024 * 1024;
     backend_options.galaxy_options.raft_log_block_cache_size = 8 * 1024 * 1024;
     backend_options.galaxy_options.raft_scheduler_shards = 1;
     backend_options.galaxy_options.assistant_thread_num = 1;
@@ -381,7 +380,6 @@ class BoltServerTestServer {
     options.bolt_io_thread_num = 1;
     options.bolt_worker_thread_num = 2;
     options.galaxy_options.block_cache_size = 8 * 1024 * 1024;
-    options.galaxy_options.row_cache_size = 4 * 1024 * 1024;
     options.galaxy_options.raft_log_block_cache_size = 8 * 1024 * 1024;
     options.galaxy_options.raft_scheduler_shards = 1;
     options.galaxy_options.assistant_thread_num = 1;
