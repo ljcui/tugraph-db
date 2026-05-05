@@ -384,9 +384,7 @@ static void ProcessPullOrDiscard(const std::shared_ptr<BoltConnection>& conn,
     }
 
     if (result->Valid()) {
-      std::unordered_map<std::string, std::any> meta;
-      meta["has_more"] = true;
-      session->ps.AppendSuccess(meta);
+      session->ps.AppendSuccessHasMore(true);
       session->state = SessionState::STREAMING;
       FlushSessionBuffer(conn, session);
       return;
@@ -471,10 +469,8 @@ static void ProcessRun(Galaxy* galaxy,
         active_query->ctx.get(), active_query->txn.get(), active_query->cypher);
     auto header = active_query->result->GetHeader();
 
-    std::unordered_map<std::string, std::any> meta;
-    meta["fields"] = header;
     bolt::PackStream ps;
-    ps.AppendSuccess(meta);
+    ps.AppendSuccessFields(header);
     conn->PostResponse(std::move(ps.MutableBuffer()));
     session->active_query = std::move(active_query);
     session->state = bolt::SessionState::STREAMING;

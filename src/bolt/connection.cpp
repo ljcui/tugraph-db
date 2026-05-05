@@ -135,9 +135,7 @@ void BoltConnection::Start() {
                        std::placeholders::_1));
 }
 
-void BoltConnection::Close() {
-  Connection::Close();
-}
+void BoltConnection::Close() { Connection::Close(); }
 
 void BoltConnection::DoSend() {
   for (size_t i = 0; i < msg_queue_.size(); i++) {
@@ -296,6 +294,7 @@ void BoltConnection::ReadChunkSizeDone(const boost::system::error_code& ec) {
     auto len = unpacker_.Len();
     auto tag = static_cast<BoltMsg>(unpacker_.StructTag());
     std::vector<std::any> fields;
+    fields.reserve(len);
     try {
       for (uint32_t i = 0; i < len; i++) {
         unpacker_.Next();

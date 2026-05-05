@@ -201,24 +201,25 @@ BoltBackendSession::~BoltBackendSession() {
 }
 
 void BoltBackendSession::AsyncSendAndReadUntilTerminal(
-    const std::string& request, bool decode_records,
-    MessagesCallback callback) {
+    std::string request, bool decode_records, MessagesCallback callback) {
   auto self = shared_from_this();
-  io_service_.post(strand_.wrap([self, request, decode_records,
-                                 callback = std::move(callback)]() mutable {
-    self->StartSendAndRead(request, decode_records, std::move(callback));
-  }));
+  io_service_.post(
+      strand_.wrap([self, request = std::move(request), decode_records,
+                    callback = std::move(callback)]() mutable {
+        self->StartSendAndRead(std::move(request), decode_records,
+                               std::move(callback));
+      }));
 }
 
 void BoltBackendSession::AsyncSendAndForwardUntilTerminal(
-    const std::string& request,
-    const std::function<bool(const BackendMessage&)>& forward,
+    std::string request, std::function<bool(const BackendMessage&)> forward,
     bool decode_records, MessageCallback callback) {
   auto self = shared_from_this();
-  io_service_.post(strand_.wrap([self, request, forward, decode_records,
+  io_service_.post(strand_.wrap([self, request = std::move(request),
+                                 forward = std::move(forward), decode_records,
                                  callback = std::move(callback)]() mutable {
-    self->StartSendAndForward(request, forward, decode_records,
-                              std::move(callback));
+    self->StartSendAndForward(std::move(request), std::move(forward),
+                              decode_records, std::move(callback));
   }));
 }
 
@@ -232,10 +233,10 @@ void BoltBackendSession::AsyncFetchRaftNodeInfos(
       "YIELD node_id, ip, bolt_port, raft_port, is_leader "
       "RETURN node_id, ip, bolt_port, raft_port, is_leader",
       {{"graph_name", graph_name}}, {{"db", graph_name}});
-  auto run_request = ps.ConstBuffer();
+  auto run_request = std::move(ps.MutableBuffer());
 
   AsyncSendAndReadUntilTerminal(
-      run_request, false,
+      std::move(run_request), false,
       [self, graph_name, callback = std::move(callback)](
           std::exception_ptr error,
           std::vector<BackendMessage> run_messages) mutable {
@@ -255,9 +256,9 @@ void BoltBackendSession::AsyncFetchRaftNodeInfos(
 
         bolt::PackStream pull;
         pull.AppendPullN(-1);
-        auto pull_request = pull.ConstBuffer();
+        auto pull_request = std::move(pull.MutableBuffer());
         self->AsyncSendAndReadUntilTerminal(
-            pull_request, true,
+            std::move(pull_request), true,
             [callback = std::move(callback)](
                 std::exception_ptr error,
                 std::vector<BackendMessage> pull_messages) mutable {

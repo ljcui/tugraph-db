@@ -255,6 +255,24 @@ class PackStream {
     End();
   }
 
+  void AppendSuccessFields(const std::vector<std::string>& fields) {
+    Begin();
+    packer_.StructHeader(BoltMsg::Success, 1);
+    packer_.MapHeader(1);
+    packer_.String("fields");
+    packer_.Strings(fields);
+    End();
+  }
+
+  void AppendSuccessHasMore(bool has_more) {
+    Begin();
+    packer_.StructHeader(BoltMsg::Success, 1);
+    packer_.MapHeader(1);
+    packer_.String("has_more");
+    packer_.Bool(has_more);
+    End();
+  }
+
   void AppendIgnored() { AppendStructMessage(BoltMsg::Ignored); }
 
   void AppendReset() { AppendStructMessage(BoltMsg::Reset); }

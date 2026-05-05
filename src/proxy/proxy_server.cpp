@@ -25,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
@@ -170,32 +171,34 @@ void DropActiveBackend(const std::shared_ptr<BackendSessionPool>& pool,
 
 class LeaderCache {
  public:
-  std::optional<BackendEndpoint> Get(const std::string& graph_name) {
-    std::lock_guard<std::mutex> guard(mutex_);
-    auto iter = leaders_.find(graph_name);
-    if (iter == leaders_.end()) {
+  explicit LeaderCache(size_t shard_count) : leaders_(shard_count) {}
+
+  std::optional<BackendEndpoint> Get(size_t shard_id) {
+    std::shared_lock<std::shared_mutex> guard(mutex_);
+    if (shard_id >= leaders_.size()) {
       return std::nullopt;
     }
-    return iter->second;
+    return leaders_[shard_id];
   }
 
-  void Put(const std::string& graph_name, BackendEndpoint endpoint) {
-    std::lock_guard<std::mutex> guard(mutex_);
-    leaders_[graph_name] = std::move(endpoint);
+  void Put(size_t shard_id, BackendEndpoint endpoint) {
+    std::unique_lock<std::shared_mutex> guard(mutex_);
+    if (shard_id < leaders_.size()) {
+      leaders_[shard_id] = std::move(endpoint);
+    }
   }
 
-  void InvalidateIf(const std::string& graph_name,
-                    const BackendEndpoint& endpoint) {
-    std::lock_guard<std::mutex> guard(mutex_);
-    auto iter = leaders_.find(graph_name);
-    if (iter != leaders_.end() && iter->second.name == endpoint.name) {
-      leaders_.erase(iter);
+  void InvalidateIf(size_t shard_id, const BackendEndpoint& endpoint) {
+    std::unique_lock<std::shared_mutex> guard(mutex_);
+    if (shard_id < leaders_.size() && leaders_[shard_id].has_value() &&
+        leaders_[shard_id]->name == endpoint.name) {
+      leaders_[shard_id].reset();
     }
   }
 
  private:
-  std::mutex mutex_;
-  std::unordered_map<std::string, BackendEndpoint> leaders_;
+  std::shared_mutex mutex_;
+  std::vector<std::optional<BackendEndpoint>> leaders_;
 };
 
 class BackendPoolExhausted : public std::runtime_error {
@@ -281,26 +284,23 @@ class BackendSessionPool
                    const std::unordered_map<std::string, std::any>& hello_meta,
                    BorrowCallback callback) {
     BorrowCompletion completion;
-    const auto& key = endpoint.name;
+    auto bucket = GetOrCreateBucket(endpoint.name);
     {
-      std::lock_guard<std::mutex> guard(mutex_);
-      auto& bucket = buckets_[key];
-      if (!bucket.idle.empty()) {
-        auto backend = std::move(bucket.idle.front());
-        bucket.idle.pop_front();
+      std::lock_guard<std::mutex> guard(bucket->mutex);
+      auto backend = TakeIdleBackendLocked(*bucket, io_service);
+      if (backend) {
         completion.callback = std::move(callback);
         completion.backend = std::move(backend);
       } else if (max_connections_per_backend_ == 0 ||
-                 bucket.total < max_connections_per_backend_) {
-        ++bucket.total;
+                 bucket->total < max_connections_per_backend_) {
+        ++bucket->total;
         completion.callback = std::move(callback);
         try {
           completion.backend = std::make_shared<BoltBackendSession>(
               io_service, endpoint, hello_meta);
         } catch (...) {
-          --bucket.total;
+          --bucket->total;
           completion.error = std::current_exception();
-          EraseEmptyBucketLocked(key, bucket);
         }
       } else if (borrow_timeout_.count() == 0) {
         completion.callback = std::move(callback);
@@ -316,7 +316,7 @@ class BackendSessionPool
         pending->timer =
             std::make_shared<boost::asio::steady_timer>(io_service);
         pending->timer->expires_from_now(borrow_timeout_);
-        bucket.waiters.emplace_back(pending);
+        bucket->waiters.emplace_back(pending);
 
         std::weak_ptr<BackendSessionPool> weak_pool = shared_from_this();
         std::weak_ptr<PendingBorrow> weak_pending = pending;
@@ -346,15 +346,14 @@ class BackendSessionPool
       return;
     }
     BorrowCompletion completion;
+    auto bucket = FindBucket(endpoint.name);
+    if (!bucket) {
+      backend->Close();
+      return;
+    }
     {
-      std::lock_guard<std::mutex> guard(mutex_);
-      auto iter = buckets_.find(endpoint.name);
-      if (iter == buckets_.end()) {
-        backend->Close();
-        return;
-      }
-      auto& bucket = iter->second;
-      auto pending = PopNextPendingBorrowLocked(bucket);
+      std::lock_guard<std::mutex> guard(bucket->mutex);
+      auto pending = PopNextPendingBorrowLocked(*bucket);
       if (pending) {
         pending->completed = true;
         CancelPendingTimer(pending);
@@ -362,7 +361,7 @@ class BackendSessionPool
         completion.callback = std::move(completion.pending->callback);
         completion.backend = std::move(backend);
       } else {
-        bucket.idle.emplace_back(std::move(backend));
+        bucket->idle.emplace_back(std::move(backend));
       }
     }
     RunBorrowCompletion(std::move(completion));
@@ -374,17 +373,16 @@ class BackendSessionPool
       backend->Close();
     }
     std::vector<BorrowCompletion> completions;
+    auto bucket = FindBucket(endpoint.name);
+    if (!bucket) {
+      return;
+    }
     {
-      std::lock_guard<std::mutex> guard(mutex_);
-      auto iter = buckets_.find(endpoint.name);
-      if (iter == buckets_.end()) {
-        return;
+      std::lock_guard<std::mutex> guard(bucket->mutex);
+      if (bucket->total > 0) {
+        --bucket->total;
       }
-      auto& bucket = iter->second;
-      if (bucket.total > 0) {
-        --bucket.total;
-      }
-      completions = SatisfyPendingBorrowsLocked(endpoint.name, bucket);
+      completions = SatisfyPendingBorrowsLocked(*bucket);
     }
     RunBorrowCompletions(std::move(completions));
   }
@@ -407,10 +405,29 @@ class BackendSessionPool
   };
 
   struct Bucket {
+    std::mutex mutex;
     std::deque<std::shared_ptr<BoltBackendSession>> idle;
     std::deque<std::shared_ptr<PendingBorrow>> waiters;
     size_t total = 0;
   };
+
+  std::shared_ptr<Bucket> GetOrCreateBucket(const std::string& key) {
+    std::lock_guard<std::mutex> guard(buckets_mutex_);
+    auto& bucket = buckets_[key];
+    if (!bucket) {
+      bucket = std::make_shared<Bucket>();
+    }
+    return bucket;
+  }
+
+  std::shared_ptr<Bucket> FindBucket(const std::string& key) {
+    std::lock_guard<std::mutex> guard(buckets_mutex_);
+    auto iter = buckets_.find(key);
+    if (iter == buckets_.end()) {
+      return {};
+    }
+    return iter->second;
+  }
 
   std::shared_ptr<PendingBorrow> PopNextPendingBorrowLocked(Bucket& bucket) {
     while (!bucket.waiters.empty()) {
@@ -423,8 +440,28 @@ class BackendSessionPool
     return {};
   }
 
-  std::vector<BorrowCompletion> SatisfyPendingBorrowsLocked(
-      const std::string& key, Bucket& bucket) {
+  std::shared_ptr<BoltBackendSession> TakeIdleBackendLocked(
+      Bucket& bucket, boost::asio::io_service& io_service) {
+    for (auto iter = bucket.idle.begin(); iter != bucket.idle.end(); ++iter) {
+      if ((*iter)->RunsOn(io_service)) {
+        auto backend = std::move(*iter);
+        bucket.idle.erase(iter);
+        return backend;
+      }
+    }
+    if (max_connections_per_backend_ == 0 ||
+        bucket.total < max_connections_per_backend_) {
+      return {};
+    }
+    if (bucket.idle.empty()) {
+      return {};
+    }
+    auto backend = std::move(bucket.idle.front());
+    bucket.idle.pop_front();
+    return backend;
+  }
+
+  std::vector<BorrowCompletion> SatisfyPendingBorrowsLocked(Bucket& bucket) {
     std::vector<BorrowCompletion> completions;
     while (true) {
       auto pending = PopNextPendingBorrowLocked(bucket);
@@ -438,9 +475,9 @@ class BackendSessionPool
       completion.pending = pending;
       completion.callback = std::move(pending->callback);
 
-      if (!bucket.idle.empty()) {
-        completion.backend = std::move(bucket.idle.front());
-        bucket.idle.pop_front();
+      auto backend = TakeIdleBackendLocked(bucket, *pending->io_service);
+      if (backend) {
+        completion.backend = std::move(backend);
       } else if (max_connections_per_backend_ == 0 ||
                  bucket.total < max_connections_per_backend_) {
         ++bucket.total;
@@ -459,19 +496,21 @@ class BackendSessionPool
 
       completions.emplace_back(std::move(completion));
     }
-    EraseEmptyBucketLocked(key, bucket);
     return completions;
   }
 
   void TimeoutBorrow(const std::shared_ptr<PendingBorrow>& pending) {
     BorrowCompletion completion;
+    auto bucket = FindBucket(pending->endpoint.name);
+    if (!bucket) {
+      return;
+    }
     {
-      std::lock_guard<std::mutex> guard(mutex_);
-      auto iter = buckets_.find(pending->endpoint.name);
-      if (iter == buckets_.end() || pending->completed) {
+      std::lock_guard<std::mutex> guard(bucket->mutex);
+      if (pending->completed) {
         return;
       }
-      auto& waiters = iter->second.waiters;
+      auto& waiters = bucket->waiters;
       auto waiter_iter = std::find(waiters.begin(), waiters.end(), pending);
       if (waiter_iter == waiters.end()) {
         return;
@@ -483,7 +522,6 @@ class BackendSessionPool
       completion.error = std::make_exception_ptr(BackendPoolExhausted(
           fmt::format("backend connection pool exhausted for {}",
                       pending->endpoint.name)));
-      EraseEmptyBucketLocked(pending->endpoint.name, iter->second);
     }
     RunBorrowCompletion(std::move(completion));
   }
@@ -491,34 +529,38 @@ class BackendSessionPool
   void CloseIdleSessions() {
     std::vector<std::shared_ptr<BoltBackendSession>> idle_sessions;
     std::vector<BorrowCompletion> completions;
+    std::vector<std::shared_ptr<Bucket>> buckets;
     {
-      std::lock_guard<std::mutex> guard(mutex_);
+      std::lock_guard<std::mutex> guard(buckets_mutex_);
       for (auto& pair : buckets_) {
-        auto& bucket = pair.second;
-        while (!bucket.idle.empty()) {
-          idle_sessions.emplace_back(std::move(bucket.idle.front()));
-          bucket.idle.pop_front();
-          if (bucket.total > 0) {
-            --bucket.total;
-          }
-        }
-        while (!bucket.waiters.empty()) {
-          auto pending = std::move(bucket.waiters.front());
-          bucket.waiters.pop_front();
-          if (pending->completed) {
-            continue;
-          }
-          pending->completed = true;
-          CancelPendingTimer(pending);
-          completions.push_back(
-              {.pending = pending,
-               .callback = std::move(pending->callback),
-               .backend = {},
-               .error = std::make_exception_ptr(
-                   std::runtime_error("backend connection pool is closed"))});
-        }
+        buckets.emplace_back(pair.second);
       }
       buckets_.clear();
+    }
+    for (auto& bucket : buckets) {
+      std::lock_guard<std::mutex> guard(bucket->mutex);
+      while (!bucket->idle.empty()) {
+        idle_sessions.emplace_back(std::move(bucket->idle.front()));
+        bucket->idle.pop_front();
+        if (bucket->total > 0) {
+          --bucket->total;
+        }
+      }
+      while (!bucket->waiters.empty()) {
+        auto pending = std::move(bucket->waiters.front());
+        bucket->waiters.pop_front();
+        if (pending->completed) {
+          continue;
+        }
+        pending->completed = true;
+        CancelPendingTimer(pending);
+        completions.push_back(
+            {.pending = pending,
+             .callback = std::move(pending->callback),
+             .backend = {},
+             .error = std::make_exception_ptr(
+                 std::runtime_error("backend connection pool is closed"))});
+      }
     }
     for (const auto& backend : idle_sessions) {
       backend->Close();
@@ -549,16 +591,10 @@ class BackendSessionPool
     }
   }
 
-  void EraseEmptyBucketLocked(const std::string& key, const Bucket& bucket) {
-    if (bucket.total == 0 && bucket.idle.empty() && bucket.waiters.empty()) {
-      buckets_.erase(key);
-    }
-  }
-
   size_t max_connections_per_backend_;
   std::chrono::milliseconds borrow_timeout_;
-  std::mutex mutex_;
-  std::unordered_map<std::string, Bucket> buckets_;
+  std::mutex buckets_mutex_;
+  std::unordered_map<std::string, std::shared_ptr<Bucket>> buckets_;
 };
 
 struct ProxyContext {
@@ -566,7 +602,8 @@ struct ProxyContext {
                std::chrono::milliseconds backend_borrow_timeout,
                uint32_t proxy_io_thread_num)
       : shard_map(std::make_shared<ShardMap>(std::move(shard_map))),
-        leader_cache(std::make_shared<LeaderCache>()),
+        leader_cache(
+            std::make_shared<LeaderCache>(this->shard_map->shard_count())),
         proxy_io_pool(
             std::make_shared<ProxyIoPool>(proxy_io_thread_num, "proxy-io-")),
         backend_pool(std::make_shared<BackendSessionPool>(
@@ -634,13 +671,34 @@ std::unordered_map<std::string, std::any> CastMapField(const std::any& value,
   return *map;
 }
 
-std::string CastStringField(const std::any& value, const char* field_name) {
+const std::unordered_map<std::string, std::any>* CastMapFieldPtr(
+    const std::any& value, const char* field_name) {
+  auto* map = std::any_cast<std::unordered_map<std::string, std::any>>(&value);
+  if (map == nullptr) {
+    throw ProxyClientError(kArgumentError,
+                           fmt::format("{} type should be Map", field_name));
+  }
+  return map;
+}
+
+std::unordered_map<std::string, std::any>* CastMutableMapField(
+    std::any& value, const char* field_name) {
+  auto* map = std::any_cast<std::unordered_map<std::string, std::any>>(&value);
+  if (map == nullptr) {
+    throw ProxyClientError(kArgumentError,
+                           fmt::format("{} type should be Map", field_name));
+  }
+  return map;
+}
+
+const std::string* CastStringFieldPtr(const std::any& value,
+                                      const char* field_name) {
   auto* str = std::any_cast<std::string>(&value);
   if (str == nullptr) {
     throw ProxyClientError(kArgumentError,
                            fmt::format("{} type should be String", field_name));
   }
-  return *str;
+  return str;
 }
 
 int64_t ExtractPullN(const std::vector<std::any>& fields) {
@@ -648,9 +706,9 @@ int64_t ExtractPullN(const std::vector<std::any>& fields) {
     throw ProxyClientError(kRequestError,
                            "PULL/DISCARD fields size should be 1");
   }
-  auto metadata = CastMapField(fields[0], "PULL/DISCARD metadata");
-  auto iter = metadata.find("n");
-  if (iter == metadata.end()) {
+  const auto* metadata = CastMapFieldPtr(fields[0], "PULL/DISCARD metadata");
+  auto iter = metadata->find("n");
+  if (iter == metadata->end()) {
     throw ProxyClientError(kRequestError,
                            "PULL/DISCARD metadata should contain n");
   }
@@ -1149,7 +1207,7 @@ class RunRequestState : public std::enable_shared_from_this<RunRequestState> {
     selected_endpoint_ = {};
     selected_endpoint_from_cache_ = false;
     auto cached_leader = attempt == 0
-                             ? context_->leader_cache->Get(route_.graph_name)
+                             ? context_->leader_cache->Get(route_.shard_id)
                              : std::nullopt;
     if (cached_leader.has_value()) {
       selected_endpoint_ = *cached_leader;
@@ -1279,8 +1337,7 @@ class RunRequestState : public std::enable_shared_from_this<RunRequestState> {
       last_error_ = messages.back().failure_message;
       DropActiveBackendIf(context_->backend_pool, session(),
                           selected_endpoint_);
-      context_->leader_cache->InvalidateIf(route_.graph_name,
-                                           selected_endpoint_);
+      context_->leader_cache->InvalidateIf(route_.shard_id, selected_endpoint_);
       LOG_WARN("proxy stale leader for graph {} backend {}:{}: {}",
                route_.graph_name, selected_endpoint_.host,
                selected_endpoint_.port, last_error_);
@@ -1295,8 +1352,7 @@ class RunRequestState : public std::enable_shared_from_this<RunRequestState> {
     last_error_ = message;
     DropActiveBackendIf(context_->backend_pool, session(), selected_endpoint_);
     if (!selected_endpoint_.name.empty()) {
-      context_->leader_cache->InvalidateIf(route_.graph_name,
-                                           selected_endpoint_);
+      context_->leader_cache->InvalidateIf(route_.shard_id, selected_endpoint_);
     }
     LOG_WARN("proxy backend attempt failed for graph {} backend {}:{}: {}",
              route_.graph_name, selected_endpoint_.host,
@@ -1314,7 +1370,7 @@ class RunRequestState : public std::enable_shared_from_this<RunRequestState> {
 
     if (last.tag == bolt::BoltMsg::Success) {
       if (!selected_endpoint_from_cache_) {
-        context_->leader_cache->Put(route_.graph_name, selected_endpoint_);
+        context_->leader_cache->Put(route_.shard_id, selected_endpoint_);
       }
       session()->state = ProxySessionState::STREAMING;
     } else {
@@ -1359,7 +1415,7 @@ class RunRequestState : public std::enable_shared_from_this<RunRequestState> {
 void ProcessRun(const std::shared_ptr<ProxyContext>& context,
                 const std::shared_ptr<bolt::BoltConnection>& conn,
                 const std::shared_ptr<ProxySessionContext>& session_context,
-                const std::vector<std::any>& fields, MessageDone done) {
+                std::vector<std::any>& fields, MessageDone done) {
   auto session = session_context->session.get();
   auto& backend_pool = context->backend_pool;
   if (fields.size() < 3) {
@@ -1375,34 +1431,34 @@ void ProcessRun(const std::shared_ptr<ProxyContext>& context,
     return;
   }
 
-  auto cypher = CastStringField(fields[0], "RUN cypher");
-  auto params = CastMapField(fields[1], "RUN parameters");
-  auto extra = CastMapField(fields[2], "RUN metadata");
+  auto* cypher = CastStringFieldPtr(fields[0], "RUN cypher");
+  auto* params = CastMutableMapField(fields[1], "RUN parameters");
+  auto* extra = CastMutableMapField(fields[2], "RUN metadata");
 
-  auto shard_key_iter = params.find(kShardKeyParam);
-  if (shard_key_iter == params.end()) {
+  auto shard_key_iter = params->find(kShardKeyParam);
+  if (shard_key_iter == params->end()) {
     FailSession(backend_pool, conn, session, kArgumentError,
                 "missing required routing parameter _shard_key_");
     done();
     return;
   }
   auto shard_key = AnyToShardKey(shard_key_iter->second);
-  params.erase(shard_key_iter);
+  params->erase(shard_key_iter);
 
   const auto& shard_map = *context->shard_map;
   std::string logical_graph = shard_map.logical_graph();
-  auto db_iter = extra.find("db");
-  if (db_iter != extra.end() && db_iter->second.has_value()) {
-    logical_graph = CastStringField(db_iter->second, "RUN metadata.db");
+  auto db_iter = extra->find("db");
+  if (db_iter != extra->end() && db_iter->second.has_value()) {
+    logical_graph = *CastStringFieldPtr(db_iter->second, "RUN metadata.db");
   }
 
   auto route = shard_map.Route(logical_graph, shard_key);
-  extra["db"] = route.graph_name;
+  (*extra)["db"] = route.graph_name;
 
   bolt::PackStream ps;
-  ps.AppendRun(cypher, params, extra);
+  ps.AppendRun(*cypher, *params, *extra);
   std::make_shared<RunRequestState>(context, conn, session_context, route,
-                                    shard_key, ps.ConstBuffer(),
+                                    shard_key, std::move(ps.MutableBuffer()),
                                     std::move(done))
       ->Start();
 }
@@ -1430,9 +1486,10 @@ void ProcessPullOrDiscard(
   } else {
     ps.AppendDiscardN(n);
   }
+  auto request = std::move(ps.MutableBuffer());
   auto batcher = std::make_shared<ClientResponseBatcher>(conn, session);
   backend->AsyncSendAndForwardUntilTerminal(
-      ps.ConstBuffer(),
+      std::move(request),
       [batcher](const BackendMessage& message) {
         return batcher->Forward(message);
       },
@@ -1503,7 +1560,7 @@ void ProcessReadyState(
     const std::shared_ptr<ProxyContext>& context,
     const std::shared_ptr<bolt::BoltConnection>& conn,
     const std::shared_ptr<ProxySessionContext>& session_context,
-    bolt::BoltMsg type, const std::vector<std::any>& fields, MessageDone done) {
+    bolt::BoltMsg type, std::vector<std::any>& fields, MessageDone done) {
   auto session = session_context->session.get();
   if (IsExplicitTransactionRequest(type)) {
     FailSession(context->backend_pool, conn, session, kRequestError,

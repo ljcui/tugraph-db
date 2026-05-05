@@ -72,15 +72,16 @@ class BoltBackendSession
                      std::unordered_map<std::string, std::any> hello_meta);
   ~BoltBackendSession();
 
-  void AsyncSendAndReadUntilTerminal(const std::string& request,
-                                     bool decode_records,
+  void AsyncSendAndReadUntilTerminal(std::string request, bool decode_records,
                                      MessagesCallback callback);
   void AsyncSendAndForwardUntilTerminal(
-      const std::string& request,
-      const std::function<bool(const BackendMessage&)>& forward,
+      std::string request, std::function<bool(const BackendMessage&)> forward,
       bool decode_records, MessageCallback callback);
   void AsyncFetchRaftNodeInfos(const std::string& graph_name,
                                RaftNodeInfosCallback callback);
+  bool RunsOn(const boost::asio::io_service& io_service) const {
+    return &io_service_ == &io_service;
+  }
   void Close();
   void Cancel();
 
